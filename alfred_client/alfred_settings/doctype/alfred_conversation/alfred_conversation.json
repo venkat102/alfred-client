@@ -6,6 +6,7 @@
 	"engine": "InnoDB",
 	"field_order": [
 		"details_section",
+		"summary",
 		"user",
 		"status",
 		"column_break_details",
@@ -24,6 +25,14 @@
 			"fieldname": "details_section",
 			"fieldtype": "Section Break",
 			"label": "Conversation Details"
+		},
+		{
+			"fieldname": "summary",
+			"fieldtype": "Data",
+			"label": "Summary",
+			"description": "Auto-populated from the first user message",
+			"in_list_view": 1,
+			"read_only": 1
 		},
 		{
 			"fieldname": "user",

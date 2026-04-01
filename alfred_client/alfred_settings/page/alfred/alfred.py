@@ -15,24 +15,14 @@ def get_conversations():
 	conversations = frappe.get_all(
 		"Alfred Conversation",
 		filters={"user": frappe.session.user},
-		fields=["name", "status", "current_agent", "creation", "modified"],
+		fields=["name", "status", "current_agent", "summary", "creation", "modified"],
 		order_by="modified desc",
 		limit_page_length=50,
 	)
 
-	# UX-03: Fetch the first user message as a summary for each conversation
+	# Use summary field (populated on first message). Fallback to name for legacy records.
 	for conv in conversations:
-		first_msg = frappe.get_all(
-			"Alfred Message",
-			filters={"conversation": conv["name"], "role": "user"},
-			fields=["content"],
-			order_by="creation asc",
-			limit_page_length=1,
-		)
-		if first_msg and first_msg[0].get("content"):
-			conv["first_message"] = first_msg[0]["content"][:80]
-		else:
-			conv["first_message"] = conv["name"]
+		conv["first_message"] = conv.get("summary") or conv["name"]
 
 	return conversations
 
@@ -101,9 +91,15 @@ def send_message(conversation, message):
 	})
 	msg.insert()
 
-	# Update conversation status
+	# Update conversation status and summary
+	changed = False
 	if conv.status == "Open":
 		conv.status = "In Progress"
+		changed = True
+	if not conv.summary:
+		conv.summary = message[:80]
+		changed = True
+	if changed:
 		conv.save()
 
 	frappe.db.commit()
