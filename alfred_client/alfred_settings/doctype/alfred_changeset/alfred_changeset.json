@@ -1,0 +1,107 @@
+{
+	"actions": [],
+	"autoname": "hash",
+	"creation": "2026-04-01 00:00:00.000000",
+	"doctype": "DocType",
+	"engine": "InnoDB",
+	"field_order": [
+		"details_section",
+		"conversation",
+		"status",
+		"changes_section",
+		"changes",
+		"deployment_section",
+		"deployment_log",
+		"rollback_section",
+		"rollback_data"
+	],
+	"fields": [
+		{
+			"fieldname": "details_section",
+			"fieldtype": "Section Break",
+			"label": "Changeset Details"
+		},
+		{
+			"fieldname": "conversation",
+			"fieldtype": "Link",
+			"label": "Conversation",
+			"options": "Alfred Conversation",
+			"reqd": 1,
+			"in_list_view": 1,
+			"in_standard_filter": 1,
+			"search_index": 1
+		},
+		{
+			"default": "Pending",
+			"fieldname": "status",
+			"fieldtype": "Select",
+			"label": "Status",
+			"options": "Pending\nApproved\nRejected\nDeployed\nRolled Back",
+			"reqd": 1,
+			"in_list_view": 1,
+			"in_standard_filter": 1,
+			"search_index": 1
+		},
+		{
+			"fieldname": "changes_section",
+			"fieldtype": "Section Break",
+			"label": "Changes"
+		},
+		{
+			"fieldname": "changes",
+			"fieldtype": "JSON",
+			"label": "Changes",
+			"description": "Array of document operations: [{\"op\": \"create|update|delete\", \"doctype\": \"...\", \"data\": {...}}]"
+		},
+		{
+			"fieldname": "deployment_section",
+			"fieldtype": "Section Break",
+			"label": "Deployment Log",
+			"collapsible": 1
+		},
+		{
+			"fieldname": "deployment_log",
+			"fieldtype": "Text",
+			"label": "Deployment Log",
+			"description": "Log of deployment execution steps",
+			"read_only": 1
+		},
+		{
+			"fieldname": "rollback_section",
+			"fieldtype": "Section Break",
+			"label": "Rollback Data",
+			"collapsible": 1
+		},
+		{
+			"fieldname": "rollback_data",
+			"fieldtype": "JSON",
+			"label": "Rollback Data",
+			"description": "Data needed to undo the deployment. Populated after successful deployment."
+		}
+	],
+	"index_web_pages_for_search": 0,
+	"links": [],
+	"modified": "2026-04-01 00:00:00.000000",
+	"modified_by": "Administrator",
+	"module": "Alfred Settings",
+	"name": "Alfred Changeset",
+	"naming_rule": "Random",
+	"owner": "Administrator",
+	"permissions": [
+		{
+			"create": 1,
+			"delete": 1,
+			"email": 1,
+			"print": 1,
+			"read": 1,
+			"report": 1,
+			"role": "System Manager",
+			"share": 1,
+			"write": 1
+		}
+	],
+	"sort_field": "creation",
+	"sort_order": "DESC",
+	"states": [],
+	"track_changes": 1
+}

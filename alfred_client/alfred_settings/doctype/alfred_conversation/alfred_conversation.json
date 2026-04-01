@@ -1,0 +1,150 @@
+{
+	"actions": [],
+	"autoname": "hash",
+	"creation": "2026-04-01 00:00:00.000000",
+	"doctype": "DocType",
+	"engine": "InnoDB",
+	"field_order": [
+		"details_section",
+		"user",
+		"status",
+		"column_break_details",
+		"current_agent",
+		"requirement_summary_section",
+		"requirement_summary",
+		"escalation_section",
+		"escalation_reason",
+		"token_usage_section",
+		"token_usage",
+		"created_documents_section",
+		"created_documents"
+	],
+	"fields": [
+		{
+			"fieldname": "details_section",
+			"fieldtype": "Section Break",
+			"label": "Conversation Details"
+		},
+		{
+			"fieldname": "user",
+			"fieldtype": "Link",
+			"label": "User",
+			"options": "User",
+			"reqd": 1,
+			"in_list_view": 1,
+			"in_standard_filter": 1,
+			"search_index": 1
+		},
+		{
+			"default": "Open",
+			"fieldname": "status",
+			"fieldtype": "Select",
+			"label": "Status",
+			"options": "Open\nIn Progress\nAwaiting Input\nCompleted\nEscalated\nFailed\nStale",
+			"in_list_view": 1,
+			"in_standard_filter": 1,
+			"reqd": 1,
+			"search_index": 1
+		},
+		{
+			"fieldname": "column_break_details",
+			"fieldtype": "Column Break"
+		},
+		{
+			"fieldname": "current_agent",
+			"fieldtype": "Data",
+			"label": "Current Agent",
+			"description": "Name of the currently active agent in the pipeline",
+			"in_list_view": 1,
+			"read_only": 1
+		},
+		{
+			"fieldname": "requirement_summary_section",
+			"fieldtype": "Section Break",
+			"label": "Requirement Summary",
+			"collapsible": 1
+		},
+		{
+			"fieldname": "requirement_summary",
+			"fieldtype": "Text",
+			"label": "Requirement Summary",
+			"description": "Structured requirement filled by the Requirement Agent"
+		},
+		{
+			"fieldname": "escalation_section",
+			"fieldtype": "Section Break",
+			"label": "Escalation",
+			"collapsible": 1,
+			"depends_on": "eval:doc.status === 'Escalated'"
+		},
+		{
+			"fieldname": "escalation_reason",
+			"fieldtype": "Text",
+			"label": "Escalation Reason",
+			"description": "Why the agent escalated to a human operator",
+			"depends_on": "eval:doc.status === 'Escalated'"
+		},
+		{
+			"fieldname": "token_usage_section",
+			"fieldtype": "Section Break",
+			"label": "Token Usage",
+			"collapsible": 1
+		},
+		{
+			"fieldname": "token_usage",
+			"fieldtype": "JSON",
+			"label": "Token Usage",
+			"description": "JSON object: {\"prompt_tokens\": 0, \"completion_tokens\": 0, \"total\": 0}"
+		},
+		{
+			"fieldname": "created_documents_section",
+			"fieldtype": "Section Break",
+			"label": "Created Documents"
+		},
+		{
+			"fieldname": "created_documents",
+			"fieldtype": "Table",
+			"label": "Created Documents",
+			"options": "Alfred Created Document",
+			"description": "Documents created or modified during this conversation"
+		}
+	],
+	"index_web_pages_for_search": 0,
+	"links": [
+		{
+			"link_doctype": "Alfred Message",
+			"link_fieldname": "conversation"
+		},
+		{
+			"link_doctype": "Alfred Changeset",
+			"link_fieldname": "conversation"
+		},
+		{
+			"link_doctype": "Alfred Audit Log",
+			"link_fieldname": "conversation"
+		}
+	],
+	"modified": "2026-04-01 00:00:00.000000",
+	"modified_by": "Administrator",
+	"module": "Alfred Settings",
+	"name": "Alfred Conversation",
+	"naming_rule": "Random",
+	"owner": "Administrator",
+	"permissions": [
+		{
+			"create": 1,
+			"delete": 1,
+			"email": 1,
+			"print": 1,
+			"read": 1,
+			"report": 1,
+			"role": "System Manager",
+			"share": 1,
+			"write": 1
+		}
+	],
+	"sort_field": "modified",
+	"sort_order": "DESC",
+	"states": [],
+	"track_changes": 1
+}

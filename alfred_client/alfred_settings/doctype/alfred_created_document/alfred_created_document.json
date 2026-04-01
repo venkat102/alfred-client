@@ -1,0 +1,48 @@
+{
+	"actions": [],
+	"creation": "2026-04-01 00:00:00.000000",
+	"doctype": "DocType",
+	"editable_grid": 1,
+	"engine": "InnoDB",
+	"field_order": [
+		"document_type",
+		"document_name",
+		"operation"
+	],
+	"fields": [
+		{
+			"fieldname": "document_type",
+			"fieldtype": "Data",
+			"in_list_view": 1,
+			"label": "Document Type",
+			"description": "DocType of the created document (e.g., DocType, Server Script)"
+		},
+		{
+			"fieldname": "document_name",
+			"fieldtype": "Data",
+			"in_list_view": 1,
+			"label": "Document Name",
+			"description": "Name of the created document"
+		},
+		{
+			"fieldname": "operation",
+			"fieldtype": "Select",
+			"in_list_view": 1,
+			"label": "Operation",
+			"options": "Created\nModified\nDeleted",
+			"default": "Created"
+		}
+	],
+	"index_web_pages_for_search": 0,
+	"istable": 1,
+	"links": [],
+	"modified": "2026-04-01 00:00:00.000000",
+	"modified_by": "Administrator",
+	"module": "Alfred Settings",
+	"name": "Alfred Created Document",
+	"owner": "Administrator",
+	"permissions": [],
+	"sort_field": "creation",
+	"sort_order": "DESC",
+	"states": []
+}

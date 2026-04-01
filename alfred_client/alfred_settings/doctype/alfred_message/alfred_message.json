@@ -1,0 +1,114 @@
+{
+	"actions": [],
+	"autoname": "hash",
+	"creation": "2026-04-01 00:00:00.000000",
+	"doctype": "DocType",
+	"engine": "InnoDB",
+	"field_order": [
+		"message_section",
+		"conversation",
+		"role",
+		"agent_name",
+		"column_break_msg",
+		"message_type",
+		"content_section",
+		"content",
+		"metadata_section",
+		"metadata"
+	],
+	"fields": [
+		{
+			"fieldname": "message_section",
+			"fieldtype": "Section Break",
+			"label": "Message Details"
+		},
+		{
+			"fieldname": "conversation",
+			"fieldtype": "Link",
+			"label": "Conversation",
+			"options": "Alfred Conversation",
+			"reqd": 1,
+			"in_list_view": 1,
+			"in_standard_filter": 1,
+			"search_index": 1
+		},
+		{
+			"fieldname": "role",
+			"fieldtype": "Select",
+			"label": "Role",
+			"options": "user\nagent\nsystem",
+			"reqd": 1,
+			"in_list_view": 1,
+			"in_standard_filter": 1
+		},
+		{
+			"fieldname": "agent_name",
+			"fieldtype": "Data",
+			"label": "Agent Name",
+			"description": "Which agent sent this message (when role is agent)",
+			"depends_on": "eval:doc.role === 'agent'",
+			"in_list_view": 1
+		},
+		{
+			"fieldname": "column_break_msg",
+			"fieldtype": "Column Break"
+		},
+		{
+			"default": "text",
+			"fieldname": "message_type",
+			"fieldtype": "Select",
+			"label": "Message Type",
+			"options": "text\nquestion\npreview\nchangeset\nstatus\nerror",
+			"in_list_view": 1,
+			"in_standard_filter": 1
+		},
+		{
+			"fieldname": "content_section",
+			"fieldtype": "Section Break",
+			"label": "Content"
+		},
+		{
+			"fieldname": "content",
+			"fieldtype": "Text Editor",
+			"label": "Content",
+			"description": "Message content, supports markdown"
+		},
+		{
+			"fieldname": "metadata_section",
+			"fieldtype": "Section Break",
+			"label": "Metadata",
+			"collapsible": 1
+		},
+		{
+			"fieldname": "metadata",
+			"fieldtype": "JSON",
+			"label": "Metadata",
+			"description": "Additional structured data (preview content, options list, changeset reference, etc.)"
+		}
+	],
+	"index_web_pages_for_search": 0,
+	"links": [],
+	"modified": "2026-04-01 00:00:00.000000",
+	"modified_by": "Administrator",
+	"module": "Alfred Settings",
+	"name": "Alfred Message",
+	"naming_rule": "Random",
+	"owner": "Administrator",
+	"permissions": [
+		{
+			"create": 1,
+			"delete": 1,
+			"email": 1,
+			"print": 1,
+			"read": 1,
+			"report": 1,
+			"role": "System Manager",
+			"share": 1,
+			"write": 1
+		}
+	],
+	"sort_field": "creation",
+	"sort_order": "ASC",
+	"states": [],
+	"track_changes": 0
+}
