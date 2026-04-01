@@ -49,6 +49,20 @@ def apply_changeset(changeset_name):
 	if changeset.status != "Approved":
 		frappe.throw(_("Changeset must be approved before deployment. Current status: {0}").format(changeset.status))
 
+	# Distributed lock: atomically set status to "Deploying" to prevent concurrent deployment.
+	# If another process already set it, this will fail the status check above.
+	rows_affected = frappe.db.sql(
+		"""UPDATE `tabAlfred Changeset` SET status='Deploying'
+		   WHERE name=%s AND status='Approved'""",
+		changeset_name,
+	)
+	frappe.db.commit()
+
+	# Re-check — if rows_affected is 0, another process grabbed it first
+	changeset.reload()
+	if changeset.status != "Deploying":
+		frappe.throw(_("Changeset is already being deployed by another process."))
+
 	# Get the requesting user from the parent conversation
 	conversation = frappe.get_doc("Alfred Conversation", changeset.conversation)
 	requesting_user = conversation.user

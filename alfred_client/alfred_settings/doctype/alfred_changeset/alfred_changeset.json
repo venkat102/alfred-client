@@ -36,7 +36,7 @@
 			"fieldname": "status",
 			"fieldtype": "Select",
 			"label": "Status",
-			"options": "Pending\nApproved\nRejected\nDeployed\nRolled Back",
+			"options": "Pending\nApproved\nDeploying\nRejected\nDeployed\nRolled Back",
 			"reqd": 1,
 			"in_list_view": 1,
 			"in_standard_filter": 1,

@@ -299,7 +299,8 @@ class AlfredChat {
 				content = `<div class="alfred-preview-msg">${safe_content}</div>`;
 				break;
 			default:
-				content = `<div class="alfred-text-msg">${safe_content.replace(/\n/g, "<br>")}</div>`;
+				// Render markdown for agent/text messages (safe — input is already escaped)
+				content = `<div class="alfred-text-msg">${this.render_markdown(safe_content)}</div>`;
 		}
 
 		area.append(`
@@ -311,6 +312,51 @@ class AlfredChat {
 				<div class="alfred-msg-content">${content}</div>
 			</div>
 		`);
+	}
+
+	render_markdown(escaped_text) {
+		/**
+		 * Safe markdown renderer. Input is ALREADY HTML-escaped, so we convert
+		 * markdown syntax to HTML without risking XSS.
+		 *
+		 * Supports: code blocks, inline code, bold, italic, links, lists, line breaks.
+		 */
+		let text = escaped_text;
+
+		// Fenced code blocks: ```lang\ncode\n``` → <pre><code>
+		text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+			return `<pre class="alfred-code-preview"><code>${code.trim()}</code></pre>`;
+		});
+
+		// Inline code: `code` → <code>
+		text = text.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+		// Bold: **text** or __text__
+		text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+		text = text.replace(/__(.+?)__/g, "<strong>$1</strong>");
+
+		// Italic: *text* or _text_
+		text = text.replace(/\*(.+?)\*/g, "<em>$1</em>");
+
+		// Unordered list items: - item or * item (at line start)
+		text = text.replace(/^[\-\*]\s+(.+)$/gm, "<li>$1</li>");
+		text = text.replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>");
+
+		// Ordered list items: 1. item
+		text = text.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
+
+		// Headers: ### text
+		text = text.replace(/^###\s+(.+)$/gm, "<h6>$1</h6>");
+		text = text.replace(/^##\s+(.+)$/gm, "<h5>$1</h5>");
+		text = text.replace(/^#\s+(.+)$/gm, "<h4>$1</h4>");
+
+		// Line breaks (not inside code blocks)
+		text = text.replace(/\n/g, "<br>");
+
+		// Clean up double <br> after block elements
+		text = text.replace(/<\/(pre|ul|li|h[456])><br>/g, "</$1>");
+
+		return text;
 	}
 
 	render_question(msg) {
