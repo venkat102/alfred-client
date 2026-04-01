@@ -17,6 +17,11 @@ Everything you need to go from zero to a working Alfred installation. Follow the
 9. [Part F: Admin Portal (Optional)](#part-f-admin-portal-optional)
 10. [Configuration Reference](#configuration-reference)
 11. [Troubleshooting](#troubleshooting)
+12. [Using Cloud LLM Providers](#using-cloud-llm-providers)
+13. [Production Deployment](#production-deployment)
+14. [Updating Alfred](#updating-alfred)
+15. [Backup & Recovery](#backup--recovery)
+16. [Monitoring](#monitoring)
 
 ---
 
@@ -515,3 +520,351 @@ docker logs -f $(docker ps -qf "name=ollama")
 # Frappe logs
 tail -f ~/frappe-bench/logs/worker.error.log
 ```
+
+---
+
+## Using Cloud LLM Providers
+
+Ollama is free and private, but cloud providers give better results for complex tasks. Alfred supports any provider that LiteLLM supports.
+
+### Anthropic Claude
+
+1. Get an API key at https://console.anthropic.com/settings/keys
+2. In Alfred Settings → LLM Configuration:
+
+| Field | Value |
+|-------|-------|
+| LLM Provider | `anthropic` |
+| LLM Model | `claude-sonnet-4-20250514` |
+| LLM API Key | `sk-ant-api03-...` (your key) |
+| LLM Base URL | *(leave empty)* |
+| Max Tokens | `4096` |
+| Temperature | `0.1` |
+
+3. Also set the fallback in processing app `.env` (for when client doesn't send config):
+```env
+FALLBACK_LLM_MODEL=anthropic/claude-sonnet-4-20250514
+FALLBACK_LLM_API_KEY=sk-ant-api03-your-key-here
+```
+
+**Pricing**: ~$3 per million tokens. A typical conversation uses 5,000–30,000 tokens (~$0.01–$0.09).
+
+### OpenAI GPT
+
+1. Get an API key at https://platform.openai.com/api-keys
+2. In Alfred Settings:
+
+| Field | Value |
+|-------|-------|
+| LLM Provider | `openai` |
+| LLM Model | `gpt-4o` |
+| LLM API Key | `sk-proj-...` (your key) |
+| LLM Base URL | *(leave empty)* |
+
+**Pricing**: ~$2.50 per million tokens.
+
+### Google Gemini
+
+1. Get an API key at https://aistudio.google.com/app/apikey
+2. In Alfred Settings:
+
+| Field | Value |
+|-------|-------|
+| LLM Provider | `gemini` |
+| LLM Model | `gemini/gemini-2.0-flash` |
+| LLM API Key | `AIza...` (your key) |
+| LLM Base URL | *(leave empty)* |
+
+**Pricing**: ~$1.25 per million tokens.
+
+### AWS Bedrock
+
+1. Configure AWS credentials on the processing app server (`~/.aws/credentials` or IAM role)
+2. In Alfred Settings:
+
+| Field | Value |
+|-------|-------|
+| LLM Provider | `bedrock` |
+| LLM Model | `bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0` |
+| LLM API Key | *(leave empty — uses AWS credentials)* |
+| LLM Base URL | *(leave empty)* |
+
+### Switching Providers
+
+You can switch providers at any time by updating Alfred Settings. Each new conversation uses the current configuration. Existing conversations keep the config they started with.
+
+### Provider Comparison
+
+| Provider | Speed | Quality | Cost | Privacy |
+|----------|-------|---------|------|---------|
+| Ollama (local) | Slow on CPU, fast with GPU | Good (llama3.1) | Free | Full — nothing leaves your server |
+| Anthropic Claude | Fast | Excellent | ~$3/M tokens | Data sent to Anthropic API |
+| OpenAI GPT | Fast | Excellent | ~$2.50/M tokens | Data sent to OpenAI API |
+| Google Gemini | Fast | Good | ~$1.25/M tokens | Data sent to Google API |
+| AWS Bedrock | Fast | Excellent | ~$3/M tokens | Data stays in your AWS account |
+
+---
+
+## Production Deployment
+
+For running Alfred in production with real users, beyond the dev setup.
+
+### Separate the Components
+
+In production, the three components typically run on different servers or services:
+
+```
+┌─────────────────────────┐     ┌──────────────────────────────────┐
+│  Customer's Frappe Site  │     │  Your Infrastructure             │
+│  (Frappe Cloud / VPS)    │────▶│                                  │
+│  alfred_client installed │     │  Processing App (Docker)         │
+└─────────────────────────┘     │  + Redis + Ollama/Cloud LLM      │
+                                └──────────────────────────────────┘
+                                              │
+                                ┌──────────────────────────────────┐
+                                │  Admin Portal (optional)          │
+                                │  (Frappe Cloud / VPS)             │
+                                │  alfred_admin installed            │
+                                └──────────────────────────────────┘
+```
+
+### SSL/TLS for WebSocket
+
+Production WebSocket connections must use `wss://` (encrypted), not `ws://`.
+
+**Option A: Let nginx handle SSL**
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name alfred-api.yourcompany.com;
+
+    ssl_certificate /etc/letsencrypt/live/alfred-api.yourcompany.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/alfred-api.yourcompany.com/privkey.pem;
+
+    # REST API
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket
+    location /ws/ {
+        proxy_pass http://localhost:8000/ws/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 86400;
+    }
+}
+```
+
+Then in Alfred Settings:
+- Processing App URL: `wss://alfred-api.yourcompany.com`
+
+**Option B: Cloudflare Tunnel** (no port exposure needed)
+
+```bash
+cloudflared tunnel --url http://localhost:8000
+```
+
+### Production Environment Variables
+
+```env
+# Strong secret — generate with: python3 -c "import secrets; print(secrets.token_urlsafe(64))"
+API_SECRET_KEY=<64-char-random-string>
+
+# Redis with password
+REDIS_URL=redis://:your-redis-password@redis:6379/0
+
+# CORS — restrict to your customer's sites
+ALLOWED_ORIGINS=https://customer1.frappe.cloud,https://customer2.example.com
+
+# Workers — 2 per CPU core
+WORKERS=8
+
+# Disable debug
+DEBUG=false
+
+# Cloud LLM (production usually uses Claude or GPT, not Ollama)
+FALLBACK_LLM_MODEL=anthropic/claude-sonnet-4-20250514
+FALLBACK_LLM_API_KEY=sk-ant-api03-your-production-key
+```
+
+### Systemd Service (alternative to Docker)
+
+If you prefer running the processing app natively:
+
+```ini
+# /etc/systemd/system/alfred-processing.service
+[Unit]
+Description=Alfred Processing App
+After=network.target redis.service
+
+[Service]
+User=alfred
+Group=alfred
+WorkingDirectory=/opt/alfred_processing
+EnvironmentFile=/opt/alfred_processing/.env
+ExecStart=/opt/alfred_processing/.venv/bin/uvicorn alfred.main:app --host 0.0.0.0 --port 8000 --workers 4
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable alfred-processing
+sudo systemctl start alfred-processing
+```
+
+---
+
+## Updating Alfred
+
+### Updating the Client App
+
+```bash
+cd frappe-bench
+
+# Pull latest code
+cd apps/alfred_client
+git pull origin main
+cd ../..
+
+# Run migrations (updates DocTypes, adds new fields)
+bench --site your-site migrate
+
+# Rebuild frontend assets
+bench build --app alfred_client
+
+# Restart
+bench restart
+```
+
+### Updating the Processing App
+
+```bash
+cd alfred_processing
+
+# Pull latest code
+git pull origin main
+
+# Rebuild and restart Docker containers
+docker-compose -f docker-compose.selfhosted.yml up -d --build
+
+# Or if running natively:
+.venv/bin/pip install -e .
+sudo systemctl restart alfred-processing
+```
+
+### Updating the Admin Portal
+
+```bash
+cd frappe-bench
+cd apps/alfred_admin
+git pull origin main
+cd ../..
+bench --site your-admin-site migrate
+bench restart
+```
+
+### Version Compatibility
+
+Always update all three components together. The client app and processing app communicate via WebSocket and must be on compatible versions. Check the release notes for any breaking changes.
+
+---
+
+## Backup & Recovery
+
+### What to Back Up
+
+| Data | Location | How | Frequency |
+|------|----------|-----|-----------|
+| Conversations & messages | Frappe database | `bench --site your-site backup` | Daily |
+| Changesets & audit logs | Frappe database | Same as above | Daily |
+| Alfred Settings | Frappe database | Same as above | After changes |
+| Processing app config | `.env` file | Copy to backup location | After changes |
+| Redis state | Redis RDB dump | `docker exec redis redis-cli BGSAVE` | Hourly (optional) |
+| Created DocTypes | Frappe database + JSON files | `bench --site your-site backup` | Daily |
+
+### Automated Backup
+
+Frappe includes built-in backup scheduling. Enable it at:
+`/app/system-settings` → Backup section → Enable automatic backups
+
+### Recovery
+
+```bash
+# Restore Frappe site from backup
+bench --site your-site restore /path/to/backup.sql.gz
+
+# Run migration after restore
+bench --site your-site migrate
+```
+
+### What Happens If You Lose Redis State
+
+Redis holds temporary data: active crew state, WebSocket message buffers, rate limit counters, plan cache. If Redis is lost:
+- **Active conversations in progress** will need to be restarted (crew state is lost)
+- **Completed conversations** are unaffected (stored in Frappe database)
+- **Rate limit counters** reset (users may get a brief burst allowance)
+- **No permanent data is lost** — Redis is a cache, not the source of truth
+
+---
+
+## Monitoring
+
+### Health Checks
+
+Set up monitoring on these endpoints:
+
+| Endpoint | Expected | Check Interval |
+|----------|----------|---------------|
+| `GET http://processing-app:8000/health` | `{"status": "ok", "redis": "connected"}` | 30 seconds |
+| `GET http://your-site:8000/api/method/ping` | `{"message": "pong"}` | 30 seconds |
+| `http://ollama:11434/api/tags` | JSON with model list | 5 minutes |
+
+### Key Metrics to Watch
+
+| Metric | How to Check | Warning Threshold |
+|--------|-------------|-------------------|
+| Redis memory | `docker exec redis redis-cli INFO memory \| grep used_memory_human` | > 200 MB |
+| Active WebSocket connections | `docker logs processing \| grep "WebSocket authenticated" \| wc -l` | > 100 concurrent |
+| Agent timeouts | `docker logs processing \| grep "Pipeline timeout"` | > 5 per hour |
+| Failed deployments | Frappe: count Alfred Changesets with status "Rolled Back" | > 3 per day |
+| Escalated conversations | Frappe: count Alfred Conversations with status "Escalated" | > 10 per day |
+| LLM error rate | `docker logs processing \| grep "LLM" \| grep -i "error\|timeout"` | > 10% of requests |
+| Redis stream growth | `docker exec redis redis-cli DBSIZE` | > 50,000 keys |
+
+### Log Rotation
+
+Docker logs grow indefinitely by default. Add to `/etc/docker/daemon.json`:
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "50m",
+    "max-file": "3"
+  }
+}
+```
+
+Then restart Docker: `sudo systemctl restart docker`
+
+### Alerting
+
+Set up alerts using your preferred monitoring tool (Uptime Kuma, Grafana, Datadog, etc.) on:
+
+1. **Processing app health check fails** → Critical: agents can't run
+2. **Redis disconnected** → Warning: new conversations will fail, existing ones lose state
+3. **Ollama not responding** → Critical (if using local LLM): all conversations will fail
+4. **Disk space < 10%** → Warning: Ollama models and Redis dumps need disk space
+5. **Error rate spikes** → Warning: may indicate LLM issues or site connectivity problems
