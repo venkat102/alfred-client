@@ -1,0 +1,17 @@
+include MANIFEST.in
+include *.json
+include *.md
+include *.py
+include *.txt
+recursive-include alfred_client *.css
+recursive-include alfred_client *.csv
+recursive-include alfred_client *.html
+recursive-include alfred_client *.ico
+recursive-include alfred_client *.js
+recursive-include alfred_client *.json
+recursive-include alfred_client *.md
+recursive-include alfred_client *.png
+recursive-include alfred_client *.py
+recursive-include alfred_client *.svg
+recursive-include alfred_client *.txt
+recursive-exclude alfred_client *.pyc
