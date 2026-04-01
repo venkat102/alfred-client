@@ -2,6 +2,39 @@
 
 Everything you need to go from zero to a working Alfred installation. Follow these steps in order.
 
+> **New here?** This is the right document. Read this first to set up Alfred, then see the [User Guide](user-guide.md) for detailed usage instructions.
+>
+> **Just want to try it fast?** Jump to [Quick Start](#quick-start) below.
+
+---
+
+## Quick Start (5 minutes, assumes Frappe bench + Docker already installed)
+
+```bash
+# 1. Install the client app on your Frappe site
+cd frappe-bench
+bench get-app https://github.com/your-org/alfred_client.git
+bench --site your-site install-app alfred_client
+bench --site your-site migrate
+bench build --app alfred_client
+
+# 2. Start the processing app
+cd /path/to/alfred_processing
+cp .env.example .env
+# Edit .env: set API_SECRET_KEY (generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+docker-compose -f docker-compose.selfhosted.yml up -d
+docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull llama3.1
+
+# 3. Configure: open /app/alfred-settings in your browser
+#    - Connection tab: set Processing App URL = ws://localhost:8000, paste your API_SECRET_KEY
+#    - LLM tab: set Provider = ollama, Model = ollama/llama3.1, Base URL = http://localhost:11434
+#    - Save
+
+# 4. Open /app/alfred and start chatting!
+```
+
+If any step fails, read the detailed sections below.
+
 ---
 
 ## Table of Contents
@@ -111,11 +144,15 @@ bench use dev.alfred
 # From your bench directory:
 cd frappe-bench
 
-# Get the app (if cloned from git)
-bench get-app /path/to/alfred_client
-# OR if it's already in apps/ directory:
-bench install-app alfred_client --site dev.alfred
+# Option A: Install from git repository
+bench get-app https://github.com/your-org/alfred_client.git
+bench --site dev.alfred install-app alfred_client
+
+# Option B: If the app code is already in your apps/ directory
+bench --site dev.alfred install-app alfred_client
 ```
+
+> **Where to get the code**: If you received Alfred as a zip file or private repo, place the `alfred_client` folder inside `frappe-bench/apps/` and use Option B. If it's a git repository, use Option A with the URL your team provided.
 
 ### 4. Run Database Migration
 
@@ -148,11 +185,15 @@ Open `http://dev.alfred:8000/app/alfred-settings` in your browser. You should se
 
 The processing app runs as a Docker container alongside Redis and Ollama (local LLM).
 
-### 1. Navigate to the Processing App Directory
+### 1. Get and Navigate to the Processing App
 
 ```bash
-cd /path/to/alfred_processing
+# Clone the processing app repository
+git clone https://github.com/your-org/alfred_processing.git
+cd alfred_processing
 ```
+
+> **Where to get the code**: Your team will provide the repository URL or a zip file. The processing app is a standalone Python project — it does NOT go inside the Frappe bench. Place it anywhere on your server (e.g., `/opt/alfred_processing` or `~/alfred_processing`).
 
 ### 2. Create Your Environment File
 
@@ -315,45 +356,22 @@ curl http://dev.alfred:8000/api/method/frappe.client.get_count?doctype=Alfred+Se
 
 ## Part E: Using Alfred
 
-### What You Can Ask Alfred To Do
+Setup is complete. For the full usage guide — including step-by-step conversation walkthrough, what each screen element means, how to handle errors, escalation, rollback, and tips for writing better prompts — see the **[User Guide](user-guide.md)**.
 
-| Category | Example Prompt |
-|----------|---------------|
-| Create a DocType | "Create a DocType called Training Program with name, duration, and trainer fields" |
-| Add fields to existing DocTypes | "Add a phone_number field to the Customer DocType" |
-| Create a workflow | "Create an approval workflow for Leave Application with Draft, Pending Approval, and Approved states" |
-| Create server scripts | "Create a validation that prevents submitting an expense claim over $10,000" |
-| Create client scripts | "Add a filter on the Employee Link field in Leave Application to show only active employees" |
-| Create notifications | "Notify the HR Manager when a new employee record is created" |
-| Create reports | "Create a report showing all leave applications by department for the current month" |
+### Quick Reference
 
-### How the Chat Works
-
-- **Type your request** in the input box and press Enter
-- **Agent pipeline** runs automatically: Requirements → Assessment → Architecture → Development → Testing → Deployment
-- **If Alfred asks a question**, answer it — the input box re-enables automatically
-- **Review the preview** in the right panel before approving
-- **Approve, Modify, or Reject** using the buttons in the preview panel
-
-### What Alfred Cannot Do
-
-- Modify core Frappe/ERPNext source code files
-- Run bench commands or shell operations
-- Access the file system
-- Create features that don't exist in Frappe's customization framework
-- Modify hooks.py or app-level Python files
-
-### Conversation Status Guide
-
-| Status | Meaning |
-|--------|---------|
-| Open | Conversation created, no messages yet |
-| In Progress | Agents are working |
-| Awaiting Input | Alfred asked a question, waiting for your answer |
-| Completed | All done — changes deployed |
-| Escalated | Too complex for AI — a human developer has been notified |
-| Failed | Something went wrong — check the error message |
-| Stale | Inactive for 24+ hours |
+| Action | How |
+|--------|-----|
+| Open Alfred | Navigate to `/app/alfred` |
+| Start a conversation | Click "Start a Conversation" or an example prompt |
+| Send a message | Type in the input box, press Enter |
+| Answer a question | Click an option button or type your answer |
+| Approve changes | Click "Approve & Deploy" in the preview panel |
+| Request modifications | Click "Request Changes", then describe what to change |
+| Reject changes | Click "Reject" |
+| Find past conversations | They're listed on the main Alfred page with summaries |
+| Check audit trail | Go to `/app/alfred-audit-log` |
+| Rollback a deployment | Go to the Alfred Changeset record, click Rollback |
 
 ---
 

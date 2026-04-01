@@ -2,6 +2,8 @@
 
 A complete guide to using Alfred — from your first conversation to deployment and rollback.
 
+> **Haven't set up Alfred yet?** Read the [Setup Guide](SETUP.md) first. This guide assumes Alfred is already installed and configured on your Frappe site.
+
 ---
 
 ## What is Alfred?
