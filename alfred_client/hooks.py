@@ -38,7 +38,14 @@ add_to_apps_screen = [
 # doc_events = {}
 
 # Scheduled Tasks
-# scheduler_events = {}
+scheduler_events = {
+	"hourly": [
+		"alfred_client.api.stale_cleanup.mark_stale_conversations",
+	],
+	"daily": [
+		"alfred_client.api.stale_cleanup.cleanup_old_audit_logs",
+	],
+}
 
 # Installation Hooks
 # after_install = "alfred_client.install.after_install"
