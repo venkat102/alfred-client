@@ -155,17 +155,23 @@ def _send_escalation_notification(conv, reason):
 		except Exception:
 			pass
 
-	# Also send email notification
+	# Also send email notification — escape user-supplied content to prevent HTML injection
 	try:
+		from frappe.utils import escape_html
+
+		safe_reason = escape_html(reason or "Not specified")
+		safe_user = escape_html(conv.user)
+		safe_name = escape_html(conv.name)
+
 		frappe.sendmail(
 			recipients=list(set(system_managers) - {"Administrator"}),
-			subject=f"Alfred Escalation: {conv.name}",
+			subject=f"Alfred Escalation: {safe_name}",
 			message=f"""
 				<p>An Alfred conversation has been escalated and needs your attention.</p>
-				<p><strong>Conversation:</strong> {conv.name}</p>
-				<p><strong>User:</strong> {conv.user}</p>
-				<p><strong>Reason:</strong> {reason or 'Not specified'}</p>
-				<p><a href="/app/alfred-conversation/{conv.name}">View Conversation</a></p>
+				<p><strong>Conversation:</strong> {safe_name}</p>
+				<p><strong>User:</strong> {safe_user}</p>
+				<p><strong>Reason:</strong> {safe_reason}</p>
+				<p><a href="/app/alfred-conversation/{safe_name}">View Conversation</a></p>
 			""",
 			now=True,
 		)
