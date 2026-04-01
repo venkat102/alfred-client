@@ -16,8 +16,24 @@ frappe.pages["alfred"].on_page_load = function (wrapper) {
 	page.main.addClass("alfred-page");
 	$('<div class="alfred-container"></div>').appendTo(page.main);
 
-	page.alfred = new AlfredChat(page);
-	page.alfred.init();
+	// Client-side access control — check BEFORE rendering any UI
+	frappe.call({
+		method: "alfred_client.api.permissions.has_app_permission",
+		async: false,
+		callback: function (r) {
+			if (!r.message) {
+				page.main.find(".alfred-container").html(
+					`<div class="text-center" style="padding: 80px 20px;">
+						<h4>${__("Not Authorized")}</h4>
+						<p class="text-muted">${__("You do not have permission to access Alfred. Contact your administrator to request access.")}</p>
+					</div>`
+				);
+				return;
+			}
+			page.alfred = new AlfredChat(page);
+			page.alfred.init();
+		},
+	});
 };
 
 frappe.pages["alfred"].on_page_show = function (wrapper) {
@@ -589,6 +605,10 @@ class AlfredChat {
 
 	setup_realtime() {
 		const me = this;
+
+		// Prevent duplicate listeners on repeated page navigation
+		if (this._realtime_bound) return;
+		this._realtime_bound = true;
 
 		frappe.realtime.on("intern_agent_status", (data) => {
 			if (me.current_conversation) {

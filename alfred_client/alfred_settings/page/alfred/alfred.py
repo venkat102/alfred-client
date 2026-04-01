@@ -51,13 +51,16 @@ def get_messages(conversation):
 	if conv.user != frappe.session.user and "System Manager" not in frappe.get_roles():
 		frappe.throw(frappe._("You do not have access to this conversation"), frappe.PermissionError)
 
+	# Load latest 200 messages (desc), then reverse to get chronological order.
+	# This ensures long conversations show the most recent messages, not the oldest.
 	messages = frappe.get_all(
 		"Alfred Message",
 		filters={"conversation": conversation},
 		fields=["name", "role", "agent_name", "content", "message_type", "metadata", "creation"],
-		order_by="creation asc",
+		order_by="creation desc",
 		limit_page_length=200,
 	)
+	messages.reverse()
 	return messages
 
 

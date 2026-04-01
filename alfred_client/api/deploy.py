@@ -50,15 +50,15 @@ def apply_changeset(changeset_name):
 		frappe.throw(_("Changeset must be approved before deployment. Current status: {0}").format(changeset.status))
 
 	# Distributed lock: atomically set status to "Deploying" to prevent concurrent deployment.
-	# If another process already set it, this will fail the status check above.
-	rows_affected = frappe.db.sql(
+	# The WHERE clause ensures only one process can transition from Approved to Deploying.
+	frappe.db.sql(
 		"""UPDATE `tabAlfred Changeset` SET status='Deploying'
 		   WHERE name=%s AND status='Approved'""",
 		changeset_name,
 	)
 	frappe.db.commit()
 
-	# Re-check — if rows_affected is 0, another process grabbed it first
+	# Re-check — if status is not Deploying, another process grabbed the lock first
 	changeset.reload()
 	if changeset.status != "Deploying":
 		frappe.throw(_("Changeset is already being deployed by another process."))
@@ -164,21 +164,25 @@ def apply_changeset(changeset_name):
 			"error": error_msg,
 		})
 
+		# Database-level rollback — undoes ALL uncommitted operations in this transaction.
+		# This is safer than manual rollback because it's atomic.
+		frappe.db.rollback()
+
 		frappe.publish_realtime(
 			"intern_deploy_failed",
 			{"changeset": changeset_name, "step": len(execution_log), "error": error_msg, "rollback_initiated": True},
 			user=requesting_user,
 		)
 
-	# Post-deployment: verification or rollback
+	# Post-deployment: verification or commit
 	verification = None
 	if failed:
-		# Rollback uses ignore_permissions=True since we need to undo regardless
-		rollback_log = _execute_rollback(rollback_data, changeset.conversation)
 		changeset.status = "Rolled Back"
-		changeset.deployment_log = json.dumps(execution_log + rollback_log, indent=2)
+		changeset.deployment_log = json.dumps(execution_log, indent=2)
 	else:
-		# Verify deployment
+		# Commit the entire deployment as a single transaction
+		frappe.db.commit()
+		# Verify deployment AFTER commit
 		verification = verify_deployment(changes, changeset.conversation)
 		changeset.status = "Deployed"
 		changeset.deployment_log = json.dumps(execution_log, indent=2)
@@ -208,18 +212,23 @@ def apply_changeset(changeset_name):
 # ── Document Operations (ignore_permissions=False) ────────────────
 
 def _create_document(doctype, data):
-	"""Create a Frappe document. Runs with user's permissions."""
+	"""Create a Frappe document. Runs with user's permissions.
+
+	Does NOT commit — the caller manages the transaction boundary.
+	"""
 	doc_data = dict(data)
 	doc_data["doctype"] = doctype
 
 	doc = frappe.get_doc(doc_data)
 	doc.insert(ignore_permissions=False)
-	frappe.db.commit()
 	return {"name": doc.name, "created": True}
 
 
 def _update_document(doctype, data):
-	"""Update an existing document. Runs with user's permissions."""
+	"""Update an existing document. Runs with user's permissions.
+
+	Does NOT commit — the caller manages the transaction boundary.
+	"""
 	doc_name = data.get("name")
 	if not doc_name:
 		raise ValueError("Document name is required for update operation")
@@ -227,7 +236,6 @@ def _update_document(doctype, data):
 	doc = frappe.get_doc(doctype, doc_name)
 	doc.update(data)
 	doc.save(ignore_permissions=False)
-	frappe.db.commit()
 	return {"name": doc.name, "updated": True}
 
 

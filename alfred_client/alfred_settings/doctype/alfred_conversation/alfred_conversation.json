@@ -94,6 +94,7 @@
 			"fieldname": "token_usage",
 			"fieldtype": "JSON",
 			"label": "Token Usage",
+			"default": "{\"prompt_tokens\": 0, \"completion_tokens\": 0, \"total\": 0}",
 			"description": "JSON object: {\"prompt_tokens\": 0, \"completion_tokens\": 0, \"total\": 0}"
 		},
 		{

@@ -48,9 +48,8 @@ scheduler_events = {
 }
 
 # Installation Hooks
-# after_install = "alfred_client.install.after_install"
-# before_uninstall = "alfred_client.uninstall.before_uninstall"
-# after_uninstall = "alfred_client.uninstall.after_uninstall"
+after_install = "alfred_client.install.after_install"
+before_uninstall = "alfred_client.uninstall.before_uninstall"
 
 # Migration Hooks
 # after_migrate = "alfred_client.setup.after_migrate"
