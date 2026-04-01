@@ -81,14 +81,14 @@ def _route_incoming_message(message, user, conversation_name):
 		return
 
 	event_map = {
-		"agent_status": "intern_agent_status",
-		"question": "intern_question",
-		"preview": "intern_preview",
-		"changeset": "intern_preview",
-		"error": "intern_error",
-		"echo": "intern_agent_status",
-		"mcp_request": "intern_mcp_request",
-		"deploy": "intern_deploy",
+		"agent_status": "alfred_agent_status",
+		"question": "alfred_question",
+		"preview": "alfred_preview",
+		"changeset": "alfred_preview",
+		"error": "alfred_error",
+		"echo": "alfred_agent_status",
+		"mcp_request": "alfred_mcp_request",
+		"deploy": "alfred_deploy",
 		"auth_success": None,
 	}
 
@@ -129,7 +129,7 @@ def _connection_manager(conversation_name, user):
 	except Exception as e:
 		logger.error("Connection manager died for %s: %s", conversation_name, e)
 		frappe.publish_realtime(
-			"intern_error",
+			"alfred_error",
 			{"conversation": conversation_name, "error": str(e),
 			 "message": "Connection to Processing App failed. Check Alfred Settings."},
 			user=user,

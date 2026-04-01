@@ -60,22 +60,22 @@ def run_tests():
 			user="Administrator", conversation_name="test-conv",
 		)
 		assert len(received_events) == 1
-		assert received_events[0]["event"] == "intern_agent_status"
-		print("  agent_status -> intern_agent_status: OK")
+		assert received_events[0]["event"] == "alfred_agent_status"
+		print("  agent_status -> alfred_agent_status: OK")
 
 		_route_incoming_message(
 			{"type": "question", "data": {"text": "What fields?"}},
 			user="Administrator", conversation_name="test-conv",
 		)
-		assert received_events[-1]["event"] == "intern_question"
-		print("  question -> intern_question: OK")
+		assert received_events[-1]["event"] == "alfred_question"
+		print("  question -> alfred_question: OK")
 
 		_route_incoming_message(
 			{"type": "error", "data": {"error": "Something went wrong"}},
 			user="Administrator", conversation_name="test-conv",
 		)
-		assert received_events[-1]["event"] == "intern_error"
-		print("  error -> intern_error: OK")
+		assert received_events[-1]["event"] == "alfred_error"
+		print("  error -> alfred_error: OK")
 
 		# Ping should not produce an event
 		count_before = len(received_events)

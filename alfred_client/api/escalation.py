@@ -43,7 +43,7 @@ def escalate_conversation(conversation_name, reason=""):
 
 	# Notify the user via realtime
 	frappe.publish_realtime(
-		"intern_agent_status",
+		"alfred_agent_status",
 		{
 			"agent": "Orchestrator",
 			"status": "escalated",
@@ -144,7 +144,7 @@ def _send_escalation_notification(conv, reason):
 			continue
 		try:
 			frappe.publish_realtime(
-				"intern_escalation",
+				"alfred_escalation",
 				{
 					"conversation": conv.name,
 					"user": conv.user,

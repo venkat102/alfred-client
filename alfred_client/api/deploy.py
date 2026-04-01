@@ -100,7 +100,7 @@ def apply_changeset(changeset_name):
 
 			# Publish progress
 			frappe.publish_realtime(
-				"intern_deploy_progress",
+				"alfred_deploy_progress",
 				{
 					"changeset": changeset_name,
 					"step": step,
@@ -147,7 +147,7 @@ def apply_changeset(changeset_name):
 			})
 
 			frappe.publish_realtime(
-				"intern_deploy_progress",
+				"alfred_deploy_progress",
 				{"changeset": changeset_name, "step": step, "total": len(changes), "status": "success", "name": doc_name},
 				user=requesting_user,
 			)
@@ -169,7 +169,7 @@ def apply_changeset(changeset_name):
 		frappe.db.rollback()
 
 		frappe.publish_realtime(
-			"intern_deploy_failed",
+			"alfred_deploy_failed",
 			{"changeset": changeset_name, "step": len(execution_log), "error": error_msg, "rollback_initiated": True},
 			user=requesting_user,
 		)
@@ -195,7 +195,7 @@ def apply_changeset(changeset_name):
 
 	if not failed:
 		frappe.publish_realtime(
-			"intern_deploy_complete",
+			"alfred_deploy_complete",
 			{"changeset": changeset_name, "status": "success", "steps": len(execution_log), "verification": verification},
 			user=requesting_user,
 		)

@@ -280,7 +280,7 @@ function setupRealtime() {
 	if (realtimeBound) return;
 	realtimeBound = true;
 
-	frappe.realtime.on("intern_agent_status", (data) => {
+	frappe.realtime.on("alfred_agent_status", (data) => {
 		if (!currentConversation.value) return;
 		isProcessing.value = false;
 		updateAgentStatus(data);
@@ -293,7 +293,7 @@ function setupRealtime() {
 		}
 	});
 
-	frappe.realtime.on("intern_question", (data) => {
+	frappe.realtime.on("alfred_question", (data) => {
 		if (!currentConversation.value) return;
 		isProcessing.value = false;
 		stopTimer();
@@ -309,7 +309,7 @@ function setupRealtime() {
 		});
 	});
 
-	frappe.realtime.on("intern_preview", (data) => {
+	frappe.realtime.on("alfred_preview", (data) => {
 		if (!currentConversation.value || !data.changeset_name) return;
 		frappe.call({
 			method: "alfred_client.alfred_settings.page.alfred.alfred.get_changeset",
@@ -318,7 +318,7 @@ function setupRealtime() {
 		});
 	});
 
-	frappe.realtime.on("intern_error", (data) => {
+	frappe.realtime.on("alfred_error", (data) => {
 		if (!currentConversation.value) return;
 		isProcessing.value = false;
 		inputDisabled.value = false;
@@ -331,12 +331,12 @@ function setupRealtime() {
 		});
 	});
 
-	frappe.realtime.on("intern_deploy_progress", (data) => {
+	frappe.realtime.on("alfred_deploy_progress", (data) => {
 		if (!currentConversation.value) return;
 		deploySteps.value = [...deploySteps.value.filter((s) => s.step !== data.step), data];
 	});
 
-	frappe.realtime.on("intern_deploy_complete", (data) => {
+	frappe.realtime.on("alfred_deploy_complete", (data) => {
 		if (!currentConversation.value) return;
 		stopTimer();
 		isDeployed.value = true;
@@ -350,7 +350,7 @@ function setupRealtime() {
 		});
 	});
 
-	frappe.realtime.on("intern_deploy_failed", (data) => {
+	frappe.realtime.on("alfred_deploy_failed", (data) => {
 		if (!currentConversation.value) return;
 		stopTimer();
 		inputDisabled.value = false;

@@ -168,7 +168,7 @@ Response: {"status": "created", "plan": "Free"}
 
 ## Agent Output Schemas
 
-All agent outputs are validated against Pydantic models in `intern/models/agent_outputs.py`.
+All agent outputs are validated against Pydantic models in `alfred/models/agent_outputs.py`.
 
 ### RequirementSpec
 ```json
@@ -206,14 +206,14 @@ All agent outputs are validated against Pydantic models in `intern/models/agent_
 
 1. Add the tool function in `alfred_client/mcp/tools.py`
 2. Register it in `TOOL_REGISTRY` dict at the bottom of the file
-3. Add a CrewAI wrapper in `intern/tools/mcp_tools.py` on the processing app
-4. Add to the appropriate agent's tool list in `intern/agents/tool_stubs.py` → `TOOL_ASSIGNMENTS`
+3. Add a CrewAI wrapper in `alfred/tools/mcp_tools.py` on the processing app
+4. Add to the appropriate agent's tool list in `alfred/agents/tool_stubs.py` → `TOOL_ASSIGNMENTS`
 5. Update the agent backstory if the tool changes the agent's capabilities
 
 ## Adding New Agents
 
-1. Add backstory in `intern/agents/backstories.py`
-2. Add agent creation in `intern/agents/definitions.py` → `build_agents()`
-3. Add task in `intern/agents/crew.py` → `TASK_DESCRIPTIONS` and `build_intern_crew()`
-4. Add output Pydantic model in `intern/models/agent_outputs.py`
+1. Add backstory in `alfred/agents/backstories.py`
+2. Add agent creation in `alfred/agents/definitions.py` → `build_agents()`
+3. Add task in `alfred/agents/crew.py` → `TASK_DESCRIPTIONS` and `build_alfred_crew()`
+4. Add output Pydantic model in `alfred/models/agent_outputs.py`
 5. Add phase to the UI pipeline in `alfred.js` → `render_pipeline()`
