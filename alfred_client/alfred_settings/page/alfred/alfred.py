@@ -19,6 +19,21 @@ def get_conversations():
 		order_by="modified desc",
 		limit_page_length=50,
 	)
+
+	# UX-03: Fetch the first user message as a summary for each conversation
+	for conv in conversations:
+		first_msg = frappe.get_all(
+			"Alfred Message",
+			filters={"conversation": conv["name"], "role": "user"},
+			fields=["content"],
+			order_by="creation asc",
+			limit_page_length=1,
+		)
+		if first_msg and first_msg[0].get("content"):
+			conv["first_message"] = first_msg[0]["content"][:80]
+		else:
+			conv["first_message"] = conv["name"]
+
 	return conversations
 
 
