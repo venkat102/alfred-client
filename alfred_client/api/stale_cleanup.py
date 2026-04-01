@@ -56,10 +56,11 @@ def mark_stale_conversations():
 def cleanup_old_audit_logs():
 	"""Delete audit logs older than the retention period.
 
-	Default retention: 90 days. Never deletes logs for active or error conversations.
+	Retention: 90 days (override via site_config key 'audit_log_retention_days').
+	Never deletes logs for active or error conversations.
 	Run daily via scheduler.
 	"""
-	retention_days = 90
+	retention_days = int(frappe.conf.get("audit_log_retention_days", 90))
 
 	cutoff = add_to_date(now_datetime(), days=-retention_days)
 
