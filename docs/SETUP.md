@@ -225,18 +225,23 @@ WORKERS=2
 DEBUG=false
 ```
 
-### 3. Start All Services
+### 3. Start the Services
 
+**If Ollama is on this machine** (local setup):
 ```bash
 docker-compose -f docker-compose.selfhosted.yml up -d
 ```
+This starts 3 containers: Processing App (port 8000), Redis (port 6379), Ollama (port 11434).
 
-This starts three containers:
-- `processing` — FastAPI app on port 8000
-- `redis` — State store on port 6379
-- `ollama` — LLM server on port 11434
+**If Ollama is on a separate server** (remote setup — your case):
+```bash
+docker-compose -f docker-compose.remote-ollama.yml up -d
+```
+This starts only 2 containers: Processing App (port 8000) and Redis (port 6379). No local Ollama — it uses the remote server you configured in `.env`.
 
-### 4. Pull the LLM Model
+### 4. Pull the LLM Model (local Ollama only)
+
+Skip this step if using remote Ollama — the model is already on the remote server.
 
 This downloads the AI model (~4.7 GB for llama3.1). Only needed once.
 
