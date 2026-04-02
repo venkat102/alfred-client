@@ -22,7 +22,7 @@ bench build --app alfred_client
 cd /path/to/alfred_processing
 cp .env.example .env
 # Edit .env: set API_SECRET_KEY (generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-docker-compose -f docker-compose.selfhosted.yml up -d
+docker compose --profile local-llm up -d
 docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull llama3.1
 
 # 3. Configure: open /app/alfred-settings in your browser
@@ -227,17 +227,21 @@ DEBUG=false
 
 ### 3. Start the Services
 
-**If Ollama is on this machine** (local setup):
-```bash
-docker-compose -f docker-compose.selfhosted.yml up -d
-```
-This starts 3 containers: Processing App (port 8000), Redis (port 6379), Ollama (port 11434).
+Choose the command that matches your Ollama setup:
 
-**If Ollama is on a separate server** (remote setup — your case):
 ```bash
-docker-compose -f docker-compose.remote-ollama.yml up -d
+# Remote Ollama (Ollama runs on another server — configure URL in .env)
+docker compose up -d
+
+# Local Ollama on CPU (starts Ollama container alongside processing + redis)
+docker compose --profile local-llm up -d
+
+# Local Ollama with GPU (requires NVIDIA Container Toolkit)
+docker compose --profile local-llm --profile gpu up -d
 ```
-This starts only 2 containers: Processing App (port 8000) and Redis (port 6379). No local Ollama — it uses the remote server you configured in `.env`.
+
+The default (`docker compose up -d`) starts **2 containers**: Processing App (port 8000) + Redis (port 6379).
+Adding `--profile local-llm` adds a **3rd container**: Ollama (port 11434).
 
 ### 4. Pull the LLM Model (local Ollama only)
 
@@ -484,7 +488,7 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 **Fix**:
 1. Use a smaller model: set `FALLBACK_LLM_MODEL=ollama/llama3.2:3b`
 2. Increase timeout in Alfred Settings → Limits → Task Timeout
-3. Add GPU support (uncomment GPU section in docker-compose.selfhosted.yml)
+3. Add GPU support (use `docker compose --profile local-llm --profile gpu up -d`)
 
 ### Deployment failed with "Permission Denied"
 
@@ -862,7 +866,7 @@ cd alfred_processing
 git pull origin main
 
 # Rebuild and restart Docker containers
-docker-compose -f docker-compose.selfhosted.yml up -d --build
+docker compose --profile local-llm up -d --build
 
 # Or if running natively:
 .venv/bin/pip install -e .

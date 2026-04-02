@@ -26,7 +26,11 @@ FALLBACK_LLM_BASE_URL=http://ollama:11434
 ## Step 2: Start Services
 
 ```bash
-docker-compose -f docker-compose.selfhosted.yml up -d
+# With local Ollama:
+docker compose --profile local-llm up -d
+
+# Or without Ollama (if using remote Ollama or cloud LLM):
+docker compose up -d
 ```
 
 This starts:
@@ -67,7 +71,7 @@ Navigate to `/app/alfred` and type: "Create a DocType called Book with title and
 
 ## Troubleshooting
 
-**Ollama out of memory**: Use a smaller model (`llama3.2:3b`) or add GPU support by uncommenting the GPU section in `docker-compose.selfhosted.yml`.
+**Ollama out of memory**: Use a smaller model (`llama3.2:3b`) or add GPU support with `docker compose --profile local-llm --profile gpu up -d`.
 
 **Processing App unreachable**: Check that your Frappe site can reach `localhost:8000`. If running in Docker, use the host's IP instead of `localhost`.
 
