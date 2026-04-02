@@ -1,9 +1,10 @@
 import frappe
 
 
+@frappe.whitelist()
 def has_app_permission():
 	"""Check if current user has permission to access the Alfred app.
-	Used by the apps screen to control visibility."""
+	Used by the apps screen and page load to control visibility."""
 	try:
 		validate_alfred_access()
 		return True

@@ -102,9 +102,9 @@ Your Browser
 │  Your Frappe Site                │
 │  (alfred_client app installed)   │
 │                                  │
-│  /app/alfred ← Chat UI          │
-│  /app/alfred-settings ← Config  │
-│  MCP Server (9 tools)           │
+│  /app/alfred ← Chat UI           │
+│  /app/alfred-settings ← Config   │
+│  MCP Server (9 tools)            │
 │  Deployment Engine               │
 └──────────┬───────────────────────┘
            │ WebSocket (outbound)
@@ -112,9 +112,9 @@ Your Browser
 ┌──────────────────────────────────┐
 │  Processing App (Docker)         │
 │  FastAPI + CrewAI agents         │
-│  ┌────────┐  ┌────────┐        │
-│  │ Redis  │  │ Ollama │        │
-│  └────────┘  └────────┘        │
+│  ┌────────┐  ┌────────┐          │
+│  │ Redis  │  │ Ollama │          │
+│  └────────┘  └────────┘          │
 └──────────────────────────────────┘
 ```
 
