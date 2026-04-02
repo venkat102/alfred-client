@@ -34,7 +34,7 @@ docker compose up -d
 ```
 
 This starts:
-- **Processing App** (port 8000) — the AI agent service
+- **Processing App** (port 8001) — the AI agent service
 - **Redis** (port 6379) — state store
 - **Ollama** (port 11434) — local LLM server
 
@@ -49,7 +49,7 @@ For smaller hardware, use `llama3.2:3b` or `mistral:7b`.
 ## Step 4: Verify Health
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8001/health
 # Expected: {"status": "ok", "version": "0.1.0", "redis": "connected"}
 ```
 
@@ -59,7 +59,7 @@ On your Frappe site, go to `/app/alfred-settings`:
 
 | Field | Value |
 |-------|-------|
-| Processing App URL | `ws://localhost:8000` (or your server's IP) |
+| Processing App URL | `ws://localhost:8001` (or your server's IP) |
 | API Key | Same value as `API_SECRET_KEY` in `.env` |
 | LLM Provider | `ollama` |
 | LLM Model | `ollama/llama3.1` |
@@ -73,14 +73,14 @@ Navigate to `/app/alfred` and type: "Create a DocType called Book with title and
 
 **Ollama out of memory**: Use a smaller model (`llama3.2:3b`) or add GPU support with `docker compose --profile local-llm --profile gpu up -d`.
 
-**Processing App unreachable**: Check that your Frappe site can reach `localhost:8000`. If running in Docker, use the host's IP instead of `localhost`.
+**Processing App unreachable**: Check that your Frappe site can reach `localhost:8001`. If running in Docker, use the host's IP instead of `localhost`.
 
 **Redis connection refused**: Ensure the Redis container is running: `docker ps | grep redis`.
 
-**WebSocket connection fails**: Check firewall allows port 8000. If behind nginx, add WebSocket proxy:
+**WebSocket connection fails**: Check firewall allows port 8001. If behind nginx, add WebSocket proxy:
 ```nginx
 location /ws/ {
-    proxy_pass http://localhost:8000;
+    proxy_pass http://localhost:8001;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";

@@ -108,7 +108,7 @@ Environment variables (set in `.env` or Docker):
 
 **"Processing App unreachable"**
 - Check that the Processing App URL in Alfred Settings is correct (ws:// or wss://)
-- Verify the Processing App is running: `curl http://processing-host:8000/health`
+- Verify the Processing App is running: `curl http://processing-host:8001/health`
 - Check firewall rules allow WebSocket connections
 
 **"Permission denied" when using Alfred**

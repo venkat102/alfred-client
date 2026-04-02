@@ -2,7 +2,7 @@
 
 ## Processing App REST API
 
-Base URL: `http://processing-host:8000`
+Base URL: `http://processing-host:8001`
 
 ### Health Check
 ```
@@ -55,7 +55,7 @@ Codes: AUTH_MISSING, AUTH_INVALID, RATE_LIMIT, TASK_NOT_FOUND, REDIS_UNAVAILABLE
 
 ### Connection
 ```
-ws://processing-host:8000/ws/{conversation_id}
+ws://processing-host:8001/ws/{conversation_id}
 ```
 
 ### Handshake (first message from client)

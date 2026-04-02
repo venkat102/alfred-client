@@ -26,7 +26,7 @@ docker compose --profile local-llm up -d
 docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull llama3.1
 
 # 3. Configure: open /app/alfred-settings in your browser
-#    - Connection tab: set Processing App URL = ws://localhost:8000, paste your API_SECRET_KEY
+#    - Connection tab: set Processing App URL = ws://localhost:8001, paste your API_SECRET_KEY
 #    - LLM tab: set Provider = ollama, Model = ollama/llama3.1, Base URL = http://localhost:11434
 #    - Save
 
@@ -220,10 +220,12 @@ ALLOWED_ORIGINS=*
 
 # Server
 HOST=0.0.0.0
-PORT=8000
+PORT=8001
 WORKERS=2
 DEBUG=false
 ```
+
+> **Port conflict with Frappe**: Frappe's bench runs on port **8000** by default. Since the processing app also defaults to 8000, you **must** change one of them when both run on the same machine. We recommend setting the processing app to `PORT=8001` in `.env`. All examples in this guide use port 8001. Adjust if you chose a different port.
 
 ### 3. Start the Services
 
@@ -240,7 +242,7 @@ docker compose --profile local-llm up -d
 docker compose --profile local-llm --profile gpu up -d
 ```
 
-The default (`docker compose up -d`) starts **2 containers**: Processing App (port 8000) + Redis (port 6379).
+The default (`docker compose up -d`) starts **2 containers**: Processing App (port 8001) + Redis (port 6379).
 Adding `--profile local-llm` adds a **3rd container**: Ollama (port 11434).
 
 ### 4. Pull the LLM Model (local Ollama only)
@@ -262,7 +264,7 @@ Then set `FALLBACK_LLM_MODEL=ollama/llama3.2:3b` in `.env` and restart.
 ### 5. Verify the Processing App
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8001/health
 ```
 
 Expected response:
@@ -270,7 +272,7 @@ Expected response:
 {"status": "ok", "version": "0.1.0", "redis": "connected"}
 ```
 
-Also verify the API docs load: open `http://localhost:8000/docs` in your browser.
+Also verify the API docs load: open `http://localhost:8001/docs` in your browser.
 
 ---
 
@@ -285,7 +287,7 @@ Fill in these fields:
 #### Connection Tab
 | Field | Value | Notes |
 |-------|-------|-------|
-| Processing App URL | `ws://localhost:8000` | Use your server IP if Frappe and Docker are on different machines |
+| Processing App URL | `ws://localhost:8001` | Use your server IP if Frappe and Docker are on different machines |
 | API Key | *(paste the `API_SECRET_KEY` from your `.env`)* | Must match exactly |
 | Self-Hosted Mode | ✓ Check this | You're running your own processing app |
 
@@ -333,7 +335,7 @@ bench restart
 
 ```bash
 # 1. Processing app is running
-curl http://localhost:8000/health
+curl http://localhost:8001/health
 # Expected: {"status": "ok", "redis": "connected"}
 
 # 2. Ollama has a model
@@ -465,10 +467,10 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 **Cause**: The Frappe site can't reach the processing app via WebSocket.
 
 **Fix**:
-1. Verify the processing app is running: `curl http://localhost:8000/health`
+1. Verify the processing app is running: `curl http://localhost:8001/health`
 2. Check the URL in Alfred Settings → Processing App URL
 3. If Frappe and Docker are on different machines, use the server's IP instead of `localhost`
-4. Check firewall allows port 8000
+4. Check firewall allows port 8001
 5. If behind nginx, add WebSocket proxy config (see below)
 
 ### "Not Authorized" when opening /app/alfred
@@ -513,7 +515,7 @@ If your Frappe site is behind nginx and needs to reach the processing app:
 ```nginx
 # Add to your nginx server block
 location /alfred-ws/ {
-    proxy_pass http://localhost:8000/ws/;
+    proxy_pass http://localhost:8001/ws/;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -753,7 +755,7 @@ server {
 
     # REST API
     location / {
-        proxy_pass http://localhost:8000;
+        proxy_pass http://localhost:8001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -762,7 +764,7 @@ server {
 
     # WebSocket
     location /ws/ {
-        proxy_pass http://localhost:8000/ws/;
+        proxy_pass http://localhost:8001/ws/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -779,7 +781,7 @@ Then in Alfred Settings:
 **Option B: Cloudflare Tunnel** (no port exposure needed)
 
 ```bash
-cloudflared tunnel --url http://localhost:8000
+cloudflared tunnel --url http://localhost:8001
 ```
 
 ### Production Environment Variables
@@ -820,7 +822,7 @@ User=alfred
 Group=alfred
 WorkingDirectory=/opt/alfred_processing
 EnvironmentFile=/opt/alfred_processing/.env
-ExecStart=/opt/alfred_processing/.venv/bin/uvicorn alfred.main:app --host 0.0.0.0 --port 8000 --workers 4
+ExecStart=/opt/alfred_processing/.venv/bin/uvicorn alfred.main:app --host 0.0.0.0 --port 8001 --workers 4
 Restart=always
 RestartSec=5
 
@@ -936,7 +938,7 @@ Set up monitoring on these endpoints:
 
 | Endpoint | Expected | Check Interval |
 |----------|----------|---------------|
-| `GET http://processing-app:8000/health` | `{"status": "ok", "redis": "connected"}` | 30 seconds |
+| `GET http://processing-app:8001/health` | `{"status": "ok", "redis": "connected"}` | 30 seconds |
 | `GET http://your-site:8000/api/method/ping` | `{"message": "pong"}` | 30 seconds |
 | `http://ollama:11434/api/tags` | JSON with model list | 5 minutes |
 
