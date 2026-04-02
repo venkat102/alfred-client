@@ -245,6 +245,28 @@ docker compose --profile local-llm --profile gpu up -d
 The default (`docker compose up -d`) starts **2 containers**: Processing App (port 8001) + Redis (port 6379).
 Adding `--profile local-llm` adds a **3rd container**: Ollama (port 11434).
 
+#### Stopping and restarting
+
+```bash
+# Stop containers (keeps data, can restart quickly)
+docker compose stop
+
+# Restart stopped containers
+docker compose start
+
+# Stop and remove containers (restart with 'docker compose up -d')
+docker compose down
+
+# Stop, remove containers, AND delete all data (Redis state lost)
+docker compose down -v
+
+# View running containers and their status
+docker compose ps
+
+# Rebuild after code changes (pulls new image, restarts)
+docker compose up -d --build
+```
+
 ### 4. Pull the LLM Model (local Ollama only)
 
 Skip this step if using remote Ollama — the model is already on the remote server.
