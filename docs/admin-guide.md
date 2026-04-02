@@ -18,9 +18,9 @@ Access at `/app/alfred-settings`. Only System Managers can configure.
 | Field | Description | Default |
 |-------|-------------|---------|
 | LLM Provider | ollama, anthropic, openai, gemini, bedrock | — |
-| LLM Model | Model identifier (e.g., `ollama/llama3.1`) | — |
-| LLM API Key | Provider API key (not needed for Ollama) | — |
-| LLM Base URL | Custom endpoint (e.g., `http://localhost:11434`) | — |
+| LLM Model | Model name (e.g., `codegemma:7b`, `llama3.1`). Auto-prefixed with provider. | — |
+| LLM API Key | Provider API key. Optional for Ollama (needed if proxy requires auth). | — |
+| LLM Base URL | Endpoint URL. Local Ollama: `http://localhost:11434`. Remote: `http://server-ip:11434`. Empty for cloud. | — |
 | Max Tokens | Max tokens per LLM response | 4096 |
 | Temperature | Generation randomness (0.0-2.0) | 0.1 |
 

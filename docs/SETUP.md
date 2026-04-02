@@ -50,7 +50,7 @@ If any step fails, read the detailed sections below.
 9. [Part F: Admin Portal (Optional)](#part-f-admin-portal-optional)
 10. [Configuration Reference](#configuration-reference)
 11. [Troubleshooting](#troubleshooting)
-12. [Using Cloud LLM Providers](#using-cloud-llm-providers)
+12. [LLM Provider Configuration](#llm-provider-configuration) (Ollama local/remote, Claude, GPT, Gemini, Bedrock)
 13. [Production Deployment](#production-deployment)
 14. [Updating Alfred](#updating-alfred)
 15. [Backup & Recovery](#backup--recovery)
@@ -281,13 +281,16 @@ Fill in these fields:
 | Self-Hosted Mode | ✓ Check this | You're running your own processing app |
 
 #### LLM Configuration Tab
-| Field | Value |
-|-------|-------|
-| LLM Provider | `ollama` |
-| LLM Model | `ollama/llama3.1` (or `ollama/llama3.2:3b` for smaller machines) |
-| LLM Base URL | `http://localhost:11434` |
-| Max Tokens | `4096` |
-| Temperature | `0.1` |
+| Field | Value | Notes |
+|-------|-------|-------|
+| LLM Provider | `ollama` | Works for both local and remote Ollama |
+| LLM Model | `codegemma:7b` or `llama3.1` | Auto-prefixed to `ollama/codegemma:7b` on save |
+| LLM API Key | *(leave empty)* | Only needed if your Ollama endpoint requires auth |
+| LLM Base URL | `http://localhost:11434` | For remote Ollama: `http://your-server-ip:11434` |
+| Max Tokens | `4096` | |
+| Temperature | `0.1` | |
+
+> **Using a remote Ollama?** Set the Base URL to your server's address (e.g., `http://135.13.20.57:11434`). Alfred connects to it the same way as local — just a different URL. See [Ollama Configuration](#ollama-local-and-remote) below for details.
 
 #### Access Control Tab
 | Field | Value |
@@ -415,7 +418,7 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 | self_hosted_mode | Check | No | Enable for self-hosted deployments |
 | redis_url | Data | — | Redis URL (self-hosted only) |
 | llm_provider | Select | — | ollama, anthropic, openai, gemini, bedrock |
-| llm_model | Data | — | Model ID (e.g., ollama/llama3.1) |
+| llm_model | Data | — | Model ID (e.g., codegemma:7b, llama3.1). Auto-prefixed with provider on save. |
 | llm_api_key | Password | — | API key for cloud LLM providers |
 | llm_base_url | Data | — | Custom endpoint URL |
 | llm_max_tokens | Int | 4096 | Max tokens per response |
@@ -541,9 +544,88 @@ tail -f ~/frappe-bench/logs/worker.error.log
 
 ---
 
-## Using Cloud LLM Providers
+## LLM Provider Configuration
 
-Ollama is free and private, but cloud providers give better results for complex tasks. Alfred supports any provider that LiteLLM supports.
+Alfred supports Ollama (local or remote) and cloud providers (Anthropic, OpenAI, Gemini, Bedrock). You can switch providers at any time — each new conversation uses the current configuration.
+
+### Ollama (Local and Remote)
+
+Ollama runs open-source models. It works identically whether running locally on the same machine or on a remote server.
+
+**Model name auto-prefix**: You can type just `codegemma:7b` — Alfred automatically converts it to `ollama/codegemma:7b` on save (required by LiteLLM for routing).
+
+#### Local Ollama (same machine as Processing App)
+
+| Field | Value |
+|-------|-------|
+| LLM Provider | `ollama` |
+| LLM Model | `llama3.1` (auto-prefixed to `ollama/llama3.1`) |
+| LLM API Key | *(leave empty)* |
+| LLM Base URL | `http://localhost:11434` |
+
+Processing app `.env`:
+```env
+FALLBACK_LLM_MODEL=ollama/llama3.1
+FALLBACK_LLM_BASE_URL=http://localhost:11434
+```
+
+#### Remote Ollama (separate server, accessed via network)
+
+If Ollama runs on a different machine (e.g., a GPU server), point the Base URL to that server's IP:
+
+| Field | Value |
+|-------|-------|
+| LLM Provider | `ollama` |
+| LLM Model | `codegemma:7b` (auto-prefixed to `ollama/codegemma:7b`) |
+| LLM API Key | *(leave empty, unless your proxy requires auth)* |
+| LLM Base URL | `http://135.13.20.57:11434` (your server's IP and port) |
+
+Processing app `.env`:
+```env
+FALLBACK_LLM_MODEL=ollama/codegemma:7b
+FALLBACK_LLM_BASE_URL=http://135.13.20.57:11434
+```
+
+**Verify the remote Ollama is reachable**:
+```bash
+curl http://135.13.20.57:11434/api/tags
+# Should return a JSON list of installed models
+
+curl http://135.13.20.57:11434/api/generate -H "Content-Type: application/json" \
+  -d '{"model":"codegemma:7b","prompt":"Hello","stream":false}'
+# Should return a JSON response with generated text
+```
+
+#### Ollama via API Proxy / Jump Server
+
+If Ollama is behind a proxy or only reachable through a jump server with a custom endpoint:
+
+| Field | Value |
+|-------|-------|
+| LLM Provider | `ollama` |
+| LLM Model | `codegemma:7b` |
+| LLM API Key | *(set if your proxy requires an auth token)* |
+| LLM Base URL | `http://your-proxy-host:port` (wherever the `/api/generate` endpoint is exposed) |
+
+The only requirement is that the Base URL responds to Ollama's HTTP API format (`/api/generate`, `/api/tags`, etc.).
+
+#### Testing the Connection
+
+After configuring, you can verify the connection works:
+```bash
+# From the machine running the Processing App:
+curl http://your-ollama-host:11434/api/tags
+```
+
+Or from Alfred Settings, the system validates connectivity when you save (checks if the endpoint is reachable and the model is installed).
+
+**Pricing**: Free. No API keys. No usage limits. Only cost is the hardware running Ollama.
+
+---
+
+### Cloud LLM Providers
+
+Cloud providers give faster and often better results than local Ollama, at the cost of sending data to an external API.
 
 ### Anthropic Claude
 
