@@ -1,6 +1,7 @@
 import json
 
 import frappe
+import requests
 from frappe.model.document import Document
 
 
@@ -39,6 +40,7 @@ class AlfredSettings(Document):
 
 	def validate(self):
 		self.validate_limits()
+		self.normalize_llm_model()
 
 	def validate_limits(self):
 		if self.llm_max_tokens and self.llm_max_tokens < 0:
@@ -56,3 +58,143 @@ class AlfredSettings(Document):
 
 		if self.stale_conversation_hours and self.stale_conversation_hours < 0:
 			frappe.throw(frappe._("Stale Conversation Hours cannot be negative"))
+
+	def normalize_llm_model(self):
+		"""Auto-prefix model name with provider if missing.
+
+		Users often type 'codegemma:7b' instead of 'ollama/codegemma:7b'.
+		LiteLLM requires the provider prefix to route correctly.
+		"""
+		if not self.llm_model or not self.llm_provider:
+			return
+
+		model = self.llm_model.strip()
+		provider = self.llm_provider.strip()
+
+		# If model already has a provider prefix (contains /), leave it
+		if "/" in model:
+			return
+
+		# Auto-prefix: codegemma:7b → ollama/codegemma:7b
+		self.llm_model = f"{provider}/{model}"
+
+
+@frappe.whitelist()
+def test_llm_connection():
+	"""Test connectivity to the configured LLM endpoint.
+
+	For Ollama: calls /api/tags to list available models.
+	For cloud providers: attempts a minimal completion call.
+
+	Returns: {"status": "ok|error", "message": str, "models": list|None}
+	"""
+	settings = frappe.get_single("Alfred Settings")
+	provider = settings.llm_provider
+	base_url = settings.llm_base_url or ""
+	model = settings.llm_model or ""
+	api_key = settings.get_password("llm_api_key") if settings.llm_api_key else ""
+
+	if not provider:
+		return {"status": "error", "message": "No LLM provider configured. Set it in the LLM Configuration tab."}
+
+	try:
+		if provider == "ollama":
+			return _test_ollama(base_url, model)
+		else:
+			return _test_cloud_provider(provider, model, api_key, base_url)
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
+
+
+def _test_ollama(base_url, model):
+	"""Test Ollama connection — list models and optionally test generation."""
+	if not base_url:
+		return {"status": "error", "message": "LLM Base URL is required for Ollama. Set it to http://your-server:11434"}
+
+	url = base_url.rstrip("/")
+
+	# Step 1: Check if Ollama is reachable
+	try:
+		resp = requests.get(f"{url}/api/tags", timeout=10)
+		resp.raise_for_status()
+		data = resp.json()
+	except requests.ConnectionError:
+		return {"status": "error", "message": f"Cannot connect to Ollama at {url}. Check the URL and ensure Ollama is running."}
+	except requests.Timeout:
+		return {"status": "error", "message": f"Connection to {url} timed out. The server may be slow or unreachable."}
+	except Exception as e:
+		return {"status": "error", "message": f"Error connecting to Ollama: {e}"}
+
+	# Step 2: List available models
+	available_models = [m.get("name", "") for m in data.get("models", [])]
+
+	# Step 3: Check if the configured model is available
+	# Extract model name without provider prefix (ollama/codegemma:7b → codegemma:7b)
+	short_model = model.split("/", 1)[-1] if "/" in model else model
+	model_found = any(short_model in m for m in available_models)
+
+	if not available_models:
+		return {
+			"status": "warning",
+			"message": f"Connected to Ollama at {url}, but no models are installed. Run: ollama pull {short_model}",
+			"models": [],
+		}
+
+	if not model_found and short_model:
+		return {
+			"status": "warning",
+			"message": f"Connected to Ollama at {url}. Model '{short_model}' not found. Available models: {', '.join(available_models)}. Run: ollama pull {short_model}",
+			"models": available_models,
+		}
+
+	# Step 4: Quick generation test
+	try:
+		test_resp = requests.post(
+			f"{url}/api/generate",
+			json={"model": short_model, "prompt": "Hi", "stream": False},
+			timeout=30,
+		)
+		test_resp.raise_for_status()
+		return {
+			"status": "ok",
+			"message": f"Connected to Ollama at {url}. Model '{short_model}' is responding. Available models: {', '.join(available_models)}",
+			"models": available_models,
+		}
+	except requests.Timeout:
+		return {
+			"status": "warning",
+			"message": f"Connected to Ollama at {url}. Model '{short_model}' found but generation timed out (30s). The model may be loading for the first time — try again.",
+			"models": available_models,
+		}
+	except Exception as e:
+		return {
+			"status": "warning",
+			"message": f"Connected to Ollama at {url}. Model '{short_model}' found but generation test failed: {e}",
+			"models": available_models,
+		}
+
+
+def _test_cloud_provider(provider, model, api_key, base_url):
+	"""Test cloud LLM provider connection with a minimal API call."""
+	if not api_key and provider != "bedrock":
+		return {"status": "error", "message": f"API key is required for {provider}. Set it in the LLM Configuration tab."}
+
+	if not model:
+		return {"status": "error", "message": "No model configured. Set the LLM Model field."}
+
+	# Use LiteLLM for the test call
+	try:
+		import litellm
+
+		kwargs = {"model": model, "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 5}
+		if api_key:
+			kwargs["api_key"] = api_key
+		if base_url:
+			kwargs["base_url"] = base_url
+
+		response = litellm.completion(**kwargs)
+		return {"status": "ok", "message": f"Connected to {provider}. Model '{model}' is responding."}
+	except ImportError:
+		return {"status": "error", "message": "LiteLLM is not installed in the Frappe environment. The Processing App handles LLM calls — test from there instead."}
+	except Exception as e:
+		return {"status": "error", "message": f"Connection to {provider} failed: {e}"}

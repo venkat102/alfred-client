@@ -94,20 +94,19 @@
 			"fieldtype": "Select",
 			"label": "LLM Provider",
 			"options": "\nollama\nanthropic\nopenai\ngemini\nbedrock",
-			"description": "Select your LLM provider. Ollama for local models, others require API keys."
+			"description": "Select your LLM provider. Ollama works for both local and remote instances."
 		},
 		{
 			"fieldname": "llm_model",
 			"fieldtype": "Data",
 			"label": "LLM Model",
-			"description": "Model identifier (e.g., ollama/llama3.1, claude-sonnet-4-20250514, gpt-4o)"
+			"description": "Model identifier. For Ollama: ollama/codegemma:7b, ollama/llama3.1. For others: claude-sonnet-4-20250514, gpt-4o"
 		},
 		{
-			"depends_on": "eval:doc.llm_provider && doc.llm_provider !== 'ollama'",
 			"fieldname": "llm_api_key",
 			"fieldtype": "Password",
 			"label": "LLM API Key",
-			"description": "API key for the selected LLM provider. Not required for Ollama."
+			"description": "API key for the LLM provider. Optional for Ollama (only needed if your Ollama endpoint requires authentication)."
 		},
 		{
 			"fieldname": "column_break_llm",
@@ -117,7 +116,7 @@
 			"fieldname": "llm_base_url",
 			"fieldtype": "Data",
 			"label": "LLM Base URL",
-			"description": "Custom endpoint URL (e.g., http://localhost:11434 for Ollama). Leave empty for cloud providers."
+			"description": "Endpoint URL. For local Ollama: http://localhost:11434. For remote Ollama: http://your-server-ip:11434. Leave empty for cloud providers (Anthropic, OpenAI, etc.)."
 		},
 		{
 			"default": "4096",
