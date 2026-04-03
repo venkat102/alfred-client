@@ -9,7 +9,7 @@ import frappe
 def run_tests():
 	print("\n=== Alfred Chat Page Tests ===\n")
 
-	from alfred_client.alfred_settings.page.alfred.alfred import (
+	from alfred_client.alfred_settings.page.alfred_chat.alfred_chat import (
 		get_conversations,
 		create_conversation,
 		get_messages,

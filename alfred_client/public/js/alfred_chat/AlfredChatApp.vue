@@ -132,14 +132,14 @@ watch(messages, () => nextTick(scrollToBottom), { deep: true });
 // ── API Calls ──────────────────────────────────────────────────
 function loadConversations() {
 	frappe.call({
-		method: "alfred_client.alfred_settings.page.alfred.alfred.get_conversations",
+		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_conversations",
 		callback: (r) => { if (r.message) conversations.value = r.message; },
 	});
 }
 
 function newConversation() {
 	frappe.call({
-		method: "alfred_client.alfred_settings.page.alfred.alfred.create_conversation",
+		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.create_conversation",
 		callback: (r) => {
 			if (r.message) {
 				openConversation(r.message.name);
@@ -151,7 +151,7 @@ function newConversation() {
 
 function newConversationWithPrompt(prompt) {
 	frappe.call({
-		method: "alfred_client.alfred_settings.page.alfred.alfred.create_conversation",
+		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.create_conversation",
 		callback: (r) => {
 			if (r.message) {
 				openConversation(r.message.name);
@@ -176,7 +176,7 @@ function openConversation(name) {
 	statusState.value = "disconnected";
 
 	frappe.call({
-		method: "alfred_client.alfred_settings.page.alfred.alfred.get_messages",
+		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_messages",
 		args: { conversation: name },
 		callback: (r) => { if (r.message) messages.value = r.message; },
 	});
@@ -210,7 +210,7 @@ function sendMessage(text) {
 	startTimer();
 
 	frappe.call({
-		method: "alfred_client.alfred_settings.page.alfred.alfred.send_message",
+		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.send_message",
 		args: { conversation: currentConversation.value, message: msg },
 		error: () => {
 			isProcessing.value = false;
@@ -241,7 +241,7 @@ function approveChangeset() {
 		 ).join("")}</ul>`,
 		() => {
 			frappe.call({
-				method: "alfred_client.alfred_settings.page.alfred.alfred.approve_changeset",
+				method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.approve_changeset",
 				args: { changeset_name: changeset.value.name },
 				callback: (r) => {
 					if (r.message) {
@@ -265,7 +265,7 @@ function rejectChangeset() {
 	if (!changeset.value) return;
 	frappe.confirm(__("Are you sure you want to reject this changeset?"), () => {
 		frappe.call({
-			method: "alfred_client.alfred_settings.page.alfred.alfred.reject_changeset",
+			method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.reject_changeset",
 			args: { changeset_name: changeset.value.name },
 			callback: () => {
 				changeset.value = null;
@@ -312,7 +312,7 @@ function setupRealtime() {
 	frappe.realtime.on("alfred_preview", (data) => {
 		if (!currentConversation.value || !data.changeset_name) return;
 		frappe.call({
-			method: "alfred_client.alfred_settings.page.alfred.alfred.get_changeset",
+			method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_changeset",
 			args: { changeset_name: data.changeset_name },
 			callback: (r) => { if (r.message) changeset.value = r.message; },
 		});
