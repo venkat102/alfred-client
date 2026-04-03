@@ -199,6 +199,15 @@ async def _connection_loop(conversation_name, user):
 						"data": {"last_msg_id": last_msg_id},
 					}))
 
+				# Drain any queued messages that arrived before we were listening
+				queue_key = f"{_REDIS_CHANNEL_PREFIX}queue:{conversation_name}"
+				while True:
+					queued = await redis_client.lpop(queue_key)
+					if not queued:
+						break
+					logger.info("Draining queued message for %s", conversation_name)
+					await ws.send(queued)
+
 				# Run two tasks concurrently:
 				# 1. Listen for inbound WS messages (from Processing App)
 				# 2. Listen for outbound Redis pub/sub messages (from Frappe workers)

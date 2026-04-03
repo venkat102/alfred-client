@@ -104,8 +104,9 @@ def send_message(conversation, message):
 
 	frappe.db.commit()
 
-	# Send to Processing App via Redis pub/sub
-	# The connection manager (background job) picks this up and forwards via WebSocket
+	# Send to Processing App
+	# Uses Redis LIST (not pub/sub) so messages are not lost if the connection
+	# manager hasn't started yet. The manager drains the list on startup.
 	try:
 		import uuid as _uuid
 		from alfred_client.api.websocket_client import _REDIS_CHANNEL_PREFIX, start_conversation
@@ -113,13 +114,16 @@ def send_message(conversation, message):
 		# Ensure the connection manager is running for this conversation
 		start_conversation(conversation)
 
-		# Publish message directly to Redis (don't call ws_send - it would create a duplicate DB record)
+		# Push to a Redis list - connection manager will drain this queue
 		redis_msg = json.dumps({
 			"msg_id": str(_uuid.uuid4()),
 			"type": "prompt",
 			"data": {"text": message, "user": frappe.session.user},
 		})
 		redis_conn = frappe.cache()
+		queue_key = f"{_REDIS_CHANNEL_PREFIX}queue:{conversation}"
+		redis_conn.rpush(queue_key, redis_msg)
+		# Also publish for immediate delivery if manager is already listening
 		channel = f"{_REDIS_CHANNEL_PREFIX}{conversation}"
 		redis_conn.publish(channel, redis_msg)
 	except Exception as e:
