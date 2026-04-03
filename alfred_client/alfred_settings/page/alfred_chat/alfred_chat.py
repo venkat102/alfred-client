@@ -104,17 +104,27 @@ def send_message(conversation, message):
 
 	frappe.db.commit()
 
-	# Trigger WebSocket send to Processing App (only the send, not duplicate message creation)
+	# Send to Processing App via Redis pub/sub
+	# The connection manager (background job) picks this up and forwards via WebSocket
 	try:
-		frappe.enqueue(
-			"alfred_client.api.websocket_client._async_send_message",
-			conversation_name=conversation,
-			msg_type="prompt",
-			data={"text": message, "user": frappe.session.user},
-			queue="long",
-		)
-	except Exception:
-		pass  # WebSocket may not be connected yet
+		import uuid as _uuid
+		from alfred_client.api.websocket_client import _REDIS_CHANNEL_PREFIX, start_conversation
+
+		# Ensure the connection manager is running for this conversation
+		start_conversation(conversation)
+
+		# Publish message directly to Redis (don't call ws_send - it would create a duplicate DB record)
+		redis_msg = json.dumps({
+			"msg_id": str(_uuid.uuid4()),
+			"type": "prompt",
+			"data": {"text": message, "user": frappe.session.user},
+		})
+		redis_conn = frappe.cache()
+		channel = f"{_REDIS_CHANNEL_PREFIX}{conversation}"
+		redis_conn.publish(channel, redis_msg)
+	except Exception as e:
+		frappe.logger().error(f"Failed to send to Processing App: {e}")
+		# Message is saved in DB even if WS fails - user can retry
 
 	return {"name": msg.name, "status": "sent"}
 
