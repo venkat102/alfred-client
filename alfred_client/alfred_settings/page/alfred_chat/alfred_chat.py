@@ -134,6 +134,30 @@ def send_message(conversation, message):
 
 
 @frappe.whitelist()
+def delete_conversation(conversation):
+	"""Delete a conversation and all its linked records."""
+	from alfred_client.api.permissions import validate_alfred_access
+
+	validate_alfred_access()
+
+	conv = frappe.get_doc("Alfred Conversation", conversation)
+	if conv.user != frappe.session.user and "System Manager" not in frappe.get_roles():
+		frappe.throw(frappe._("You do not have access to this conversation"), frappe.PermissionError)
+
+	# Delete linked records first
+	frappe.db.delete("Alfred Message", {"conversation": conversation})
+	frappe.db.delete("Alfred Changeset", {"conversation": conversation})
+	frappe.db.delete("Alfred Audit Log", {"conversation": conversation})
+	frappe.db.delete("Alfred Created Document", {"parent": conversation})
+
+	# Delete the conversation
+	frappe.delete_doc("Alfred Conversation", conversation, force=True)
+	frappe.db.commit()
+
+	return {"status": "deleted"}
+
+
+@frappe.whitelist()
 def approve_changeset(changeset_name):
 	"""Approve a changeset for deployment."""
 	from alfred_client.api.permissions import validate_alfred_access

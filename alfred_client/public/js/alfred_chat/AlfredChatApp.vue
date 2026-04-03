@@ -24,6 +24,21 @@
 
 				<!-- Chat Area -->
 				<div v-else class="alfred-chat-area">
+					<!-- Chat Toolbar -->
+					<div class="alfred-chat-toolbar">
+						<button class="btn btn-xs btn-default" @click="goBack" :title="__('Back to conversations')">
+							← {{ __("Back") }}
+						</button>
+						<span class="alfred-chat-title text-muted text-sm">{{ conversationSummary }}</span>
+						<div class="alfred-chat-toolbar-actions">
+							<button class="btn btn-xs btn-primary" @click="newConversationFromChat" :title="__('Start a new conversation')">
+								+ {{ __("New") }}
+							</button>
+							<button class="btn btn-xs btn-danger" @click="deleteConversation" :title="__('Delete this conversation')">
+								{{ __("Delete") }}
+							</button>
+						</div>
+					</div>
 					<div ref="messagesContainer" class="alfred-messages">
 						<MessageBubble
 							v-for="msg in messages"
@@ -182,10 +197,40 @@ function openConversation(name) {
 	});
 }
 
+const conversationSummary = computed(() => {
+	const conv = conversations.value.find(c => c.name === currentConversation.value);
+	return conv?.first_message || currentConversation.value || "";
+});
+
 function goBack() {
 	currentConversation.value = null;
 	stopTimer();
 	loadConversations();
+}
+
+function newConversationFromChat() {
+	goBack();
+	newConversation();
+}
+
+function deleteConversation() {
+	if (!currentConversation.value) return;
+	frappe.confirm(
+		__("Delete this conversation and all its messages? This cannot be undone."),
+		() => {
+			frappe.call({
+				method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.delete_conversation",
+				args: { conversation: currentConversation.value },
+				callback: () => {
+					frappe.show_alert({ message: __("Conversation deleted"), indicator: "green" });
+					goBack();
+				},
+				error: () => {
+					frappe.show_alert({ message: __("Failed to delete conversation"), indicator: "red" });
+				},
+			});
+		}
+	);
 }
 
 function sendMessage(text) {
