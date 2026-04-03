@@ -34,9 +34,9 @@ docker compose up -d
 ```
 
 This starts:
-- **Processing App** (port 8001) — the AI agent service
-- **Redis** (port 6379) — state store
-- **Ollama** (port 11434) — local LLM server
+- **Processing App** (port 8001) - the AI agent service
+- **Redis** (port 6379) - state store
+- **Ollama** (port 11434) - local LLM server
 
 ## Step 3: Pull an LLM Model
 

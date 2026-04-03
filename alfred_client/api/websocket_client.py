@@ -29,7 +29,7 @@ _REDIS_CHANNEL_PREFIX = "alfred:ws:outbound:"
 
 
 def _get_site_id():
-	"""Get the canonical site_id — the Frappe site URL."""
+	"""Get the canonical site_id - the Frappe site URL."""
 	return frappe.utils.get_url()
 
 
@@ -120,7 +120,7 @@ def _connection_manager(conversation_name, user):
 	3. Routes inbound WS messages to the browser via frappe.publish_realtime()
 	4. Handles reconnection with exponential backoff
 
-	All message sending goes through Redis pub/sub — no cross-loop issues.
+	All message sending goes through Redis pub/sub - no cross-loop issues.
 	"""
 	loop = asyncio.new_event_loop()
 	asyncio.set_event_loop(loop)
@@ -286,7 +286,7 @@ async def _listen_redis(ws, pubsub, channel):
 def send_message(conversation_name, message, msg_type="prompt"):
 	"""Send a message to the Processing App via Redis pub/sub.
 
-	This is safe to call from any Frappe worker — it publishes to a Redis
+	This is safe to call from any Frappe worker - it publishes to a Redis
 	channel, and the connection manager (running in its own event loop)
 	picks it up and forwards it over the WebSocket.
 	"""
@@ -303,7 +303,7 @@ def send_message(conversation_name, message, msg_type="prompt"):
 	}).insert(ignore_permissions=True)
 	frappe.db.commit()
 
-	# Publish to Redis — connection manager will forward to Processing App
+	# Publish to Redis - connection manager will forward to Processing App
 	msg = json.dumps({
 		"msg_id": str(uuid.uuid4()),
 		"type": msg_type,

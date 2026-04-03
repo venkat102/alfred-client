@@ -1,4 +1,4 @@
-"""Functional tests for Alfred DocTypes — run with: bench --site dev.alfred execute alfred_client.test_doctypes.run_tests"""
+"""Functional tests for Alfred DocTypes - run with: bench --site dev.alfred execute alfred_client.test_doctypes.run_tests"""
 
 import json
 
@@ -117,7 +117,7 @@ def run_tests():
 	frappe.db.commit()
 	print(f"  Created audit log: {audit.name}")
 
-	# Try to modify — should fail
+	# Try to modify - should fail
 	try:
 		audit.action = "modified DocType"
 		audit.save()

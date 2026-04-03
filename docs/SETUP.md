@@ -1,4 +1,4 @@
-# Alfred — Complete Setup & Usage Guide
+# Alfred - Complete Setup & Usage Guide
 
 Everything you need to go from zero to a working Alfred installation. Follow these steps in order.
 
@@ -60,12 +60,12 @@ If any step fails, read the detailed sections below.
 
 ## What is Alfred?
 
-Alfred is an AI assistant that builds Frappe/ERPNext customizations through conversation. You tell it what you need in plain English — a new DocType, a workflow, a server script — and it designs, generates, validates, and deploys the solution to your Frappe site.
+Alfred is an AI assistant that builds Frappe/ERPNext customizations through conversation. You tell it what you need in plain English - a new DocType, a workflow, a server script - and it designs, generates, validates, and deploys the solution to your Frappe site.
 
 **Alfred consists of 3 components:**
-- **Client App** (`alfred_client`) — A Frappe app installed on your site. Provides the chat UI, runs MCP tools for site context, and executes deployments.
-- **Processing App** (`alfred_processing`) — A standalone FastAPI service that runs AI agents. Communicates with the client app via WebSocket.
-- **Admin Portal** (`alfred_admin`) — Optional Frappe app for managing customers, plans, and billing (only needed if you're offering Alfred as a service).
+- **Client App** (`alfred_client`) - A Frappe app installed on your site. Provides the chat UI, runs MCP tools for site context, and executes deployments.
+- **Processing App** (`alfred_processing`) - A standalone FastAPI service that runs AI agents. Communicates with the client app via WebSocket.
+- **Admin Portal** (`alfred_admin`) - Optional Frappe app for managing customers, plans, and billing (only needed if you're offering Alfred as a service).
 
 ---
 
@@ -193,7 +193,7 @@ git clone https://github.com/your-org/alfred_processing.git
 cd alfred_processing
 ```
 
-> **Where to get the code**: Your team will provide the repository URL or a zip file. The processing app is a standalone Python project — it does NOT go inside the Frappe bench. Place it anywhere on your server (e.g., `/opt/alfred_processing` or `~/alfred_processing`).
+> **Where to get the code**: Your team will provide the repository URL or a zip file. The processing app is a standalone Python project - it does NOT go inside the Frappe bench. Place it anywhere on your server (e.g., `/opt/alfred_processing` or `~/alfred_processing`).
 
 ### 2. Create Your Environment File
 
@@ -214,7 +214,7 @@ REDIS_URL=redis://redis:6379/0
 FALLBACK_LLM_MODEL=ollama/llama3.1
 FALLBACK_LLM_BASE_URL=http://ollama:11434
 
-# CORS — set to your Frappe site URL in production
+# CORS - set to your Frappe site URL in production
 # ALLOWED_ORIGINS=https://your-site.frappe.cloud
 ALLOWED_ORIGINS=*
 
@@ -232,7 +232,7 @@ DEBUG=false
 Choose the command that matches your Ollama setup:
 
 ```bash
-# Remote Ollama (Ollama runs on another server — configure URL in .env)
+# Remote Ollama (Ollama runs on another server - configure URL in .env)
 docker compose up -d
 
 # Local Ollama on CPU (starts Ollama container alongside processing + redis)
@@ -269,7 +269,7 @@ docker compose up -d --build
 
 ### 4. Pull the LLM Model (local Ollama only)
 
-Skip this step if using remote Ollama — the model is already on the remote server.
+Skip this step if using remote Ollama - the model is already on the remote server.
 
 This downloads the AI model (~4.7 GB for llama3.1). Only needed once.
 
@@ -323,7 +323,7 @@ Fill in these fields:
 | Max Tokens | `4096` | |
 | Temperature | `0.1` | |
 
-> **Using a remote Ollama?** Set the Base URL to your server's address (e.g., `http://135.13.20.57:11434`). Alfred connects to it the same way as local — just a different URL. See [Ollama Configuration](#ollama-local-and-remote) below for details.
+> **Using a remote Ollama?** Set the Base URL to your server's address (e.g., `http://135.13.20.57:11434`). Alfred connects to it the same way as local - just a different URL. See [Ollama Configuration](#ollama-local-and-remote) below for details.
 
 #### Access Control Tab
 | Field | Value |
@@ -386,13 +386,13 @@ curl http://dev.alfred:8000/api/method/frappe.client.get_count?doctype=Alfred+Se
    - Permission matrix
 6. Click **"Approve & Deploy"**
 7. Confirm in the dialog
-8. Verify: navigate to `/app/book` — you should see the new DocType
+8. Verify: navigate to `/app/book` - you should see the new DocType
 
 ---
 
 ## Part E: Using Alfred
 
-Setup is complete. For the full usage guide — including step-by-step conversation walkthrough, what each screen element means, how to handle errors, escalation, rollback, and tips for writing better prompts — see the **[User Guide](user-guide.md)**.
+Setup is complete. For the full usage guide - including step-by-step conversation walkthrough, what each screen element means, how to handle errors, escalation, rollback, and tips for writing better prompts - see the **[User Guide](user-guide.md)**.
 
 ### Quick Reference
 
@@ -426,8 +426,8 @@ bench --site your-admin-site migrate
 ### Configure
 
 1. Go to `/app/alfred-admin-settings`
-2. Set **Service API Key** — this authenticates the processing app
-3. Set **Default Plan** — auto-assigned to new customers
+2. Set **Service API Key** - this authenticates the processing app
+3. Set **Default Plan** - auto-assigned to new customers
 4. Create plans at `/app/alfred-plan`
 
 ### Connect Processing App to Admin Portal
@@ -446,17 +446,17 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| processing_app_url | Data | — | WebSocket URL of the processing app |
-| api_key | Password | — | Shared secret for authentication |
+| processing_app_url | Data | - | WebSocket URL of the processing app |
+| api_key | Password | - | Shared secret for authentication |
 | self_hosted_mode | Check | No | Enable for self-hosted deployments |
-| redis_url | Data | — | Redis URL (self-hosted only) |
-| llm_provider | Select | — | ollama, anthropic, openai, gemini, bedrock |
-| llm_model | Data | — | Model ID (e.g., codegemma:7b, llama3.1). Auto-prefixed with provider on save. |
-| llm_api_key | Password | — | API key for cloud LLM providers |
-| llm_base_url | Data | — | Custom endpoint URL |
+| redis_url | Data | - | Redis URL (self-hosted only) |
+| llm_provider | Select | - | ollama, anthropic, openai, gemini, bedrock |
+| llm_model | Data | - | Model ID (e.g., codegemma:7b, llama3.1). Auto-prefixed with provider on save. |
+| llm_api_key | Password | - | API key for cloud LLM providers |
+| llm_base_url | Data | - | Custom endpoint URL |
 | llm_max_tokens | Int | 4096 | Max tokens per response |
 | llm_temperature | Float | 0.1 | Generation randomness (0.0–2.0) |
-| allowed_roles | Table | — | Roles permitted to use Alfred |
+| allowed_roles | Table | - | Roles permitted to use Alfred |
 | enable_auto_deploy | Check | No | Skip manual approval |
 | max_retries_per_agent | Int | 3 | Retries before escalation |
 | max_tasks_per_user_per_hour | Int | 20 | Rate limit per user |
@@ -467,17 +467,17 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| API_SECRET_KEY | Yes | — | JWT signing key + API auth key |
+| API_SECRET_KEY | Yes | - | JWT signing key + API auth key |
 | REDIS_URL | Yes | redis://redis:6379/0 | Redis connection URL |
 | HOST | No | 0.0.0.0 | Bind address |
 | PORT | No | 8000 | Server port |
 | WORKERS | No | 4 | Uvicorn worker count |
-| FALLBACK_LLM_MODEL | No | — | Default LLM model |
-| FALLBACK_LLM_API_KEY | No | — | Default LLM API key |
-| FALLBACK_LLM_BASE_URL | No | — | Default LLM endpoint |
+| FALLBACK_LLM_MODEL | No | - | Default LLM model |
+| FALLBACK_LLM_API_KEY | No | - | Default LLM API key |
+| FALLBACK_LLM_BASE_URL | No | - | Default LLM endpoint |
 | ALLOWED_ORIGINS | No | * | CORS origins (comma-separated) |
-| ADMIN_PORTAL_URL | No | — | Admin portal URL (SaaS mode) |
-| ADMIN_SERVICE_KEY | No | — | Admin portal auth key |
+| ADMIN_PORTAL_URL | No | - | Admin portal URL (SaaS mode) |
+| ADMIN_SERVICE_KEY | No | - | Admin portal auth key |
 | DEBUG | No | false | Enable debug logging |
 
 ---
@@ -579,13 +579,13 @@ tail -f ~/frappe-bench/logs/worker.error.log
 
 ## LLM Provider Configuration
 
-Alfred supports Ollama (local or remote) and cloud providers (Anthropic, OpenAI, Gemini, Bedrock). You can switch providers at any time — each new conversation uses the current configuration.
+Alfred supports Ollama (local or remote) and cloud providers (Anthropic, OpenAI, Gemini, Bedrock). You can switch providers at any time - each new conversation uses the current configuration.
 
 ### Ollama (Local and Remote)
 
 Ollama runs open-source models. It works identically whether running locally on the same machine or on a remote server.
 
-**Model name auto-prefix**: You can type just `codegemma:7b` — Alfred automatically converts it to `ollama/codegemma:7b` on save (required by LiteLLM for routing).
+**Model name auto-prefix**: You can type just `codegemma:7b` - Alfred automatically converts it to `ollama/codegemma:7b` on save (required by LiteLLM for routing).
 
 #### Local Ollama (same machine as Processing App)
 
@@ -719,7 +719,7 @@ FALLBACK_LLM_API_KEY=sk-ant-api03-your-key-here
 |-------|-------|
 | LLM Provider | `bedrock` |
 | LLM Model | `bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0` |
-| LLM API Key | *(leave empty — uses AWS credentials)* |
+| LLM API Key | *(leave empty - uses AWS credentials)* |
 | LLM Base URL | *(leave empty)* |
 
 ### Switching Providers
@@ -730,7 +730,7 @@ You can switch providers at any time by updating Alfred Settings. Each new conve
 
 | Provider | Speed | Quality | Cost | Privacy |
 |----------|-------|---------|------|---------|
-| Ollama (local) | Slow on CPU, fast with GPU | Good (llama3.1) | Free | Full — nothing leaves your server |
+| Ollama (local) | Slow on CPU, fast with GPU | Good (llama3.1) | Free | Full - nothing leaves your server |
 | Anthropic Claude | Fast | Excellent | ~$3/M tokens | Data sent to Anthropic API |
 | OpenAI GPT | Fast | Excellent | ~$2.50/M tokens | Data sent to OpenAI API |
 | Google Gemini | Fast | Good | ~$1.25/M tokens | Data sent to Google API |
@@ -809,16 +809,16 @@ cloudflared tunnel --url http://localhost:8001
 ### Production Environment Variables
 
 ```env
-# Strong secret — generate with: python3 -c "import secrets; print(secrets.token_urlsafe(64))"
+# Strong secret - generate with: python3 -c "import secrets; print(secrets.token_urlsafe(64))"
 API_SECRET_KEY=<64-char-random-string>
 
 # Redis with password
 REDIS_URL=redis://:your-redis-password@redis:6379/0
 
-# CORS — restrict to your customer's sites
+# CORS - restrict to your customer's sites
 ALLOWED_ORIGINS=https://customer1.frappe.cloud,https://customer2.example.com
 
-# Workers — 2 per CPU core
+# Workers - 2 per CPU core
 WORKERS=8
 
 # Disable debug
@@ -948,7 +948,7 @@ Redis holds temporary data: active crew state, WebSocket message buffers, rate l
 - **Active conversations in progress** will need to be restarted (crew state is lost)
 - **Completed conversations** are unaffected (stored in Frappe database)
 - **Rate limit counters** reset (users may get a brief burst allowance)
-- **No permanent data is lost** — Redis is a cache, not the source of truth
+- **No permanent data is lost** - Redis is a cache, not the source of truth
 
 ---
 

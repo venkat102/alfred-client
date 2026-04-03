@@ -58,7 +58,7 @@ def apply_changeset(changeset_name):
 	)
 	frappe.db.commit()
 
-	# Re-check — if status is not Deploying, another process grabbed the lock first
+	# Re-check - if status is not Deploying, another process grabbed the lock first
 	changeset.reload()
 	if changeset.status != "Deploying":
 		frappe.throw(_("Changeset is already being deployed by another process."))
@@ -67,7 +67,7 @@ def apply_changeset(changeset_name):
 	conversation = frappe.get_doc("Alfred Conversation", changeset.conversation)
 	requesting_user = conversation.user
 
-	# Switch to the requesting user's context — ALL operations run as this user
+	# Switch to the requesting user's context - ALL operations run as this user
 	original_user = frappe.session.user
 	frappe.set_user(requesting_user)
 
@@ -164,7 +164,7 @@ def apply_changeset(changeset_name):
 			"error": error_msg,
 		})
 
-		# Database-level rollback — undoes ALL uncommitted operations in this transaction.
+		# Database-level rollback - undoes ALL uncommitted operations in this transaction.
 		# This is safer than manual rollback because it's atomic.
 		frappe.db.rollback()
 
@@ -214,7 +214,7 @@ def apply_changeset(changeset_name):
 def _create_document(doctype, data):
 	"""Create a Frappe document. Runs with user's permissions.
 
-	Does NOT commit — the caller manages the transaction boundary.
+	Does NOT commit - the caller manages the transaction boundary.
 	"""
 	doc_data = dict(data)
 	doc_data["doctype"] = doctype
@@ -227,7 +227,7 @@ def _create_document(doctype, data):
 def _update_document(doctype, data):
 	"""Update an existing document. Runs with user's permissions.
 
-	Does NOT commit — the caller manages the transaction boundary.
+	Does NOT commit - the caller manages the transaction boundary.
 	"""
 	doc_name = data.get("name")
 	if not doc_name:
@@ -257,7 +257,7 @@ def _execute_rollback(rollback_data, conversation_name):
 	changes regardless of the user's current permissions (they may
 	have been modified during a failed deployment).
 
-	Continues on error — reports all failures rather than stopping.
+	Continues on error - reports all failures rather than stopping.
 	"""
 	rollback_log = []
 	for item in reversed(rollback_data):
@@ -326,7 +326,7 @@ def _execute_rollback(rollback_data, conversation_name):
 				"status": "failed",
 				"error": str(e),
 			})
-			# Continue with remaining rollback steps — don't stop on error
+			# Continue with remaining rollback steps - don't stop on error
 
 	return rollback_log
 

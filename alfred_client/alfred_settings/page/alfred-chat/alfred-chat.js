@@ -1,5 +1,5 @@
 /**
- * Alfred Chat Page — Vue 3 entry point
+ * Alfred Chat Page - Vue 3 entry point
  *
  * Mounts the Vue app inside the Frappe page shell.
  * The actual UI is in public/js/alfred/*.vue components.
@@ -44,7 +44,7 @@ frappe.pages["alfred-chat"].on_page_load = function (wrapper) {
 					}
 				});
 			} else {
-				// Fallback: Vue components not built yet — show instructions
+				// Fallback: Vue components not built yet - show instructions
 				$(page.main).html(
 					`<div class="text-center" style="padding: 60px 20px;">
 						<h4>${__("Alfred")}</h4>
@@ -57,5 +57,5 @@ frappe.pages["alfred-chat"].on_page_load = function (wrapper) {
 };
 
 frappe.pages["alfred-chat"].on_page_show = function (wrapper) {
-	// Vue handles reactivity — no manual refresh needed
+	// Vue handles reactivity - no manual refresh needed
 };

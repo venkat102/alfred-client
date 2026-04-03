@@ -123,7 +123,7 @@ onMounted(() => {
 
 onUnmounted(() => {
 	stopTimer();
-	// Listeners persist on frappe.realtime — they're global and idempotent
+	// Listeners persist on frappe.realtime - they're global and idempotent
 });
 
 // Auto-scroll when messages change
@@ -354,7 +354,7 @@ function setupRealtime() {
 		if (!currentConversation.value) return;
 		stopTimer();
 		inputDisabled.value = false;
-		statusText.value = __("Deployment failed — rolled back");
+		statusText.value = __("Deployment failed - rolled back");
 		statusState.value = "error";
 		messages.value.push({
 			_id: Date.now(), role: "system", message_type: "error",
@@ -377,7 +377,7 @@ function updateAgentStatus(data) {
 	const phase = AGENT_PHASE_MAP[data.agent] || null;
 	if (data.status === "started" || data.status === "running") {
 		const step = phase ? Object.keys(AGENT_PHASE_MAP).indexOf(phase) / 2 + 1 : "";
-		statusText.value = step ? `Step ${Math.ceil(step)}/6 — ${data.agent} is working...` : `${data.agent} is working...`;
+		statusText.value = step ? `Step ${Math.ceil(step)}/6 - ${data.agent} is working...` : `${data.agent} is working...`;
 		statusState.value = "processing";
 		if (phase) currentPhase.value = phase;
 		startTimer();

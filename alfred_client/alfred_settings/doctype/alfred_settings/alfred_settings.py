@@ -107,7 +107,7 @@ def test_llm_connection():
 
 
 def _test_ollama(base_url, model):
-	"""Test Ollama connection — list models and optionally test generation."""
+	"""Test Ollama connection - list models and optionally test generation."""
 	if not base_url:
 		return {"status": "error", "message": "LLM Base URL is required for Ollama. Set it to http://your-server:11434"}
 
@@ -163,7 +163,7 @@ def _test_ollama(base_url, model):
 	except requests.Timeout:
 		return {
 			"status": "warning",
-			"message": f"Connected to Ollama at {url}. Model '{short_model}' found but generation timed out (30s). The model may be loading for the first time — try again.",
+			"message": f"Connected to Ollama at {url}. Model '{short_model}' found but generation timed out (30s). The model may be loading for the first time - try again.",
 			"models": available_models,
 		}
 	except Exception as e:
@@ -195,6 +195,6 @@ def _test_cloud_provider(provider, model, api_key, base_url):
 		response = litellm.completion(**kwargs)
 		return {"status": "ok", "message": f"Connected to {provider}. Model '{model}' is responding."}
 	except ImportError:
-		return {"status": "error", "message": "LiteLLM is not installed in the Frappe environment. The Processing App handles LLM calls — test from there instead."}
+		return {"status": "error", "message": "LiteLLM is not installed in the Frappe environment. The Processing App handles LLM calls - test from there instead."}
 	except Exception as e:
 		return {"status": "error", "message": f"Connection to {provider} failed: {e}"}

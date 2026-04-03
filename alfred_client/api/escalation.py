@@ -155,7 +155,7 @@ def _send_escalation_notification(conv, reason):
 		except Exception:
 			pass
 
-	# Also send email notification — escape user-supplied content to prevent HTML injection
+	# Also send email notification - escape user-supplied content to prevent HTML injection
 	try:
 		from frappe.utils import escape_html
 

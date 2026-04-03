@@ -1,6 +1,6 @@
 # Alfred User Guide
 
-A complete guide to using Alfred — from your first conversation to deployment and rollback.
+A complete guide to using Alfred - from your first conversation to deployment and rollback.
 
 > **Haven't set up Alfred yet?** Read the [Setup Guide](SETUP.md) first. This guide assumes Alfred is already installed and configured on your Frappe site.
 
@@ -8,17 +8,17 @@ A complete guide to using Alfred — from your first conversation to deployment 
 
 ## What is Alfred?
 
-Alfred is an AI assistant that builds Frappe customizations through conversation. Describe what you need — a DocType, workflow, report, or automation — and Alfred designs it, generates the code, validates it, and deploys it to your site after your approval.
+Alfred is an AI assistant that builds Frappe customizations through conversation. Describe what you need - a DocType, workflow, report, or automation - and Alfred designs it, generates the code, validates it, and deploys it to your site after your approval.
 
 ### What Alfred Can Build
-- **DocTypes** — New document types with fields, permissions, naming rules, and child tables
-- **Custom Fields** — New fields on existing DocTypes (like adding phone_number to Customer)
-- **Server Scripts** — Python automation that runs on save, submit, or via API
-- **Client Scripts** — JavaScript that customizes forms (filters, calculated fields, visibility)
-- **Workflows** — Multi-state approval processes with role-based transitions
-- **Notifications** — Email/SMS alerts triggered by document events
-- **Reports** — Custom reports with filters and columns
-- **Print Formats** — PDF templates for documents
+- **DocTypes** - New document types with fields, permissions, naming rules, and child tables
+- **Custom Fields** - New fields on existing DocTypes (like adding phone_number to Customer)
+- **Server Scripts** - Python automation that runs on save, submit, or via API
+- **Client Scripts** - JavaScript that customizes forms (filters, calculated fields, visibility)
+- **Workflows** - Multi-state approval processes with role-based transitions
+- **Notifications** - Email/SMS alerts triggered by document events
+- **Reports** - Custom reports with filters and columns
+- **Print Formats** - PDF templates for documents
 
 ### What Alfred Cannot Do
 - Modify core Frappe or ERPNext source code files
@@ -55,18 +55,18 @@ When you open `/app/alfred-chat`, you see two panels:
 ```
 
 ### Status Bar (top)
-- **Status dot** — Green (ready), yellow pulsing (processing), blue pulsing (waiting for you), red (error)
-- **Agent name** — Shows which agent is currently working (e.g., "Step 3/6 — Solution Architect is working...")
-- **Timer** — Elapsed seconds since the current phase started
-- **Pipeline** — Six numbered steps: Requirements → Assessment → Architecture → Development → Testing → Deployment. Current step is highlighted blue, completed steps are green with a checkmark.
+- **Status dot** - Green (ready), yellow pulsing (processing), blue pulsing (waiting for you), red (error)
+- **Agent name** - Shows which agent is currently working (e.g., "Step 3/6 - Solution Architect is working...")
+- **Timer** - Elapsed seconds since the current phase started
+- **Pipeline** - Six numbered steps: Requirements → Assessment → Architecture → Development → Testing → Deployment. Current step is highlighted blue, completed steps are green with a checkmark.
 
 ### Left Panel
-- **Conversation list** — Shows your past conversations with the first message as a summary, status badge, and relative time. Click to open.
-- **Chat area** — When a conversation is open, shows the message thread and input box.
+- **Conversation list** - Shows your past conversations with the first message as a summary, status badge, and relative time. Click to open.
+- **Chat area** - When a conversation is open, shows the message thread and input box.
 
 ### Right Panel
-- **Preview** — Empty until Alfred has something to show. During early phases, shows what Alfred is doing ("Gathering Requirements...", "Designing Solution..."). Once a changeset is ready, shows DocType field tables, script code, and permission grids.
-- **Action buttons** — Appear when a changeset is ready for your review.
+- **Preview** - Empty until Alfred has something to show. During early phases, shows what Alfred is doing ("Gathering Requirements...", "Designing Solution..."). Once a changeset is ready, shows DocType field tables, script code, and permission grids.
+- **Action buttons** - Appear when a changeset is ready for your review.
 
 ---
 
@@ -87,7 +87,7 @@ Open `/app/alfred-chat`. If this is your first time, you'll see a welcome screen
 ### Step 2: Alfred Gathers Requirements
 
 The **Requirement Analyst** agent processes your request. You'll see:
-- Status bar shows "Step 1/6 — Requirement Analyst is working..." with a pulsing yellow dot
+- Status bar shows "Step 1/6 - Requirement Analyst is working..." with a pulsing yellow dot
 - Bouncing dots (typing indicator) appear in the chat
 - Preview panel shows "Gathering Requirements..."
 
@@ -163,9 +163,9 @@ Below the preview, a summary shows: "3 operation(s) will be applied to your site
 
 Three buttons appear:
 
-- **Approve & Deploy** — A confirmation dialog shows exactly what will be created. Click "Yes" to deploy.
-- **Request Changes** — The input box focuses with placeholder "What would you like to change?" Type what you want different (e.g., "Add a description field and make status required").
-- **Reject** — Cancels the changeset. You can start over with a new prompt.
+- **Approve & Deploy** - A confirmation dialog shows exactly what will be created. Click "Yes" to deploy.
+- **Request Changes** - The input box focuses with placeholder "What would you like to change?" Type what you want different (e.g., "Add a description field and make status required").
+- **Reject** - Cancels the changeset. You can start over with a new prompt.
 
 ### Step 7: Deployment
 
@@ -194,25 +194,25 @@ Your customization is live. You can:
 ### Conversation List
 
 Your past conversations are listed with:
-- **Summary** — First message you sent (truncated to 80 characters)
-- **Status badge** — Color-coded current status
-- **Time** — When last active ("2 minutes ago", "Yesterday at 3:15 PM")
+- **Summary** - First message you sent (truncated to 80 characters)
+- **Status badge** - Color-coded current status
+- **Time** - When last active ("2 minutes ago", "Yesterday at 3:15 PM")
 
 ### Conversation Statuses
 
 | Status | Color | Meaning | What to Do |
 |--------|-------|---------|------------|
 | Open | Blue | Created but no messages yet | Send your first prompt |
-| In Progress | Orange | Agents are actively working | Wait — or answer if asked |
+| In Progress | Orange | Agents are actively working | Wait - or answer if asked |
 | Awaiting Input | Yellow | Alfred asked a question | Answer the question |
-| Completed | Green | All done, changes deployed | Nothing — or ask a follow-up |
+| Completed | Green | All done, changes deployed | Nothing - or ask a follow-up |
 | Escalated | Red | Too complex for AI | A human developer will handle it |
 | Failed | Red | Something went wrong | Read the error, retry or start over |
 | Stale | Gray | Inactive for 24+ hours | Open and continue, or start a new one |
 
 ### Finding a Conversation
 
-Conversations show the first message as a summary. If you have many, scroll through the list — they're sorted by most recent activity.
+Conversations show the first message as a summary. If you have many, scroll through the list - they're sorted by most recent activity.
 
 ---
 
@@ -224,12 +224,12 @@ Alfred translates technical errors into plain language:
 
 | You See | What It Means |
 |---------|--------------|
-| "There was a problem with the data format" | The generated code had a structural issue — Alfred will retry |
+| "There was a problem with the data format" | The generated code had a structural issue - Alfred will retry |
 | "You don't have permission for this operation" | Your Frappe role can't create this type of customization |
 | "A document with this name already exists" | The DocType or script name conflicts with something on your site |
-| "The operation took too long" | LLM or processing timeout — try again |
-| "Could not connect to the processing service" | The processing app is down — contact your admin |
-| "Your message was flagged by the security filter" | Your prompt matched a security pattern — rephrase it |
+| "The operation took too long" | LLM or processing timeout - try again |
+| "Could not connect to the processing service" | The processing app is down - contact your admin |
+| "Your message was flagged by the security filter" | Your prompt matched a security pattern - rephrase it |
 
 Every error message has:
 - A **human-readable explanation** at the top
@@ -243,8 +243,8 @@ If Alfred can't handle your request (too complex, repeated failures, ambiguous a
 1. Status changes to "Escalated"
 2. System Managers receive an in-app notification and email
 3. A human developer reviews the conversation and either:
-   - **Takes over** — completes the work manually
-   - **Returns to Alfred** — with clarified requirements for the AI to retry
+   - **Takes over** - completes the work manually
+   - **Returns to Alfred** - with clarified requirements for the AI to retry
 
 You'll see a message in the chat: "This request has been escalated to a human developer."
 
@@ -301,7 +301,7 @@ Alfred works best with focused requests. Instead of "build a complete HR module"
 
 - **What Alfred sees**: Your conversation messages and your site's DocType structure (field names, types, permissions). Never your actual document data.
 - **Where it's processed**: Depends on your LLM configuration:
-  - **Ollama** (self-hosted) — Everything stays on your server. Nothing leaves your network.
-  - **Cloud providers** (Claude, GPT, Gemini) — Conversation messages are sent to the provider's API. Your site schema is included for context. No document data is sent.
+  - **Ollama** (self-hosted) - Everything stays on your server. Nothing leaves your network.
+  - **Cloud providers** (Claude, GPT, Gemini) - Conversation messages are sent to the provider's API. Your site schema is included for context. No document data is sent.
 - **What's stored**: Conversations, messages, changesets, and audit logs are stored in your Frappe site's database. They can be viewed at `/app/alfred-conversation`.
 - **Audit trail**: Every action Alfred takes is logged in the Alfred Audit Log with before/after state snapshots.

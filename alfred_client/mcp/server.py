@@ -3,7 +3,7 @@
 Handles incoming JSON-RPC 2.0 requests from the Processing App's agents.
 Routes requests to the appropriate tool handler and returns JSON-RPC responses.
 
-The MCP server runs within the Frappe user's session context — all tool calls
+The MCP server runs within the Frappe user's session context - all tool calls
 automatically enforce Frappe's permission system.
 """
 

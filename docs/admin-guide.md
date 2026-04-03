@@ -8,19 +8,19 @@ Access at `/app/alfred-settings`. Only System Managers can configure.
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| Processing App URL | WebSocket URL of the processing service | — |
-| API Key | Shared secret for authentication (encrypted) | — |
+| Processing App URL | WebSocket URL of the processing service | - |
+| API Key | Shared secret for authentication (encrypted) | - |
 | Self-Hosted Mode | Enable when running your own processing app | Off |
-| Redis URL | Redis connection (self-hosted only) | — |
+| Redis URL | Redis connection (self-hosted only) | - |
 
 ### LLM Configuration Tab
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| LLM Provider | ollama, anthropic, openai, gemini, bedrock | — |
-| LLM Model | Model name (e.g., `codegemma:7b`, `llama3.1`). Auto-prefixed with provider. | — |
-| LLM API Key | Provider API key. Optional for Ollama (needed if proxy requires auth). | — |
-| LLM Base URL | Endpoint URL. Local Ollama: `http://localhost:11434`. Remote: `http://server-ip:11434`. Empty for cloud. | — |
+| LLM Provider | ollama, anthropic, openai, gemini, bedrock | - |
+| LLM Model | Model name (e.g., `codegemma:7b`, `llama3.1`). Auto-prefixed with provider. | - |
+| LLM API Key | Provider API key. Optional for Ollama (needed if proxy requires auth). | - |
+| LLM Base URL | Endpoint URL. Local Ollama: `http://localhost:11434`. Remote: `http://server-ip:11434`. Empty for cloud. | - |
 | Max Tokens | Max tokens per LLM response | 4096 |
 | Temperature | Generation randomness (0.0-2.0) | 0.1 |
 
@@ -55,10 +55,10 @@ The Admin Portal (`alfred_admin` app) is installed on your management site.
 | Field | Description | Default |
 |-------|-------------|---------|
 | Grace Period Days | Days after payment failure before suspension | 7 |
-| Default Plan | Auto-assigned plan for new customers | — |
+| Default Plan | Auto-assigned plan for new customers | - |
 | Warning Threshold % | Token usage percentage that triggers warning | 80 |
 | Trial Duration Days | Default trial length | 14 |
-| Service API Key | Authentication key for Processing App | — |
+| Service API Key | Authentication key for Processing App | - |
 
 ### Alfred Plan
 
@@ -116,8 +116,8 @@ Environment variables (set in `.env` or Docker):
 - If empty, only System Manager and Custom Field creators have access
 
 **Agent keeps looping without progress**
-- Max retries might be too high — reduce in Alfred Settings > Limits
-- Check the LLM configuration — ensure the model is responsive
+- Max retries might be too high - reduce in Alfred Settings > Limits
+- Check the LLM configuration - ensure the model is responsive
 - Review the conversation for ambiguous requirements
 
 **Deployment failed with rollback**

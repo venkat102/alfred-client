@@ -1,5 +1,5 @@
 /**
- * Alfred Client — Frappe bundle entry point
+ * Alfred Client - Frappe bundle entry point
  *
  * This file is automatically built by `bench build --app alfred_client`.
  * It exports Vue components for the Alfred chat page.

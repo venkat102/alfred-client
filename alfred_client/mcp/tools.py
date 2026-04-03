@@ -65,7 +65,7 @@ def get_site_info():
 def get_doctypes(module=None):
 	"""List DocType names and modules. Optionally filter by module.
 
-	Safe for all users — returns names only, no schema details.
+	Safe for all users - returns names only, no schema details.
 	Supports optional module filter to reduce payload on large sites.
 	"""
 	filters = {"istable": 0}
@@ -144,13 +144,13 @@ def get_existing_customizations():
 	Returns custom fields, server scripts, client scripts, and workflows
 	only for DocTypes the current user can access.
 	"""
-	# Use Frappe's built-in permission filtering — much faster than manual O(n) loop.
+	# Use Frappe's built-in permission filtering - much faster than manual O(n) loop.
 	# frappe.get_all already respects the current user's read permissions.
 	permitted_doctypes = set(
 		frappe.get_all("DocType", pluck="name", limit_page_length=0)
 	)
 
-	# Custom Fields — filtered
+	# Custom Fields - filtered
 	custom_fields = frappe.get_all(
 		"Custom Field",
 		filters={"dt": ["in", list(permitted_doctypes)]},
@@ -158,7 +158,7 @@ def get_existing_customizations():
 		limit_page_length=500,
 	) if permitted_doctypes else []
 
-	# Server Scripts — filtered
+	# Server Scripts - filtered
 	server_scripts = frappe.get_all(
 		"Server Script",
 		filters={"reference_doctype": ["in", list(permitted_doctypes)]},
@@ -166,7 +166,7 @@ def get_existing_customizations():
 		limit_page_length=200,
 	) if permitted_doctypes else []
 
-	# Client Scripts — filtered
+	# Client Scripts - filtered
 	client_scripts = frappe.get_all(
 		"Client Script",
 		filters={"dt": ["in", list(permitted_doctypes)]},
@@ -174,7 +174,7 @@ def get_existing_customizations():
 		limit_page_length=200,
 	) if permitted_doctypes else []
 
-	# Workflows — filtered
+	# Workflows - filtered
 	workflows = frappe.get_all(
 		"Workflow",
 		filters={"document_type": ["in", list(permitted_doctypes)], "is_active": 1},
