@@ -20,7 +20,7 @@ add_to_apps_screen = [
 		"name": "alfred_client",
 		"logo": "/assets/alfred_client/images/alfred-logo.svg",
 		"title": "Alfred",
-		"route": "/app/alfred",
+		"route": "/app/alfred-chat",
 		"has_permission": "alfred_client.api.permissions.has_app_permission",
 	}
 ]

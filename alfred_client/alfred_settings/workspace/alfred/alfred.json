@@ -92,7 +92,7 @@
 			"is_query_report": 0,
 			"label": "Alfred Chat",
 			"link_count": 0,
-			"link_to": "alfred",
+			"link_to": "alfred-chat",
 			"link_type": "Page",
 			"onboard": 0,
 			"type": "Link"
@@ -115,7 +115,7 @@
 			"color": "#6C63FF",
 			"icon": "chat",
 			"label": "Alfred Chat",
-			"link_to": "alfred",
+			"link_to": "alfred-chat",
 			"type": "Page"
 		},
 		{

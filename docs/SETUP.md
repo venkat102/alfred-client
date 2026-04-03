@@ -30,7 +30,7 @@ docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull llama3.1
 #    - LLM tab: set Provider = ollama, Model = ollama/llama3.1, Base URL = http://localhost:11434
 #    - Save
 
-# 4. Open /app/alfred and start chatting!
+# 4. Open /app/alfred-chat and start chatting!
 ```
 
 If any step fails, read the detailed sections below.
@@ -102,7 +102,7 @@ Your Browser
 │  Your Frappe Site                │
 │  (alfred_client app installed)   │
 │                                  │
-│  /app/alfred ← Chat UI           │
+│  /app/alfred-chat ← Chat UI           │
 │  /app/alfred-settings ← Config   │
 │  MCP Server (9 tools)            │
 │  Deployment Engine               │
@@ -369,12 +369,12 @@ curl http://dev.alfred:8000/api/method/frappe.client.get_count?doctype=Alfred+Se
 # Expected: {"message": 1}
 
 # 4. Alfred page is accessible
-# Open http://dev.alfred:8000/app/alfred in your browser
+# Open http://dev.alfred:8000/app/alfred-chat in your browser
 ```
 
 ### First Conversation Test
 
-1. Open `http://your-site:8000/app/alfred`
+1. Open `http://your-site:8000/app/alfred-chat`
 2. You should see the Alfred welcome screen with example prompts
 3. Click **"Create a DocType called Book with title, author, and ISBN fields"**
 4. Watch the pipeline progress:
@@ -398,7 +398,7 @@ Setup is complete. For the full usage guide — including step-by-step conversat
 
 | Action | How |
 |--------|-----|
-| Open Alfred | Navigate to `/app/alfred` |
+| Open Alfred | Navigate to `/app/alfred-chat` |
 | Start a conversation | Click "Start a Conversation" or an example prompt |
 | Send a message | Type in the input box, press Enter |
 | Answer a question | Click an option button or type your answer |
@@ -495,7 +495,7 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 4. Check firewall allows port 8001
 5. If behind nginx, add WebSocket proxy config (see below)
 
-### "Not Authorized" when opening /app/alfred
+### "Not Authorized" when opening /app/alfred-chat
 
 **Cause**: Your user role is not in the allowed list.
 

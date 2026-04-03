@@ -67,7 +67,7 @@ On your Frappe site, go to `/app/alfred-settings`:
 
 ## Step 6: Test
 
-Navigate to `/app/alfred` and type: "Create a DocType called Book with title and author fields"
+Navigate to `/app/alfred-chat` and type: "Create a DocType called Book with title and author fields"
 
 ## Troubleshooting
 

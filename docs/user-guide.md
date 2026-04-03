@@ -31,7 +31,7 @@ Alfred is an AI assistant that builds Frappe customizations through conversation
 
 ## The Interface
 
-When you open `/app/alfred`, you see two panels:
+When you open `/app/alfred-chat`, you see two panels:
 
 ```
 ┌──────────────────────┬────────────────────────────────────┐
@@ -74,7 +74,7 @@ When you open `/app/alfred`, you see two panels:
 
 ### Step 1: Start
 
-Open `/app/alfred`. If this is your first time, you'll see a welcome screen with three example prompts. Click one, or click **"Start a Conversation"** and type your own request.
+Open `/app/alfred-chat`. If this is your first time, you'll see a welcome screen with three example prompts. Click one, or click **"Start a Conversation"** and type your own request.
 
 **Good prompts are specific:**
 > "Create a DocType called Training Program with fields: program_name (Data, required), duration_days (Int), trainer (Link to Employee), and status (Select: Draft/Active/Completed)"

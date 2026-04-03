@@ -7,7 +7,7 @@
 │                        Customer's Frappe Site                        │
 │  ┌──────────────┐  ┌──────────────┐  ┌─────────────────────────┐   │
 │  │  Chat UI      │  │  MCP Server  │  │  Deployment Engine      │   │
-│  │  /app/alfred   │  │  (9 tools)   │  │  (changeset executor)   │   │
+│  │  /app/alfred-chat   │  │  (9 tools)   │  │  (changeset executor)   │   │
 │  └──────┬───────┘  └──────┬───────┘  └──────────┬──────────────┘   │
 │         │ Socket.IO        │ JSON-RPC             │                  │
 │  ┌──────┴──────────────────┴──────────────────────┴──────────────┐  │

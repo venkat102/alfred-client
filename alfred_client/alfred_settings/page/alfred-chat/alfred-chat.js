@@ -5,7 +5,7 @@
  * The actual UI is in public/js/alfred/*.vue components.
  */
 
-frappe.pages["alfred"].on_page_load = function (wrapper) {
+frappe.pages["alfred-chat"].on_page_load = function (wrapper) {
 	var page = frappe.ui.make_app_page({
 		parent: wrapper,
 		title: __("Alfred"),
@@ -56,6 +56,6 @@ frappe.pages["alfred"].on_page_load = function (wrapper) {
 	});
 };
 
-frappe.pages["alfred"].on_page_show = function (wrapper) {
+frappe.pages["alfred-chat"].on_page_show = function (wrapper) {
 	// Vue handles reactivity — no manual refresh needed
 };
