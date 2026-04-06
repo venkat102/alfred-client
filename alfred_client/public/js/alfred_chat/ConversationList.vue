@@ -26,8 +26,15 @@
 			</div>
 		</div>
 
-		<!-- Conversation items -->
-		<div v-else class="alfred-conv-items">
+		<!-- Conversation list with header -->
+		<div v-else>
+			<div class="alfred-conv-list-header">
+				<span class="alfred-conv-list-title">{{ __("Conversations") }}</span>
+				<button class="btn btn-primary btn-xs" @click="$emit('new-conversation')">
+					+ {{ __("New") }}
+				</button>
+			</div>
+			<div class="alfred-conv-items">
 			<div
 				v-for="conv in conversations"
 				:key="conv.name"
@@ -38,12 +45,35 @@
 				@keydown.enter="$emit('select', conv.name)"
 			>
 				<div class="alfred-conv-header">
-					<span :class="['indicator-pill', statusColor(conv.status)]">{{ conv.status }}</span>
-					<span class="text-muted text-xs">{{ frappe.datetime.prettyDate(conv.modified) }}</span>
+					<div class="alfred-conv-header-left">
+						<span :class="['indicator-pill', statusColor(conv.status)]">{{ conv.status }}</span>
+						<span v-if="!conv.is_owner" class="alfred-conv-shared-badge">{{ __("Shared") }}</span>
+					</div>
+					<div class="alfred-conv-header-right">
+						<span class="text-muted text-xs">{{ frappe.datetime.prettyDate(conv.modified) }}</span>
+						<button
+							v-if="conv.is_owner"
+							class="alfred-conv-action btn btn-xs"
+							:title="__('Share conversation')"
+							@click.stop="$emit('share', conv.name)"
+						>
+							&#x1F517;
+						</button>
+						<button
+							v-if="conv.is_owner"
+							class="alfred-conv-action alfred-conv-delete btn btn-xs"
+							:title="__('Delete conversation')"
+							@click.stop="$emit('delete', conv.name)"
+						>
+							&#x2715;
+						</button>
+					</div>
 				</div>
 				<div class="alfred-conv-summary">
 					{{ conv.first_message || conv.name }}
+					<span v-if="!conv.is_owner" class="text-muted text-xs"> &mdash; {{ conv.user }}</span>
 				</div>
+			</div>
 			</div>
 		</div>
 	</div>
@@ -54,7 +84,7 @@ defineProps({
 	conversations: { type: Array, default: () => [] },
 });
 
-defineEmits(["select", "new-conversation", "new-with-prompt"]);
+defineEmits(["select", "new-conversation", "new-with-prompt", "delete", "share"]);
 
 const examples = [
 	"Create a DocType called Book with title, author, and ISBN fields",

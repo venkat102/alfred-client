@@ -65,6 +65,12 @@
 
 /* ── Conversation List ─────────────────────────────────────────── */
 .alfred-conversation-list { flex: 1; overflow-y: auto; padding: 8px; }
+.alfred-conv-list-header {
+	display: flex; align-items: center; justify-content: space-between;
+	padding: 8px 12px; border-bottom: 1px solid var(--border-color, #e2e2e2);
+	position: sticky; top: 0; background: white; z-index: 1;
+}
+.alfred-conv-list-title { font-weight: 600; font-size: var(--text-sm, 13px); color: var(--text-color, #333); }
 .alfred-conv-items { display: flex; flex-direction: column; gap: 4px; }
 .alfred-conv-item {
 	padding: 10px 12px; border-radius: 8px; cursor: pointer;
@@ -75,6 +81,21 @@
 	border-color: var(--border-color, #e2e2e2); outline: none;
 }
 .alfred-conv-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.alfred-conv-header-left { display: flex; align-items: center; gap: 6px; }
+.alfred-conv-header-right { display: flex; align-items: center; gap: 6px; }
+.alfred-conv-action {
+	opacity: 0; padding: 0 4px; line-height: 1; font-size: 13px;
+	color: var(--text-muted, #999); background: none; border: none; cursor: pointer;
+	transition: opacity 0.15s, color 0.15s;
+}
+.alfred-conv-item:hover .alfred-conv-action,
+.alfred-conv-item:focus .alfred-conv-action { opacity: 1; }
+.alfred-conv-delete:hover { color: var(--red-500, #e24c4c); }
+.alfred-conv-shared-badge {
+	font-size: 10px; padding: 1px 6px; border-radius: 8px;
+	background: var(--blue-50, #eff6ff); color: var(--blue-600, #1a73e8);
+	font-weight: 600;
+}
 .alfred-conv-summary {
 	color: var(--text-color, #333); font-size: 13px;
 	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -162,11 +183,37 @@
 	30% { transform: translateY(-6px); opacity: 1; }
 }
 
+/* ── Activity Log ──────────────────────────────────────────────── */
+.alfred-activity-log {
+	border-top: 1px solid var(--border-color, #e2e2e2);
+	background: var(--subtle-fg, #f8f8f8); flex-shrink: 0;
+}
+.alfred-activity-log-toggle {
+	display: flex; align-items: center; gap: 6px;
+	padding: 6px 12px; cursor: pointer; user-select: none;
+	font-size: var(--text-sm, 13px);
+}
+.alfred-activity-log-toggle:hover { background: var(--gray-100, #f0f0f0); }
+.alfred-conn-dot {
+	width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+}
+.alfred-activity-log-entries {
+	max-height: 120px; overflow-y: auto; padding: 0 12px 6px;
+	font-family: var(--font-mono, monospace);
+}
+.alfred-activity-entry {
+	font-size: 11px; padding: 2px 0; display: flex; gap: 8px;
+	color: var(--text-color, #333);
+}
+.alfred-activity-time { flex-shrink: 0; width: 65px; font-variant-numeric: tabular-nums; }
+.alfred-activity-info { color: var(--text-color, #333); }
+.alfred-activity-error { color: var(--red-500, #e24c4c); }
+
 /* ── Input Area ────────────────────────────────────────────────── */
 .alfred-input-area {
 	display: flex; gap: 8px; padding: 12px 16px;
 	border-top: 1px solid var(--border-color, #e2e2e2);
-	background: white; flex-shrink: 0; align-items: flex-end;
+	background: white; flex-shrink: 0; align-items: center;
 }
 .alfred-input-wrapper { flex: 1; }
 .alfred-input {
@@ -177,7 +224,10 @@
 .alfred-input:focus { border-color: var(--blue-500, #2490ef); }
 .alfred-input:disabled { background: var(--subtle-fg, #f8f8f8); color: var(--text-muted, #999); }
 .alfred-input-hint { display: block; margin-top: 2px; font-size: 10px; }
-.alfred-send-btn { border-radius: 8px !important; padding: 8px 20px !important; }
+.alfred-send-btn {
+	border-radius: 8px !important; padding: 8px 20px !important;
+	align-self: stretch; height: auto; min-height: 38px;
+}
 
 /* ── Preview Panel ─────────────────────────────────────────────── */
 .alfred-preview { padding: 16px; height: 100%; display: flex; flex-direction: column; }

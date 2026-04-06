@@ -20,6 +20,8 @@
 					@select="openConversation"
 					@new-conversation="newConversation"
 					@new-with-prompt="newConversationWithPrompt"
+					@delete="deleteConversationFromList"
+					@share="shareConversation"
 				/>
 
 				<!-- Chat Area -->
@@ -34,7 +36,10 @@
 							<button class="btn btn-xs btn-primary" @click="newConversationFromChat" :title="__('Start a new conversation')">
 								+ {{ __("New") }}
 							</button>
-							<button class="btn btn-xs btn-danger" @click="deleteConversation" :title="__('Delete this conversation')">
+							<button v-if="isCurrentConvOwner" class="btn btn-xs btn-default" @click="shareConversation(currentConversation)" :title="__('Share this conversation')">
+								{{ __("Share") }}
+							</button>
+							<button v-if="isCurrentConvOwner" class="btn btn-xs btn-danger" @click="deleteConversation" :title="__('Delete this conversation')">
 								{{ __("Delete") }}
 							</button>
 						</div>
@@ -48,6 +53,27 @@
 							@retry="retryLastMessage"
 						/>
 						<TypingIndicator v-if="isProcessing" />
+					</div>
+
+					<!-- Activity Log (collapsible) -->
+					<div v-if="activityLog.length" class="alfred-activity-log">
+						<div class="alfred-activity-log-toggle" @click="activityLogOpen = !activityLogOpen">
+							<span :class="['alfred-conn-dot', `alfred-dot-${connectionState}`]"></span>
+							<span class="text-xs">{{ connectionLabel }}</span>
+							<span class="text-muted text-xs" style="margin-left: auto;">
+								{{ activityLogOpen ? '&#9662;' : '&#9656;' }} {{ __("Activity") }} ({{ activityLog.length }})
+							</span>
+						</div>
+						<div v-if="activityLogOpen" class="alfred-activity-log-entries">
+							<div
+								v-for="(entry, idx) in activityLog"
+								:key="idx"
+								:class="['alfred-activity-entry', `alfred-activity-${entry.level}`]"
+							>
+								<span class="alfred-activity-time text-muted">{{ entry.time }}</span>
+								<span>{{ entry.text }}</span>
+							</div>
+						</div>
 					</div>
 
 					<div class="alfred-input-area">
@@ -117,6 +143,10 @@ const deploySteps = ref([]);
 const isDeployed = ref(false);
 const elapsedTime = ref(null);
 
+const activityLog = ref([]);
+const activityLogOpen = ref(false);
+const connectionState = ref("disconnected"); // disconnected, starting, connected, reconnecting, failed
+
 const messagesContainer = ref(null);
 const inputField = ref(null);
 
@@ -130,10 +160,51 @@ const lastUserMessage = computed(() => {
 	return userMsgs.length ? userMsgs[userMsgs.length - 1].content : "";
 });
 
+const CONNECTION_LABELS = {
+	disconnected: __("Disconnected"),
+	starting: __("Starting..."),
+	connected: __("Connected"),
+	reconnecting: __("Reconnecting..."),
+	failed: __("Connection Failed"),
+	stopped: __("Stopped"),
+};
+const connectionLabel = computed(() => CONNECTION_LABELS[connectionState.value] || connectionState.value);
+
+function addActivity(text, level = "info") {
+	const now = new Date();
+	const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+	activityLog.value.push({ text, level, time });
+	// Keep last 50 entries
+	if (activityLog.value.length > 50) activityLog.value.shift();
+}
+
+// ── Route Sync ────────────────────────────────────────────────
+function getConversationFromRoute() {
+	const route = frappe.get_route();
+	// Route format: ["alfred-chat", conversation_id]
+	return (route && route.length > 1 && route[1]) ? route[1] : null;
+}
+
+function syncRoute() {
+	const convId = getConversationFromRoute();
+	if (convId && convId !== currentConversation.value) {
+		openConversation(convId);
+	} else if (!convId && currentConversation.value) {
+		// URL was cleared (e.g., browser back button) — go to list
+		currentConversation.value = null;
+		loadConversations();
+	}
+}
+
 // ── Lifecycle ──────────────────────────────────────────────────
 onMounted(() => {
 	loadConversations();
 	setupRealtime();
+	// Restore conversation from URL on page load / refresh
+	const convId = getConversationFromRoute();
+	if (convId) {
+		openConversation(convId);
+	}
 });
 
 onUnmounted(() => {
@@ -187,8 +258,15 @@ function openConversation(name) {
 	isDeployed.value = false;
 	currentPhase.value = null;
 	completedPhases.value = [];
+	activityLog.value = [];
+	connectionState.value = "disconnected";
 	statusText.value = __("Ready");
 	statusState.value = "disconnected";
+
+	// Update URL so refresh preserves the open conversation
+	if (getConversationFromRoute() !== name) {
+		frappe.set_route("alfred-chat", name);
+	}
 
 	frappe.call({
 		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_messages",
@@ -202,9 +280,15 @@ const conversationSummary = computed(() => {
 	return conv?.first_message || currentConversation.value || "";
 });
 
+const isCurrentConvOwner = computed(() => {
+	const conv = conversations.value.find(c => c.name === currentConversation.value);
+	return conv ? conv.is_owner : true;
+});
+
 function goBack() {
 	currentConversation.value = null;
 	stopTimer();
+	frappe.set_route("alfred-chat");
 	loadConversations();
 }
 
@@ -215,15 +299,23 @@ function newConversationFromChat() {
 
 function deleteConversation() {
 	if (!currentConversation.value) return;
+	confirmAndDelete(currentConversation.value, () => goBack());
+}
+
+function deleteConversationFromList(name) {
+	confirmAndDelete(name, () => loadConversations());
+}
+
+function confirmAndDelete(conversation, onSuccess) {
 	frappe.confirm(
 		__("Delete this conversation and all its messages? This cannot be undone."),
 		() => {
 			frappe.call({
 				method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.delete_conversation",
-				args: { conversation: currentConversation.value },
+				args: { conversation },
 				callback: () => {
 					frappe.show_alert({ message: __("Conversation deleted"), indicator: "green" });
-					goBack();
+					onSuccess();
 				},
 				error: () => {
 					frappe.show_alert({ message: __("Failed to delete conversation"), indicator: "red" });
@@ -231,6 +323,43 @@ function deleteConversation() {
 			});
 		}
 	);
+}
+
+function shareConversation(name) {
+	const d = new frappe.ui.Dialog({
+		title: __("Share Conversation"),
+		fields: [
+			{
+				fieldname: "user",
+				fieldtype: "Link",
+				options: "User",
+				label: __("User"),
+				reqd: 1,
+				filters: { enabled: 1, name: ["!=", frappe.session.user] },
+			},
+			{
+				fieldname: "write",
+				fieldtype: "Check",
+				label: __("Allow writing (send messages)"),
+				default: 0,
+			},
+		],
+		primary_action_label: __("Share"),
+		primary_action(values) {
+			frappe.call({
+				method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.share_conversation",
+				args: { conversation: name, user: values.user, write: values.write },
+				callback: () => {
+					frappe.show_alert({ message: __("Conversation shared with {0}", [values.user]), indicator: "green" });
+					d.hide();
+				},
+				error: () => {
+					frappe.show_alert({ message: __("Failed to share conversation"), indicator: "red" });
+				},
+			});
+		},
+	});
+	d.show();
 }
 
 function sendMessage(text) {
@@ -252,6 +381,7 @@ function sendMessage(text) {
 	inputDisabled.value = true;
 	statusText.value = __("Processing...");
 	statusState.value = "processing";
+	addActivity("Message sent, waiting for agent pipeline...");
 	startTimer();
 
 	frappe.call({
@@ -325,10 +455,19 @@ function setupRealtime() {
 	if (realtimeBound) return;
 	realtimeBound = true;
 
+	frappe.realtime.on("alfred_connection_status", (data) => {
+		if (!currentConversation.value) return;
+		connectionState.value = data.state;
+		const level = (data.state === "failed" || data.state === "reconnecting") ? "error" : "info";
+		addActivity(data.message || data.state, level);
+		if (data.detail) addActivity(data.detail, "error");
+	});
+
 	frappe.realtime.on("alfred_agent_status", (data) => {
 		if (!currentConversation.value) return;
 		isProcessing.value = false;
 		updateAgentStatus(data);
+		addActivity(`${data.agent || "Agent"}: ${data.status}${data.message ? " — " + data.message : ""}`);
 
 		if (data.status === "completed" && data.agent) {
 			messages.value.push({
@@ -370,6 +509,7 @@ function setupRealtime() {
 		stopTimer();
 		statusText.value = __("Error");
 		statusState.value = "error";
+		addActivity(data.error || data.message || "Error occurred", "error");
 		messages.value.push({
 			_id: Date.now(), role: "system", message_type: "error",
 			content: data.error || data.message || "An error occurred",
@@ -379,6 +519,7 @@ function setupRealtime() {
 	frappe.realtime.on("alfred_deploy_progress", (data) => {
 		if (!currentConversation.value) return;
 		deploySteps.value = [...deploySteps.value.filter((s) => s.step !== data.step), data];
+		addActivity(`Deploy step ${data.step}: ${data.status || "in progress"}`);
 	});
 
 	frappe.realtime.on("alfred_deploy_complete", (data) => {
@@ -389,6 +530,7 @@ function setupRealtime() {
 		inputPlaceholder.value = __("Ask a follow-up or start a new request...");
 		statusText.value = __("Deployment complete");
 		statusState.value = "success";
+		addActivity(`Deployment complete — ${data.steps} steps executed`);
 		messages.value.push({
 			_id: Date.now(), role: "system", message_type: "status",
 			content: `Deployment complete! ${data.steps} steps executed successfully.`,
@@ -401,6 +543,7 @@ function setupRealtime() {
 		inputDisabled.value = false;
 		statusText.value = __("Deployment failed - rolled back");
 		statusState.value = "error";
+		addActivity(`Deployment failed at step ${data.step}: ${data.error}`, "error");
 		messages.value.push({
 			_id: Date.now(), role: "system", message_type: "error",
 			content: `Deployment failed at step ${data.step}: ${data.error}. All changes rolled back.`,
@@ -458,5 +601,5 @@ function scrollToBottom() {
 }
 
 // Expose goBack for the page shell
-defineExpose({ goBack, currentConversation });
+defineExpose({ goBack, currentConversation, syncRoute });
 </script>

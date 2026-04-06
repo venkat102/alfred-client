@@ -111,6 +111,22 @@ def _route_incoming_message(message, user, conversation_name):
 			logger.error("Failed to store changeset: %s", e)
 
 
+def _publish_connection_event(user, conversation_name, state, message="", detail=""):
+	"""Publish a connection lifecycle event to the browser."""
+	frappe.publish_realtime(
+		"alfred_connection_status",
+		{
+			"conversation": conversation_name,
+			"state": state,  # "starting", "connected", "disconnected", "reconnecting", "failed", "stopped"
+			"message": message,
+			"detail": detail,
+			"timestamp": time.time(),
+		},
+		user=user,
+		after_commit=False,
+	)
+
+
 def _connection_manager(conversation_name, user):
 	"""Long-running background job: manages a single WebSocket connection.
 
@@ -122,12 +138,14 @@ def _connection_manager(conversation_name, user):
 
 	All message sending goes through Redis pub/sub - no cross-loop issues.
 	"""
+	_publish_connection_event(user, conversation_name, "starting", "Starting connection manager...")
 	loop = asyncio.new_event_loop()
 	asyncio.set_event_loop(loop)
 	try:
 		loop.run_until_complete(_connection_loop(conversation_name, user))
 	except Exception as e:
 		logger.error("Connection manager died for %s: %s", conversation_name, e)
+		_publish_connection_event(user, conversation_name, "failed", str(e), "Connection to Processing App failed. Check Alfred Settings.")
 		frappe.publish_realtime(
 			"alfred_error",
 			{"conversation": conversation_name, "error": str(e),
@@ -135,6 +153,7 @@ def _connection_manager(conversation_name, user):
 			user=user,
 		)
 	finally:
+		_publish_connection_event(user, conversation_name, "stopped", "Connection manager stopped.")
 		loop.close()
 
 
@@ -190,6 +209,7 @@ async def _connection_loop(conversation_name, user):
 
 				backoff = 1  # Reset on successful connect
 				logger.info("Connected to Processing App: conversation=%s", conversation_name)
+				_publish_connection_event(user, conversation_name, "connected", "Connected to Processing App")
 
 				# Resume if reconnecting
 				if last_msg_id:
@@ -236,6 +256,10 @@ async def _connection_loop(conversation_name, user):
 			logger.warning(
 				"Connection lost (conversation=%s): %s. Reconnecting in %ds...",
 				conversation_name, e, backoff,
+			)
+			_publish_connection_event(
+				user, conversation_name, "reconnecting",
+				f"Connection lost. Retrying in {backoff}s...", str(e),
 			)
 			await asyncio.sleep(backoff)
 			backoff = min(backoff * 2, max_backoff)

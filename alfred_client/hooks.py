@@ -64,5 +64,13 @@ before_uninstall = "alfred_client.uninstall.before_uninstall"
 # override_doctype_class = {}
 
 # Permissions
-# permission_query_conditions = {}
-# has_permission = {}
+permission_query_conditions = {
+	"Alfred Conversation": "alfred_client.api.permissions.conversation_query_conditions",
+	"Alfred Message": "alfred_client.api.permissions.message_query_conditions",
+	"Alfred Changeset": "alfred_client.api.permissions.changeset_query_conditions",
+}
+has_permission = {
+	"Alfred Conversation": "alfred_client.api.permissions.conversation_has_permission",
+	"Alfred Message": "alfred_client.api.permissions.message_has_permission",
+	"Alfred Changeset": "alfred_client.api.permissions.changeset_has_permission",
+}

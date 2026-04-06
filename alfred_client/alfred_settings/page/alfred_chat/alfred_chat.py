@@ -7,22 +7,23 @@ import frappe
 
 @frappe.whitelist()
 def get_conversations():
-	"""Get the current user's conversations, most recent first."""
+	"""Get conversations the current user owns or that were shared with them."""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
 
+	# frappe.get_all respects permission_query_conditions hook,
+	# which returns own + shared conversations.
 	conversations = frappe.get_all(
 		"Alfred Conversation",
-		filters={"user": frappe.session.user},
-		fields=["name", "status", "current_agent", "summary", "creation", "modified"],
+		fields=["name", "status", "current_agent", "summary", "user", "creation", "modified"],
 		order_by="modified desc",
 		limit_page_length=50,
 	)
 
-	# Use summary field (populated on first message). Fallback to name for legacy records.
 	for conv in conversations:
 		conv["first_message"] = conv.get("summary") or conv["name"]
+		conv["is_owner"] = conv["user"] == frappe.session.user
 
 	return conversations
 
@@ -50,14 +51,8 @@ def get_messages(conversation):
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
+	frappe.has_permission("Alfred Conversation", doc=conversation, throw=True)
 
-	# Verify the conversation belongs to the current user
-	conv = frappe.get_doc("Alfred Conversation", conversation)
-	if conv.user != frappe.session.user and "System Manager" not in frappe.get_roles():
-		frappe.throw(frappe._("You do not have access to this conversation"), frappe.PermissionError)
-
-	# Load latest 200 messages (desc), then reverse to get chronological order.
-	# This ensures long conversations show the most recent messages, not the oldest.
 	messages = frappe.get_all(
 		"Alfred Message",
 		filters={"conversation": conversation},
@@ -75,11 +70,9 @@ def send_message(conversation, message):
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
+	frappe.has_permission("Alfred Conversation", ptype="write", doc=conversation, throw=True)
 
-	# Verify conversation ownership
 	conv = frappe.get_doc("Alfred Conversation", conversation)
-	if conv.user != frappe.session.user and "System Manager" not in frappe.get_roles():
-		frappe.throw(frappe._("You do not have access to this conversation"), frappe.PermissionError)
 
 	# Create the message
 	msg = frappe.get_doc({
@@ -135,14 +128,14 @@ def send_message(conversation, message):
 
 @frappe.whitelist()
 def delete_conversation(conversation):
-	"""Delete a conversation and all its linked records."""
+	"""Delete a conversation and all its linked records. Only the owner can delete."""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
 
 	conv = frappe.get_doc("Alfred Conversation", conversation)
 	if conv.user != frappe.session.user and "System Manager" not in frappe.get_roles():
-		frappe.throw(frappe._("You do not have access to this conversation"), frappe.PermissionError)
+		frappe.throw(frappe._("Only the conversation owner can delete it."), frappe.PermissionError)
 
 	# Delete linked records first
 	frappe.db.delete("Alfred Message", {"conversation": conversation})
@@ -155,6 +148,89 @@ def delete_conversation(conversation):
 	frappe.db.commit()
 
 	return {"status": "deleted"}
+
+
+@frappe.whitelist()
+def share_conversation(conversation, user, read=1, write=0):
+	"""Share a conversation with another user. Only the owner can share."""
+	from alfred_client.api.permissions import validate_alfred_access
+
+	validate_alfred_access()
+
+	conv = frappe.get_doc("Alfred Conversation", conversation)
+	if conv.user != frappe.session.user and "System Manager" not in frappe.get_roles():
+		frappe.throw(frappe._("Only the conversation owner can share it."), frappe.PermissionError)
+
+	frappe.share.add(
+		"Alfred Conversation", conversation, user=user,
+		read=int(read), write=int(write), notify=1,
+	)
+	frappe.db.commit()
+
+	return {"status": "shared", "user": user}
+
+
+@frappe.whitelist()
+def get_conversation_health(conversation):
+	"""Check the health of a conversation's backend pipeline."""
+	from alfred_client.api.permissions import validate_alfred_access
+
+	validate_alfred_access()
+	frappe.has_permission("Alfred Conversation", doc=conversation, throw=True)
+
+	conv = frappe.get_doc("Alfred Conversation", conversation)
+	last_msg = frappe.get_all(
+		"Alfred Message",
+		filters={"conversation": conversation},
+		fields=["creation", "role", "message_type"],
+		order_by="creation desc",
+		limit_page_length=1,
+	)
+
+	# Check if the RQ background job is running
+	from frappe.utils.background_jobs import get_jobs
+	site_jobs = get_jobs(site=frappe.local.site, queue="long")
+	job_running = False
+	for site, jobs in site_jobs.items():
+		for job in jobs:
+			if isinstance(job, str) and conversation in job:
+				job_running = True
+				break
+			elif isinstance(job, dict) and conversation in str(job.get("job_name", "")):
+				job_running = True
+				break
+
+	# Check Redis queue depth
+	redis_conn = frappe.cache()
+	queue_key = f"alfred:ws:outbound:queue:{conversation}"
+	queue_depth = redis_conn.llen(queue_key) or 0
+
+	# Check Processing App reachability
+	processing_app_ok = False
+	processing_app_error = ""
+	try:
+		settings = frappe.get_single("Alfred Settings")
+		if settings.processing_app_url:
+			import requests
+			url = settings.processing_app_url.rstrip("/")
+			# Try a simple HTTP health check (most WS servers expose this)
+			http_url = url.replace("ws://", "http://").replace("wss://", "https://")
+			resp = requests.get(f"{http_url}/health", timeout=5)
+			processing_app_ok = resp.status_code == 200
+		else:
+			processing_app_error = "processing_app_url not configured"
+	except Exception as e:
+		processing_app_error = str(e)
+
+	return {
+		"conversation_status": conv.status,
+		"current_agent": conv.current_agent,
+		"last_message": last_msg[0] if last_msg else None,
+		"background_job_running": job_running,
+		"redis_queue_depth": queue_depth,
+		"processing_app_reachable": processing_app_ok,
+		"processing_app_error": processing_app_error,
+	}
 
 
 @frappe.whitelist()

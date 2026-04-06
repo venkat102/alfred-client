@@ -8,8 +8,14 @@ frappe.pages["alfred-chat"].on_page_load = function (wrapper) {
 
 frappe.pages["alfred-chat"].on_page_show = function (wrapper) {
 	let $parent = $(wrapper).find(".layout-main-section");
-	$parent.empty();
 
+	if (wrapper.alfred_chat && wrapper.alfred_chat.$component) {
+		// App already mounted — just sync the route
+		wrapper.alfred_chat.$component.syncRoute();
+		return;
+	}
+
+	$parent.empty();
 	frappe.require("alfred-chat.bundle.js").then(() => {
 		wrapper.alfred_chat = new frappe.ui.AlfredChat({
 			wrapper: $parent,
