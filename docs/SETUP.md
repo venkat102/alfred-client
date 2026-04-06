@@ -565,15 +565,67 @@ docker exec -it $(docker ps -qf "name=redis") redis-cli ping
 ### Viewing Logs
 
 ```bash
-# Processing app logs
+# Processing app logs (all activity - WebSocket connections, agent pipeline, errors)
 docker logs -f $(docker ps -qf "name=processing")
 
-# Ollama logs
+# Processing app logs - filter out health checks (cleaner view)
+docker logs -f $(docker ps -qf "name=processing") 2>&1 | grep -v health
+
+# Ollama logs (model loading, generation requests)
 docker logs -f $(docker ps -qf "name=ollama")
 
-# Frappe logs
+# Frappe worker logs (background jobs, connection manager, errors)
 tail -f ~/frappe-bench/logs/worker.error.log
+
+# Frappe worker activity (job starts, completions)
+tail -f ~/frappe-bench/logs/worker.log
+
+# Frappe web server logs (API calls, page loads)
+tail -f ~/frappe-bench/logs/frappe.log
 ```
+
+### Debugging a Conversation
+
+If a conversation is stuck or not processing:
+
+```bash
+# 1. Check if the message was saved in the database
+# Open: http://your-site:8000/app/alfred-message?conversation=<conversation-id>
+
+# 2. Check conversation status
+# Open: http://your-site:8000/app/alfred-conversation/<conversation-id>
+
+# 3. Check if the connection manager started (Frappe worker log)
+grep "<conversation-id>" ~/frappe-bench/logs/worker.log
+
+# 4. Check if WebSocket connected to the processing app
+docker logs alfred_processing-processing-1 2>&1 | grep -v health | tail -20
+
+# 5. What you should see in processing app logs for a working conversation:
+#    alfred.websocket INFO: WebSocket connection opened: conversation=<id>
+#    alfred.websocket INFO: WebSocket authenticated: user=..., site=...
+#    alfred.websocket INFO: Custom message from ...: type=prompt
+#    alfred.websocket INFO: Running agent pipeline...
+#
+# 6. If you see "connection open" but NOT "WebSocket authenticated":
+#    - The API key in Alfred Settings doesn't match API_SECRET_KEY in .env
+#    - Check both values match exactly
+#
+# 7. If you see nothing after health checks:
+#    - The Frappe worker didn't start the connection manager
+#    - Check: grep "connection_manager" ~/frappe-bench/logs/worker.log
+#    - Make sure bench workers are running: bench start (or bench restart)
+#    - Redis must be running (required for background jobs)
+```
+
+### Common Status Issues
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| "Processing..." forever, no response | Connection manager didn't start or WebSocket auth failed | Check worker.log for errors, verify API key matches |
+| Shows "Ready" after refresh | No persisted status - the pipeline didn't update the conversation | Check processing app logs for errors |
+| Message saved but nothing happens | Redis Queue is down - background jobs can't run | Run `bench start` to start all services including Redis |
+| WebSocket connects but no "authenticated" log | JWT signing key mismatch | Ensure API Key in Alfred Settings = API_SECRET_KEY in .env |
 
 ---
 
