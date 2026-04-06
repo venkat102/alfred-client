@@ -211,9 +211,9 @@
 
 /* ── Input Area ────────────────────────────────────────────────── */
 .alfred-input-area {
-	display: flex; gap: 8px; padding: 12px 16px;
+	display: flex; gap: 8px; padding: 8px 16px;
 	border-top: 1px solid var(--border-color, #e2e2e2);
-	background: white; flex-shrink: 0; align-items: center;
+	background: white; flex-shrink: 0; align-items: flex-end;
 }
 .alfred-input-wrapper { flex: 1; }
 .alfred-input {
@@ -225,8 +225,8 @@
 .alfred-input:disabled { background: var(--subtle-fg, #f8f8f8); color: var(--text-muted, #999); }
 .alfred-input-hint { display: block; margin-top: 2px; font-size: 10px; }
 .alfred-send-btn {
-	border-radius: 8px !important; padding: 8px 20px !important;
-	align-self: stretch; height: auto; min-height: 38px;
+	border-radius: 8px !important; padding: 8px 16px !important;
+	margin-bottom: 18px;
 }
 
 /* ── Preview Panel ─────────────────────────────────────────────── */
