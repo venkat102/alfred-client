@@ -11,8 +11,9 @@ AI-powered assistant that builds Frappe/ERPNext customizations through conversat
 | **[Admin Guide](docs/admin-guide.md)** | Site Admins | Alfred Settings reference, admin portal config, processing app env vars |
 | **[Architecture](docs/architecture.md)** | Developers | System design, agent pipeline, permission model, data flow diagrams |
 | **[API Reference](docs/developer-api.md)** | Developers | REST API, WebSocket protocol, MCP tools, agent output schemas |
+| **[Debugging Guide](docs/debugging.md)** | Developers | Message flow, step-by-step verification, log commands, common problems |
 
-**Start here**: [Setup Guide](docs/SETUP.md)
+**Start here**: [Setup Guide](docs/SETUP.md) · **Something broken?** [Debugging Guide](docs/debugging.md)
 
 ## Quick Start
 
