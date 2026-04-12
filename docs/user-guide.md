@@ -35,7 +35,8 @@ When you open `/app/alfred-chat`, you see two panels:
 
 ```
 ┌──────────────────────┬────────────────────────────────────┐
-│  Status Bar: Agent name, phase pipeline (1-6), timer      │
+│  Status Bar: Agent status, timer, phase pipeline OR Basic │
+│              badge (lite mode)                             │
 ├──────────────────────┬────────────────────────────────────┤
 │                      │                                    │
 │  Left Panel (40%)    │  Right Panel (60%)                 │
@@ -43,11 +44,16 @@ When you open `/app/alfred-chat`, you see two panels:
 │  Conversation List   │  Preview Panel                     │
 │  or                  │                                    │
 │  Chat Messages       │  Shows what Alfred proposes:       │
+│                      │  - Dry-run validation banner        │
+│                      │    (✓ Validated / ⚠ N issues)       │
 │                      │  - DocType field tables             │
 │                      │  - Script code                      │
 │                      │  - Permission grid                  │
 │                      │  - Deploy progress                  │
-│                      │                                    │
+│  Activity Ticker     │                                    │
+│  (live tool call     │                                    │
+│   status while       │                                    │
+│   processing)        │                                    │
 │  ┌────────────────┐  │  [Approve] [Modify] [Reject]       │
 │  │ Input box      │  │                                    │
 │  └────────────────┘  │                                    │
@@ -58,7 +64,17 @@ When you open `/app/alfred-chat`, you see two panels:
 - **Status dot** - Green (ready), yellow pulsing (processing), blue pulsing (waiting for you), red (error)
 - **Agent name** - Shows which agent is currently working (e.g., "Step 3/6 - Solution Architect is working...")
 - **Timer** - Elapsed seconds since the current phase started
-- **Pipeline** - Six numbered steps: Requirements → Assessment → Architecture → Development → Testing → Deployment. Current step is highlighted blue, completed steps are green with a checkmark.
+- **Pipeline** - Six numbered steps: Requirements → Assessment → Architecture → Development → Testing → Deployment. Current step is highlighted blue, completed steps are green with a checkmark. Hidden in **Basic mode** (see below).
+- **Basic badge** - Small purple pill next to the status text. Appears when the site (or your subscription plan) is using the single-agent "Basic" pipeline mode - faster and cheaper, but less thorough. Hover for details on which setting triggered it.
+
+### Live Activity Ticker (while processing)
+While Alfred is working on your request, a compact blue bar appears just above the input area showing exactly what the agent is doing right now, updated on every tool call:
+
+- `● Reading Leave Application schema`
+- `● Checking write permission on Notification`
+- `● Validating changeset against live site`
+
+This gives you concrete progress instead of a silent spinner - especially useful on long runs. The ticker disappears when the pipeline finishes.
 
 ### Left Panel
 - **Conversation list** - Shows your past conversations with the first message as a summary, status badge, and relative time. Click to open.
@@ -130,19 +146,28 @@ The **Solution Architect** designs the technical solution, then the **Frappe Dev
 
 ### Step 5: Validation
 
-The **QA Validator** checks everything:
-- Python syntax in Server Scripts
+The **QA Validator** (plus a dedicated **pre-preview dry-run** against your live site) checks everything:
+- Python syntax in Server Scripts (`compile()` check)
 - JavaScript syntax in Client Scripts
+- Jinja syntax in Notification subjects and message templates
 - Field types are valid Frappe types
 - Naming conflicts don't exist
 - Permission checks are present in scripts
 - Deployment order is correct (dependencies first)
+- **Dry-run insert with savepoint rollback** - every proposed document is actually inserted into your database in a transaction, then immediately rolled back. This catches errors that only surface at insert time (missing mandatory fields, unresolved Link targets, etc.) **without** leaving any trace in your data.
 
-**If validation fails**, Alfred automatically asks the Developer to fix the issues and re-validates. This can happen up to 3 times. If it still fails after 3 attempts, the conversation is escalated to a human developer.
+**If validation fails**, Alfred automatically asks the Developer to fix the issues and runs the dry-run again (once). If it still fails, the preview panel shows the concrete issues and you can:
+- Click **Deploy Anyway** (if you know the error is a false positive)
+- Click **Request Changes** and tell Alfred what to fix
+- Click **Reject** and start over
 
 ### Step 6: Review & Approve
 
 The preview panel shows the complete changeset:
+
+**Validation banner** at the top:
+- ✓ **Validated - ready to deploy** - dry-run passed, deploy is safe
+- ⚠ **N validation issue(s) found - review before deploying** - shows a list of critical/warning issues, Approve button relabels to "Deploy Anyway"
 
 **DocType preview:**
 | Field | Type | Label | Required |

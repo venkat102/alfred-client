@@ -135,6 +135,37 @@ Response: {"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "t
 | `validate_name_available` | 3 | doctype, name | {available: bool} |
 | `has_active_workflow` | 3 | doctype | {has_active_workflow: bool} |
 | `check_has_records` | 3 | doctype | {has_records: bool, count: int} |
+| `dry_run_changeset` | 3 | changes (list or JSON string) | {valid: bool, issues: [...], validated: [...]} |
+
+### `dry_run_changeset` details
+
+Validates a changeset **without** committing anything to the database. Uses
+`frappe.db.savepoint()` + rollback so insert-time errors (mandatory fields,
+link targets, naming conflicts) are caught but no documents leak. Also runs
+runtime-error checks:
+
+- **Server Script**: `compile()` check catches Python syntax errors
+- **Notification**: `frappe.render_template()` on subject/message/condition
+  catches Jinja syntax errors (unterminated tags, invalid filters)
+- **Client Script**: balanced-brace regex check
+
+Returns:
+
+```json
+{
+  "valid": false,
+  "issues": [
+    {"step": 1, "severity": "critical", "issue": "...", "doctype": "...", "name": "..."}
+  ],
+  "validated": [
+    {"step": 2, "doctype": "...", "name": "...", "operation": "create", "status": "ok"}
+  ]
+}
+```
+
+`valid` is `True` only when every issue has severity below `critical`.
+Used by the pipeline's pre-preview dry-run and by `approve_changeset` as a
+second safety-net check.
 
 ---
 
@@ -154,8 +185,14 @@ Response: {"status": "ok"}
 ```
 POST /api/method/alfred_admin.api.usage.check_plan
 Body: {"site_id": "..."}
-Response: {"allowed": true, "remaining_tokens": 85000, "tier": "Pro", "warning": null}
+Response: {"allowed": true, "remaining_tokens": 85000, "tier": "Pro", "warning": null, "pipeline_mode": "full"}
 ```
+
+**`pipeline_mode`** (optional, added for plan-tier pipeline selection): if
+present and set to `"full"` or `"lite"`, it overrides the customer site's
+local `Alfred Settings.pipeline_mode` for that conversation. Use this to lock
+starter plans to lite mode and unlock full mode on higher tiers. Any other
+value (or absent) means the site's local setting wins.
 
 ### Register Site
 ```

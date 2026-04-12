@@ -6,8 +6,11 @@
 				<span :class="['alfred-status-dot', `alfred-dot-${statusState}`]"></span>
 				<span class="alfred-status-text">{{ statusText }}</span>
 				<span v-if="elapsedTime" class="alfred-elapsed-time text-muted text-xs">({{ elapsedTime }}s)</span>
+				<span v-if="pipelineMode === 'lite'" class="alfred-mode-badge alfred-mode-lite" :title="liteBadgeTooltip">
+					{{ __("Basic") }}
+				</span>
 			</div>
-			<PhasePipeline :current-phase="currentPhase" :completed-phases="completedPhases" />
+			<PhasePipeline v-if="pipelineMode !== 'lite'" :current-phase="currentPhase" :completed-phases="completedPhases" />
 		</div>
 
 		<div class="alfred-panels">
@@ -36,6 +39,9 @@
 							<button class="btn btn-xs btn-primary" @click="newConversationFromChat" :title="__('Start a new conversation')">
 								+ {{ __("New") }}
 							</button>
+							<button class="btn btn-xs btn-default" @click="checkHealth" :title="__('Check pipeline health (Redis queue, background job, Processing App)')">
+								{{ __("Health") }}
+							</button>
 							<button v-if="isCurrentConvOwner" class="btn btn-xs btn-default" @click="shareConversation(currentConversation)" :title="__('Share this conversation')">
 								{{ __("Share") }}
 							</button>
@@ -52,7 +58,7 @@
 							@option-click="sendMessage"
 							@retry="retryLastMessage"
 						/>
-						<TypingIndicator v-if="isProcessing" />
+						<TypingIndicator v-if="isProcessing && !currentActivity" />
 					</div>
 
 					<!-- Activity Log (collapsible) -->
@@ -74,6 +80,12 @@
 								<span>{{ entry.text }}</span>
 							</div>
 						</div>
+					</div>
+
+					<!-- Live activity ticker - shows what the agent is doing right now -->
+					<div v-if="isProcessing && currentActivity" class="alfred-activity-ticker" :key="currentActivity">
+						<span class="alfred-activity-ticker-icon">&#9679;</span>
+						<span class="alfred-activity-ticker-text">{{ currentActivity }}</span>
 					</div>
 
 					<div class="alfred-input-area">
@@ -147,12 +159,39 @@ const activityLog = ref([]);
 const activityLogOpen = ref(false);
 const connectionState = ref("disconnected"); // disconnected, starting, connected, reconnecting, failed
 
+// Live "what is the agent doing right now" ticker - updated on each MCP tool call.
+// Shown prominently above the input while isProcessing is true so the user never
+// stares at a blank screen while the pipeline is running.
+const currentActivity = ref(null);
+
+// Pipeline mode: "full" (6-agent SDLC) or "lite" (single-agent fast pass).
+// Sourced from the backend's first agent_status event each run, which reflects
+// the highest-precedence config: admin portal plan > Alfred Settings > default.
+const pipelineMode = ref("full");
+// Where the mode came from: "plan" means the subscription tier forced it;
+// "site_config" means the site admin chose it. Used in the tooltip so the user
+// understands whether they can change it.
+const pipelineModeSource = ref("site_config");
+
 const messagesContainer = ref(null);
 const inputField = ref(null);
 
 let timerInterval = null;
 let timerStart = null;
 let realtimeBound = false;
+let pollInterval = null;
+let stuckTimeout = null;
+// Timestamp of the most recent prompt - polling rejects any changeset created
+// before this so we never show stale previews from an earlier prompt in the
+// same conversation.
+let currentPromptSentAt = null;
+
+// Hard stop for processing UI state. If no completion / error event arrives
+// within this window, surface a "pipeline stalled" warning so the user can
+// retry instead of staring at a spinner forever.
+const MAX_PROCESSING_MS = 10 * 60 * 1000;  // 10 minutes
+// Cap on in-memory activity log entries (prevents unbounded growth over long sessions).
+const MAX_ACTIVITY_LOG = 200;
 
 // ── Computed ───────────────────────────────────────────────────
 const lastUserMessage = computed(() => {
@@ -170,12 +209,22 @@ const CONNECTION_LABELS = {
 };
 const connectionLabel = computed(() => CONNECTION_LABELS[connectionState.value] || connectionState.value);
 
+const liteBadgeTooltip = computed(() => {
+	if (pipelineModeSource.value === "plan") {
+		return __("Basic mode is set by your subscription plan. Single-agent fast pipeline - ~5× faster, best for simple customizations. Upgrade your plan to unlock the full 6-agent pipeline.");
+	}
+	return __("Basic mode is configured in Alfred Settings. Single-agent fast pipeline - ~5× faster, best for simple customizations. Switch to Full in Alfred Settings for complex workflows.");
+});
+
 function addActivity(text, level = "info") {
 	const now = new Date();
 	const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 	activityLog.value.push({ text, level, time });
-	// Keep last 50 entries
-	if (activityLog.value.length > 50) activityLog.value.shift();
+	// Drop the oldest in bulk once we exceed the cap - splice is O(n) per call
+	// but far cheaper than repeated shift() when the array grows quickly.
+	if (activityLog.value.length > MAX_ACTIVITY_LOG) {
+		activityLog.value.splice(0, activityLog.value.length - MAX_ACTIVITY_LOG);
+	}
 }
 
 // ── Route Sync ────────────────────────────────────────────────
@@ -190,7 +239,7 @@ function syncRoute() {
 	if (convId && convId !== currentConversation.value) {
 		openConversation(convId);
 	} else if (!convId && currentConversation.value) {
-		// URL was cleared (e.g., browser back button) — go to list
+		// URL was cleared (e.g., browser back button) - go to list
 		currentConversation.value = null;
 		loadConversations();
 	}
@@ -209,6 +258,7 @@ onMounted(() => {
 
 onUnmounted(() => {
 	stopTimer();
+	stopPolling();
 	// Listeners persist on frappe.realtime - they're global and idempotent
 });
 
@@ -302,6 +352,83 @@ function deleteConversation() {
 	confirmAndDelete(currentConversation.value, () => goBack());
 }
 
+function checkHealth() {
+	if (!currentConversation.value) return;
+	frappe.call({
+		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_conversation_health",
+		args: { conversation: currentConversation.value },
+		callback: (r) => {
+			if (!r.message) return;
+			const h = r.message;
+			const esc = frappe.utils.escape_html;
+
+			const lastMsg = h.last_message
+				? `${esc(h.last_message.role)} (${esc(h.last_message.message_type)}) - ${esc(h.last_message.creation)}`
+				: '<span class="text-muted">-</span>';
+
+			const procStatus = h.processing_app_reachable
+				? '<span style="color: var(--green-600); font-weight: 600;">&#10003; reachable</span>'
+				: `<span style="color: var(--red-600); font-weight: 600;">&#10007; ${esc(h.processing_app_error || "unreachable")}</span>`;
+
+			const jobStatus = h.background_job_running
+				? '<span style="color: var(--green-600); font-weight: 600;">&#10003; running</span>'
+				: '<span style="color: var(--red-600); font-weight: 600;">&#10007; not running</span>';
+
+			const depth = h.redis_queue_depth || 0;
+			const queueColor = depth === 0 ? "var(--green-600)" : "var(--orange-600)";
+			const queueLabel = depth === 0
+				? __("empty (drained or never had a message)")
+				: __("{0} message(s) waiting", [depth]);
+
+			const overallOk = h.processing_app_reachable && h.background_job_running;
+
+			frappe.msgprint({
+				title: __("Conversation Health"),
+				indicator: overallOk ? "green" : "orange",
+				message: `
+					<table class="table table-bordered" style="margin: 0;">
+						<tbody>
+							<tr>
+								<td style="width: 40%;"><strong>${__("Conversation Status")}</strong></td>
+								<td>${esc(h.conversation_status || "-")}</td>
+							</tr>
+							<tr>
+								<td><strong>${__("Current Agent")}</strong></td>
+								<td>${esc(h.current_agent || "-")}</td>
+							</tr>
+							<tr>
+								<td><strong>${__("Last Message")}</strong></td>
+								<td>${lastMsg}</td>
+							</tr>
+							<tr>
+								<td><strong>${__("Background Job")}</strong></td>
+								<td>${jobStatus}</td>
+							</tr>
+							<tr>
+								<td><strong>${__("Redis Queue Depth")}</strong></td>
+								<td>
+									<span style="color: ${queueColor}; font-weight: 600;">${depth}</span>
+									<span class="text-muted" style="margin-left: 8px;">${queueLabel}</span>
+								</td>
+							</tr>
+							<tr>
+								<td><strong>${__("Processing App")}</strong></td>
+								<td>${procStatus}</td>
+							</tr>
+						</tbody>
+					</table>
+					<p class="text-muted text-xs" style="margin-top: 10px; margin-bottom: 0;">
+						${__("Tip: send a prompt and click Health immediately. Queue depth should briefly show 1, then drop to 0 within 1-2 seconds as the connection manager drains it.")}
+					</p>
+				`,
+			});
+		},
+		error: () => {
+			frappe.show_alert({ message: __("Failed to fetch health"), indicator: "red" });
+		},
+	});
+}
+
 function deleteConversationFromList(name) {
 	confirmAndDelete(name, () => loadConversations());
 }
@@ -368,6 +495,14 @@ function sendMessage(text) {
 
 	inputText.value = "";
 
+	// Record when this prompt was sent so the polling fallback can reject
+	// changesets that belong to an earlier prompt in the same conversation.
+	currentPromptSentAt = frappe.datetime.now_datetime();
+
+	// Clear any previous changeset so the preview panel doesn't show a stale
+	// result while the new pipeline is running.
+	changeset.value = null;
+
 	// Optimistic UI
 	messages.value.push({
 		_id: Date.now(),
@@ -383,6 +518,7 @@ function sendMessage(text) {
 	statusState.value = "processing";
 	addActivity("Message sent, waiting for agent pipeline...");
 	startTimer();
+	startPolling(); // Poll for changeset as fallback if realtime events don't arrive
 
 	frappe.call({
 		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.send_message",
@@ -393,6 +529,7 @@ function sendMessage(text) {
 			statusText.value = __("Error sending message");
 			statusState.value = "error";
 			stopTimer();
+			stopPolling();
 		},
 	});
 }
@@ -404,24 +541,48 @@ function retryLastMessage() {
 function approveChangeset() {
 	if (!changeset.value) return;
 	const changes = changeset.value.changes || [];
-	const summary = changes
-		.map((c) => `${c.op || c.operation || "create"} ${c.doctype}: ${(c.data || {}).name || "Unnamed"}`)
-		.join("\n• ");
 
 	frappe.confirm(
 		`<p><strong>${__("Deploy to your live site?")}</strong></p>
-		 <p class="text-muted">${__("The following changes will be applied:")}</p>
+		 <p class="text-muted">${__("A dry-run validation will be performed first. Changes:")}</p>
 		 <ul style="text-align:left">${changes.map((c) =>
-			`<li><strong>${c.op || c.operation}</strong> ${frappe.utils.escape_html((c.data || {}).name || "")}</li>`
+			`<li><strong>${c.op || c.operation || "create"}</strong> ${c.doctype}: ${frappe.utils.escape_html((c.data || {}).name || "Unnamed")}</li>`
 		 ).join("")}</ul>`,
 		() => {
+			frappe.show_alert({ message: __("Validating changeset..."), indicator: "blue" });
 			frappe.call({
 				method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.approve_changeset",
 				args: { changeset_name: changeset.value.name },
 				callback: (r) => {
-					if (r.message) {
+					if (!r.message) return;
+					let result = r.message;
+
+					if (result.status === "validation_failed") {
+						// Dry-run failed - show issues without deploying
+						let issueHtml = (result.issues || []).map((i) =>
+							`<li><strong>[${i.severity}]</strong> Step ${i.step} (${i.doctype}): ${frappe.utils.escape_html(i.issue)}</li>`
+						).join("");
+						frappe.msgprint({
+							title: __("Dry-Run Validation Failed"),
+							indicator: "red",
+							message: `<p>${result.message}</p><ul>${issueHtml}</ul>
+								<p class="text-muted">${__("No changes were made to your site. Fix the issues and try again.")}</p>`,
+						});
+						messages.value.push({
+							_id: Date.now(), role: "system", message_type: "error",
+							content: `Deployment validation failed: ${result.message}`,
+						});
+					} else if (result.status === "success") {
 						isDeployed.value = true;
+						if (changeset.value) changeset.value.status = "Deployed";
 						frappe.show_alert({ message: __("Deployment complete!"), indicator: "green" });
+					} else if (result.status === "failed") {
+						if (changeset.value) changeset.value.status = "Rolled Back";
+						frappe.msgprint({
+							title: __("Deployment Failed"),
+							indicator: "red",
+							message: result.error || "An error occurred during deployment.",
+						});
 					}
 				},
 				error: () => frappe.show_alert({ message: __("Deployment failed."), indicator: "red" }),
@@ -443,7 +604,7 @@ function rejectChangeset() {
 			method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.reject_changeset",
 			args: { changeset_name: changeset.value.name },
 			callback: () => {
-				changeset.value = null;
+				if (changeset.value) changeset.value.status = "Rejected";
 				frappe.show_alert({ message: __("Changeset rejected."), indicator: "orange" });
 			},
 		});
@@ -461,20 +622,78 @@ function setupRealtime() {
 		const level = (data.state === "failed" || data.state === "reconnecting") ? "error" : "info";
 		addActivity(data.message || data.state, level);
 		if (data.detail) addActivity(data.detail, "error");
+		// Clear the live activity ticker when the connection itself dies - otherwise
+		// the user sees "Reading X..." frozen in place while the processing app is gone.
+		if (data.state === "failed" || data.state === "disconnected" || data.state === "stopped") {
+			currentActivity.value = null;
+		}
 	});
 
 	frappe.realtime.on("alfred_agent_status", (data) => {
 		if (!currentConversation.value) return;
-		isProcessing.value = false;
-		updateAgentStatus(data);
-		addActivity(`${data.agent || "Agent"}: ${data.status}${data.message ? " — " + data.message : ""}`);
-
-		if (data.status === "completed" && data.agent) {
-			messages.value.push({
-				_id: Date.now(), role: "system", message_type: "status",
-				content: `${data.agent} completed`,
-			});
+		// Capture pipeline mode on first event per run so the UI hides the
+		// 6-phase pipeline in lite mode and shows the "Basic" badge.
+		if (data.pipeline_mode === "full" || data.pipeline_mode === "lite") {
+			pipelineMode.value = data.pipeline_mode;
 		}
+		if (data.pipeline_mode_source === "plan" || data.pipeline_mode_source === "site_config") {
+			pipelineModeSource.value = data.pipeline_mode_source;
+		}
+		updateAgentStatus(data);
+
+		const agent = data.agent || "Agent";
+
+		if (data.status === "enhancing") {
+			isProcessing.value = true;
+			addActivity(data.message || "Analyzing request...");
+			pushAgentStep("Analyzing your request...");
+		} else if (data.status === "started" && data.phase) {
+			isProcessing.value = true;
+			addActivity(`${agent}: started`);
+			// Mark previous in-progress step as done
+			markLastStepDone();
+			pushAgentStep(`${agentStepLabel(data.phase || agent)}...`);
+		} else if (data.status === "completed" && agent) {
+			isProcessing.value = false;
+			stopTimer();
+			inputDisabled.value = false;
+			inputPlaceholder.value = __("Ask a follow-up or start a new request...");
+			statusText.value = __("Completed");
+			statusState.value = "success";
+			currentActivity.value = null;
+			addActivity(`${agent} completed`);
+			markLastStepDone();
+			// Show the result text in chat
+			let content = data.result || `${agent} completed`;
+			messages.value.push({
+				_id: Date.now(), role: "assistant", message_type: "text",
+				content: content,
+			});
+		} else if (data.event === "crew_started") {
+			addActivity("Pipeline started");
+			isProcessing.value = true;
+		} else if (data.event === "crew_completed") {
+			addActivity("Pipeline completed");
+			markLastStepDone();
+		} else if (data.event) {
+			// Other crew lifecycle events - show as agent step in chat
+			let label = data.agent ? `${data.agent}: ${data.event}` : data.event;
+			addActivity(label);
+			if (data.agent && data.event !== "crew_started" && data.event !== "crew_completed") {
+				markLastStepDone();
+				pushAgentStep(`${data.agent} is working...`);
+			}
+		} else {
+			addActivity(`${agent}: ${data.status}${data.message ? " - " + data.message : ""}`);
+		}
+	});
+
+	frappe.realtime.on("alfred_activity", (data) => {
+		if (!currentConversation.value) return;
+		const text = data.description || data.tool || "";
+		if (!text) return;
+		currentActivity.value = text;
+		addActivity(text, "info");
 	});
 
 	frappe.realtime.on("alfred_question", (data) => {
@@ -498,17 +717,37 @@ function setupRealtime() {
 		frappe.call({
 			method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_changeset",
 			args: { changeset_name: data.changeset_name },
-			callback: (r) => { if (r.message) changeset.value = r.message; },
+			callback: (r) => {
+				if (!r.message) return;
+				const cs = r.message;
+				// Reject if the changeset was created before the current prompt
+				// (could happen if a stale event arrives after a new prompt was sent).
+				if (currentPromptSentAt && cs.creation && cs.creation < currentPromptSentAt) {
+					return;
+				}
+				changeset.value = cs;
+			},
 		});
 	});
 
 	frappe.realtime.on("alfred_error", (data) => {
 		if (!currentConversation.value) return;
+		// PIPELINE_BUSY is a soft reject: a previous pipeline is still running
+		// on the same conversation. Don't tear down UI state - just show a toast.
+		if (data.code === "PIPELINE_BUSY") {
+			frappe.show_alert({
+				message: data.error || __("A pipeline is already running for this conversation."),
+				indicator: "orange",
+			});
+			return;
+		}
 		isProcessing.value = false;
 		inputDisabled.value = false;
 		stopTimer();
+		stopPolling();
 		statusText.value = __("Error");
 		statusState.value = "error";
+		currentActivity.value = null;
 		addActivity(data.error || data.message || "Error occurred", "error");
 		messages.value.push({
 			_id: Date.now(), role: "system", message_type: "error",
@@ -530,7 +769,7 @@ function setupRealtime() {
 		inputPlaceholder.value = __("Ask a follow-up or start a new request...");
 		statusText.value = __("Deployment complete");
 		statusState.value = "success";
-		addActivity(`Deployment complete — ${data.steps} steps executed`);
+		addActivity(`Deployment complete - ${data.steps} steps executed`);
 		messages.value.push({
 			_id: Date.now(), role: "system", message_type: "status",
 			content: `Deployment complete! ${data.steps} steps executed successfully.`,
@@ -579,6 +818,40 @@ function updateAgentStatus(data) {
 	}
 }
 
+// ── Agent Step Messages (live feed in chat) ──────────────────
+const STEP_LABELS = {
+	requirement: "Gathering requirements",
+	assessment: "Checking feasibility",
+	architecture: "Designing solution",
+	development: "Generating code",
+	testing: "Validating changeset",
+	deployment: "Preparing deployment",
+};
+
+function agentStepLabel(phaseOrAgent) {
+	return STEP_LABELS[phaseOrAgent] || phaseOrAgent;
+}
+
+function pushAgentStep(text) {
+	messages.value.push({
+		_id: `step-${Date.now()}`,
+		role: "system",
+		message_type: "agent-step",
+		step_status: "active",
+		content: text,
+	});
+	nextTick(scrollToBottom);
+}
+
+function markLastStepDone() {
+	for (let i = messages.value.length - 1; i >= 0; i--) {
+		if (messages.value[i].message_type === "agent-step" && messages.value[i].step_status === "active") {
+			messages.value[i].step_status = "done";
+			break;
+		}
+	}
+}
+
 // ── Timer ──────────────────────────────────────────────────────
 function startTimer() {
 	timerStart = Date.now();
@@ -586,12 +859,87 @@ function startTimer() {
 	timerInterval = setInterval(() => {
 		elapsedTime.value = Math.round((Date.now() - timerStart) / 1000);
 	}, 1000);
+	// Guard against the pipeline getting stuck without sending completion
+	// or error events (processing-app crash, network drop, etc.)
+	stuckTimeout = setTimeout(() => {
+		if (isProcessing.value) {
+			isProcessing.value = false;
+			inputDisabled.value = false;
+			statusText.value = __("Pipeline appears stalled");
+			statusState.value = "error";
+			currentActivity.value = null;
+			stopPolling();
+			addActivity("Pipeline stalled - no response for 10 minutes", "error");
+			messages.value.push({
+				_id: Date.now(), role: "system", message_type: "error",
+				content: __("The pipeline hasn't responded for 10 minutes. You can try again or check the processing app logs."),
+			});
+		}
+	}, MAX_PROCESSING_MS);
 }
 
 function stopTimer() {
 	if (timerInterval) clearInterval(timerInterval);
 	timerInterval = null;
 	elapsedTime.value = null;
+	if (stuckTimeout) { clearTimeout(stuckTimeout); stuckTimeout = null; }
+}
+
+// ── Polling (fallback for when realtime events don't arrive) ──
+function startPolling() {
+	stopPolling();
+	pollInterval = setInterval(() => {
+		if (!currentConversation.value || !isProcessing.value) {
+			stopPolling();
+			return;
+		}
+		pollForChangeset();
+	}, 5000); // Check every 5 seconds
+}
+
+function stopPolling() {
+	if (pollInterval) clearInterval(pollInterval);
+	pollInterval = null;
+}
+
+function pollForChangeset() {
+	if (!currentConversation.value) return;
+	frappe.call({
+		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_latest_changeset",
+		args: { conversation: currentConversation.value },
+		async: true,
+		callback: (r) => {
+			if (!r.message) return;
+			let cs = r.message;
+			if (!cs.name) return;
+
+			// Reject changesets from a previous prompt in the same conversation.
+			// Without this, the first poll after sending a new prompt can latch
+			// onto the previous changeset and falsely declare the new pipeline done.
+			if (currentPromptSentAt && cs.creation && cs.creation < currentPromptSentAt) {
+				return;
+			}
+
+			// Already have this changeset - nothing to do
+			if (changeset.value && changeset.value.name === cs.name) return;
+
+			changeset.value = cs;
+			isProcessing.value = false;
+			currentActivity.value = null;
+			stopTimer();
+			stopPolling();
+			inputDisabled.value = false;
+			inputPlaceholder.value = __("Ask a follow-up or start a new request...");
+			statusText.value = __("Review the proposed changes");
+			statusState.value = "success";
+			addActivity("Changeset ready for review");
+			messages.value.push({
+				_id: Date.now(), role: "assistant", message_type: "text",
+				content: __("I've prepared the changes for your review. Please check the preview panel on the right."),
+			});
+			nextTick(scrollToBottom);
+		},
+	});
 }
 
 // ── Scroll ─────────────────────────────────────────────────────

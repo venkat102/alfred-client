@@ -12,6 +12,16 @@ Access at `/app/alfred-settings`. Only System Managers can configure.
 | API Key | Shared secret for authentication (encrypted) | - |
 | Self-Hosted Mode | Enable when running your own processing app | Off |
 | Redis URL | Redis connection (self-hosted only) | - |
+| Pipeline Mode | `full` (6-agent SDLC, ~5-10 min, highest quality) or `lite` (single-agent fast pass, ~1 min, ~5× cheaper, best for simple customizations). Overridden by admin portal plan when configured. | `full` |
+
+**Pipeline Mode precedence** (highest to lowest):
+1. Admin portal `check_plan` response `pipeline_mode` field - lets SaaS plans lock lower tiers to lite
+2. `Alfred Settings.pipeline_mode` - self-hosted / no-portal installs
+3. Default `full`
+
+When a plan forces lite, the "Basic" badge in the chat UI tooltip says *"set by
+your subscription plan - upgrade to unlock the full 6-agent pipeline."* When
+it's set locally, the tooltip says *"configured in Alfred Settings."*
 
 ### LLM Configuration Tab
 

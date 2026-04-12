@@ -80,14 +80,14 @@ Alfred is an AI assistant that builds Frappe/ERPNext customizations through conv
 | Storage | 10 GB free | 20 GB free |
 | Python | 3.10+ | 3.11 |
 | Node.js | 18+ | 20+ |
-| Docker | 20+ (for processing app) | Latest |
+| Docker | 20+ (production only) | Latest |
 
 ### Software Prerequisites
 
 - Frappe Bench (v15+) installed and working (`bench start` runs)
 - A Frappe site created (e.g., `dev.alfred`)
 - Redis running (Frappe's bench includes this)
-- Docker + Docker Compose (for the processing app and Ollama)
+- Docker + Docker Compose (for production deployment; not needed for local development)
 
 ---
 
@@ -110,10 +110,11 @@ Your Browser
            │ WebSocket (outbound)
            ▼
 ┌──────────────────────────────────┐
-│  Processing App (Docker)         │
+│  Processing App                  │
 │  FastAPI + CrewAI agents         │
+│  (native dev / Docker prod)      │
 │  ┌────────┐  ┌────────┐          │
-│  │ Redis  │  │ Ollama │          │
+│  │ Redis  │  │  LLM   │          │
 │  └────────┘  └────────┘          │
 └──────────────────────────────────┘
 ```
@@ -183,7 +184,14 @@ Open `http://dev.alfred:8000/app/alfred-settings` in your browser. You should se
 
 ## Part B: Set Up the Processing App
 
-The processing app runs as a Docker container alongside Redis and Ollama (local LLM).
+The processing app is a Python FastAPI service. **You have two ways to run it:**
+
+| Mode | Use when | What runs | Command |
+|---|---|---|---|
+| **Native (dev)** | Local development on your laptop | Python venv on the host, reuses Frappe's Redis | `./dev.sh` |
+| **Docker (prod)** | Production deployment | Docker container + dedicated Redis container | `docker compose up -d` |
+
+For development, **native mode is strongly recommended**: it's faster to iterate (auto-reload on file save), avoids Docker daemon dependency, and doesn't run a redundant Redis (it reuses the one already running as part of `bench start`).
 
 ### 1. Get and Navigate to the Processing App
 
@@ -227,7 +235,31 @@ DEBUG=false
 
 > **Port conflict with Frappe**: Frappe's bench runs on port **8000** by default. Since the processing app also defaults to 8000, you **must** change one of them when both run on the same machine. We recommend setting the processing app to `PORT=8001` in `.env`. All examples in this guide use port 8001. Adjust if you chose a different port.
 
-### 3. Start the Services
+> **Native dev REDIS_URL**: For native mode, set `REDIS_URL=redis://localhost:13000/0` in `.env` so the processing app reuses Frappe's cache Redis (port 13000). Do **not** use port 11000 (that's Frappe's RQ/queue Redis - a different instance). The `docker-compose.yml` ignores this setting and hardcodes its own value, so the same `.env` file works for both modes.
+
+### 3a. Start the Services - Native (Development)
+
+**Prerequisites**: Python 3.11 (`brew install python@3.11` on macOS), Frappe bench already running (`bench start` provides the Redis on port 11000).
+
+```bash
+cd alfred_processing
+./dev.sh
+```
+
+`dev.sh` will:
+1. Create a Python 3.11 venv in `.venv/` if missing (or recreate if stale)
+2. Install/update deps from `pyproject.toml`
+3. Load `.env` and validate `API_SECRET_KEY` is set
+4. Kill any stale process holding the port
+5. Start uvicorn with `--reload` (auto-reloads on changes to `alfred/**/*.py`)
+
+The service comes up at `http://localhost:8001`. Press `Ctrl+C` to stop. Logs stream to your terminal.
+
+> **Why Python 3.11 and not your system Python?** `crewai` pulls in `chromadb`, `onnxruntime`, `tiktoken`, and `pydantic-core` - these have prebuilt wheels for 3.11 but often lag on newer CPython releases. Sticking to 3.11 = predictable installs, no compilation surprises.
+
+> **Don't have python3.11?** Override with `PYTHON_BIN=python3.12 ./dev.sh` (3.12 also has wheel coverage for crewai's deps; 3.13/3.14 are riskier).
+
+### 3b. Start the Services - Docker (Production)
 
 Choose the command that matches your Ollama setup:
 
@@ -341,9 +373,19 @@ Leave defaults or adjust:
 
 **Save the settings.**
 
-### 2. Restart Frappe Workers
+### 2. Add a Long Queue Worker (Required)
 
-The WebSocket client runs as a background job. Restart workers to pick up the new config:
+Alfred's WebSocket connection manager runs as a long-lived background job (up to 2 hours per conversation). Frappe's default Procfile only has a `default` queue worker - you **must** add a `long` queue worker, or connection manager jobs will queue up and never execute.
+
+Add this line to your `Procfile` (in the bench root):
+
+```
+worker_long: OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES NO_PROXY=* bench worker --queue long 1>> logs/worker_long.log 2>> logs/worker_long.error.log
+```
+
+> **Why is this needed?** `start_conversation()` enqueues `_connection_manager` with `queue="long"` and `timeout=7200`. Without a worker listening on the `long` queue, these jobs pile up indefinitely and no messages reach the Processing App.
+
+### 3. Restart Frappe Workers
 
 ```bash
 bench restart
@@ -353,14 +395,25 @@ bench restart
 
 ## Part D: Verify the Installation
 
-### Quick Health Checks
+### UI Health Checks (Recommended)
+
+Open **`/app/alfred-settings`** and use the buttons under the **Actions** dropdown:
+
+| Button | What it checks |
+|--------|---------------|
+| **Test Processing App** | Hits the Processing App's `/health` endpoint. Shows version and Redis status. |
+| **Test LLM Connection** | For Ollama: checks reachability, lists installed models, sends a test generation. For cloud providers: sends a minimal completion call via LiteLLM. |
+
+Fix any red/orange results before proceeding.
+
+### CLI Health Checks
 
 ```bash
 # 1. Processing app is running
 curl http://localhost:8001/health
 # Expected: {"status": "ok", "redis": "connected"}
 
-# 2. Ollama has a model
+# 2. Ollama has a model (if using Ollama)
 curl http://localhost:11434/api/tags
 # Expected: list containing "llama3.1" or your chosen model
 
@@ -455,7 +508,7 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 | llm_api_key | Password | - | API key for cloud LLM providers |
 | llm_base_url | Data | - | Custom endpoint URL |
 | llm_max_tokens | Int | 4096 | Max tokens per response |
-| llm_temperature | Float | 0.1 | Generation randomness (0.0–2.0) |
+| llm_temperature | Float | 0.1 | Generation randomness (0.0-2.0) |
 | allowed_roles | Table | - | Roles permitted to use Alfred |
 | enable_auto_deploy | Check | No | Skip manual approval |
 | max_retries_per_agent | Int | 3 | Retries before escalation |
@@ -475,6 +528,7 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 | FALLBACK_LLM_MODEL | No | - | Default LLM model |
 | FALLBACK_LLM_API_KEY | No | - | Default LLM API key |
 | FALLBACK_LLM_BASE_URL | No | - | Default LLM endpoint |
+| LLM_TIMEOUT | No | 120 | LLM request timeout in seconds (per call, not per pipeline) |
 | ALLOWED_ORIGINS | No | * | CORS origins (comma-separated) |
 | ADMIN_PORTAL_URL | No | - | Admin portal URL (SaaS mode) |
 | ADMIN_SERVICE_KEY | No | - | Admin portal auth key |
@@ -574,8 +628,12 @@ docker logs -f $(docker ps -qf "name=processing") 2>&1 | grep -v health
 # Ollama logs (model loading, generation requests)
 docker logs -f $(docker ps -qf "name=ollama")
 
-# Frappe worker logs (background jobs, connection manager, errors)
+# Frappe worker logs (default queue - background jobs, errors)
 tail -f ~/frappe-bench/logs/worker.error.log
+
+# Frappe long worker logs (connection manager runs here)
+tail -f ~/frappe-bench/logs/worker_long.log
+tail -f ~/frappe-bench/logs/worker_long.error.log
 
 # Frappe worker activity (job starts, completions)
 tail -f ~/frappe-bench/logs/worker.log
@@ -618,14 +676,41 @@ docker logs alfred_processing-processing-1 2>&1 | grep -v health | tail -20
 #    - Redis must be running (required for background jobs)
 ```
 
+### Messages queued but never reach the Processing App
+
+**Symptom**: Health button shows `redis_queue_depth: 1` (stuck), message never arrives at the Processing App.
+
+**Cause 1 - No long queue worker**: The Procfile doesn't have a `worker_long` entry. The `_connection_manager` job is enqueued to `queue="long"` but nothing processes it.
+
+**Fix**: Add the `worker_long` line to your Procfile (see [Part C, step 2](#2-add-a-long-queue-worker-required)) and restart bench.
+
+**Cause 2 - Redis instance mismatch**: `send_message()` writes to `redis_cache` (port 13000) but the connection manager reads from a different Redis instance.
+
+**Fix**: The connection manager must connect to `frappe.conf.get("redis_cache")`. This is already handled in the code - if you're seeing this, check `common_site_config.json` for the correct `redis_cache` URL.
+
+### LLM connection refused / timeout
+
+**Symptom**: Processing app logs show `litellm.APIConnectionError: OllamaException - [Errno 61] Connection refused` or `litellm.Timeout`.
+
+**Cause**: The LLM endpoint (Ollama or cloud provider) is unreachable from the Processing App.
+
+**Fix**:
+1. Use **Alfred Settings → Actions → Test LLM Connection** to diagnose
+2. For Ollama: ensure `ollama serve` is running and the Base URL is correct
+3. For remote Ollama: verify network connectivity with `curl http://your-server:11434/api/tags`
+4. For cloud providers: verify the API key is valid and not expired
+5. Use `test_llm.py` on the Processing App server for detailed diagnostics: `.venv/bin/python test_llm.py`
+
 ### Common Status Issues
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | "Processing..." forever, no response | Connection manager didn't start or WebSocket auth failed | Check worker.log for errors, verify API key matches |
 | Shows "Ready" after refresh | No persisted status - the pipeline didn't update the conversation | Check processing app logs for errors |
-| Message saved but nothing happens | Redis Queue is down - background jobs can't run | Run `bench start` to start all services including Redis |
+| Message saved but nothing happens | No `long` queue worker in Procfile | Add `worker_long` to Procfile (see Part C step 2) |
+| Message queued, depth stays at 1 | Redis instance mismatch (cache vs queue) | Check connection manager uses `redis_cache` (port 13000) |
 | WebSocket connects but no "authenticated" log | JWT signing key mismatch | Ensure API Key in Alfred Settings = API_SECRET_KEY in .env |
+| LLM Failed / Connection refused | Ollama not running or unreachable | Use Actions → Test LLM Connection in Alfred Settings |
 
 ---
 
@@ -696,13 +781,20 @@ The only requirement is that the Base URL responds to Ollama's HTTP API format (
 
 #### Testing the Connection
 
-After configuring, you can verify the connection works:
-```bash
-# From the machine running the Processing App:
-curl http://your-ollama-host:11434/api/tags
-```
+**From the UI**: Open `/app/alfred-settings` → **Actions** → **Test LLM Connection**. This checks reachability, model availability, and sends a test generation request.
 
-Or from Alfred Settings, the system validates connectivity when you save (checks if the endpoint is reachable and the model is installed).
+**From the CLI** (on the Processing App server):
+```bash
+# Quick connectivity check
+curl http://your-ollama-host:11434/api/tags
+
+# Full end-to-end test with streaming (uses .env config)
+cd alfred_processing
+.venv/bin/python test_llm.py
+
+# Override model/URL inline
+.venv/bin/python test_llm.py --model ollama/llama3.2:3b --base-url http://localhost:11434
+```
 
 **Pricing**: Free. No API keys. No usage limits. Only cost is the hardware running Ollama.
 
@@ -732,7 +824,7 @@ FALLBACK_LLM_MODEL=anthropic/claude-sonnet-4-20250514
 FALLBACK_LLM_API_KEY=sk-ant-api03-your-key-here
 ```
 
-**Pricing**: ~$3 per million tokens. A typical conversation uses 5,000–30,000 tokens (~$0.01–$0.09).
+**Pricing**: ~$3 per million tokens. A typical conversation uses 5,000-30,000 tokens (~$0.01-$0.09).
 
 ### OpenAI GPT
 

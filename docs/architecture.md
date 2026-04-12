@@ -17,7 +17,7 @@
 └─────────────────────────────┼───────────────────────────────────────┘
                               │ WSS (client-initiated)
 ┌─────────────────────────────┼───────────────────────────────────────┐
-│                Processing App (FastAPI + Docker)                     │
+│                Processing App (FastAPI, native dev / Docker prod)    │
 │  ┌──────────────────────────┴────────────────────────────────────┐  │
 │  │              API Gateway (JWT auth + rate limiting)            │  │
 │  └──────────────────────────┬────────────────────────────────────┘  │
@@ -41,53 +41,152 @@
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Agent Pipeline
+## Agent Pipeline - Full Mode (6 agents, sequential)
 
 ```
 User Prompt
     │
-    ▼
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Requirement  │────▶│  Assessment  │────▶│  Architect   │
-│  Analyst      │     │  Assessor    │     │  Designer    │
-└──────────────┘     └──────┬───────┘     └──────┬───────┘
-                            │                     │
-                     (if blocked)          ┌──────▼───────┐
-                            │              │  Developer   │
-                     ┌──────▼───────┐      │  Generator   │
-                     │  Escalation  │      └──────┬───────┘
-                     │  to Human    │             │
-                     └──────────────┘      ┌──────▼───────┐
-                                           │  Tester      │──┐
-                                           │  Validator   │  │ (max 3 loops)
-                                           └──────┬───────┘  │
-                                                  │    ▲      │
-                                                  │    └──────┘
-                                           ┌──────▼───────┐
-                                           │  Deployer    │
-                                           │  (approval)  │
-                                           └──────┬───────┘
-                                                  │
-                                                  ▼
-                                           Deployed to Site
+    ▼ (enhance_prompt - single LLM pass)
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│  Requirement │──▶│  Assessment  │──▶│  Architect   │──▶│  Developer   │
+│  Analyst     │   │  Assessor    │   │  Designer    │   │  (changeset) │
+└──────────────┘   └──────────────┘   └──────────────┘   └──────┬───────┘
+                                                                │
+                                                         ┌──────▼───────┐
+                                                         │  Tester      │
+                                                         │  (static)    │
+                                                         └──────┬───────┘
+                                                                │
+                                                         ┌──────▼───────┐
+                                                         │  Deployer    │
+                                                         │  (plan)      │
+                                                         └──────┬───────┘
+                                                                │
+     Pre-preview dry-run ◀───────────────────────────────────── ▼
+     (via MCP dry_run_changeset)                         Crew output extract
+            │
+            ├─▶ valid → Preview Panel (✓ Validated - ready to deploy)
+            │
+            └─▶ invalid → self-heal retry (1×, Developer agent only)
+                          │
+                          ├─▶ retry valid → Preview Panel
+                          │
+                          └─▶ retry invalid → Preview Panel (issue list, Approve gated)
 ```
+
+Process is `Process.sequential` (not hierarchical) - no manager agent, no delegation
+loops. Agents call MCP tools synchronously during their reasoning loop; each tool
+call is streamed to the UI as an `agent_activity` event so the user sees live progress.
+
+## Agent Pipeline - Lite Mode (single agent, ~5× faster)
+
+```
+User Prompt
+    │
+    ▼ (enhance_prompt)
+┌────────────────────────────────────────────┐
+│  Alfred Lite  (role: Frappe Developer)     │
+│  - Fused backstory: requirements + design  │
+│    + codegen                               │
+│  - max_iter=4                              │
+│  - Tools: union of all specialist tools    │
+│    (get_doctype_schema, check_permission,  │
+│     get_existing_customizations,           │
+│     dry_run_changeset, ...)                │
+└───────────────────┬────────────────────────┘
+                    │
+                    ▼
+              Crew output extract
+                    │
+                    ▼
+           Pre-preview dry-run  (same as full mode)
+                    │
+                    └─▶ same preview + approve flow as full
+```
+
+Lite mode is selected when `Alfred Settings.pipeline_mode = "lite"` OR when the
+admin portal's `check_plan` response includes `"pipeline_mode": "lite"`. The
+plan-level override always wins. Single-agent mode trades cross-agent validation
+(Assessor + Tester were the reviewers) for ~5× lower LLM cost and ~5× faster
+completion, at the cost of occasional hallucinated fields on complex requests.
+The pre-preview dry-run + approve-time safety net still catch insert-time
+errors, so broken changesets are blocked regardless of mode.
 
 ## Permission Model (5 Layers)
 
 ```
 Layer 1: UI Access       → validate_alfred_access() on page load
 Layer 2: API Auth        → API key + JWT on WebSocket handshake
-Layer 3: Assessment      → Deterministic permission matrix check
-Layer 4: Generated Perms → Tester validates generated DocType permissions
-Layer 5: Deployment      → frappe.has_permission() on every operation
+Layer 3: MCP Session     → frappe.set_user(conversation.user) around every MCP tool call
+Layer 4: Assessment      → Deterministic permission matrix check (check_permission MCP tool)
+Layer 5: Generated Perms → Tester validates generated DocType permissions
+Layer 6: Deployment      → frappe.has_permission() on every operation
 ```
+
+**Layer 3 is critical**: the `_connection_manager` RQ job sets the session user
+at start and restores it in a `finally` block. Without this, every MCP tool call
+would run as Administrator and silently bypass `permission_query_conditions`
+row-level filters - a security issue that fails open, not closed.
+
+## Dry-Run Validation
+
+Every pipeline run validates the final changeset via the `dry_run_changeset`
+MCP tool **before** the Preview Panel is shown:
+
+```
+Crew output → _extract_changes() → dry_run_changeset (MCP)
+                                         │
+                                         ▼
+                    ┌──────── dry_run validation ────────┐
+                    │                                    │
+                    │  1. DocType exists?                │
+                    │  2. Operation valid (create/update)│
+                    │  3. No naming conflict             │
+                    │  4. Runtime checks:                │
+                    │     - Python compile for Server    │
+                    │       Scripts                      │
+                    │     - Jinja render for Notification│
+                    │       subject/message/condition    │
+                    │     - Balanced braces for Client   │
+                    │       Scripts                      │
+                    │  5. Savepoint insert + rollback    │
+                    │     (catches mandatory field,      │
+                    │      link target errors)           │
+                    │                                    │
+                    └─────────────┬──────────────────────┘
+                                  │
+                                  ├─▶ valid=True  → Preview panel shows ✓
+                                  │
+                                  └─▶ valid=False → bounded retry once,
+                                                    then show issues + gate Approve
+
+Approve click → dry_run_changeset AGAIN (belt-and-suspenders)
+                    │
+                    ├─▶ valid → deploy
+                    │
+                    └─▶ invalid (state drifted) → abort, show issues
+```
+
+The second dry-run at approve time catches DB drift between preview and deploy
+(e.g., another user added a conflicting DocType in the interim). If the two
+dry-runs disagree, `approve_changeset` logs a warning.
 
 ## Data Flow
 
 ```
 Alfred Settings (config)
     │
-    ├──▶ WebSocket Client ──▶ Processing App
+    ├──▶ send_message()
+    │         │
+    │         ├──▶ Redis list (durable queue)
+    │         └──▶ Redis pub/sub ("__notify__" wakeup)
+    │                   │
+    │         ┌─────────┘
+    │         ▼
+    │   Connection Manager (long queue worker)
+    │         │  drains Redis list → sends over WebSocket
+    │         │
+    │         ├──▶ WebSocket ──▶ Processing App
     │         │                     │
     │         │◀── Agent events ────┘
     │         │

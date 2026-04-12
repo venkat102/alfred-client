@@ -38,6 +38,12 @@
 				</button>
 			</div>
 
+			<!-- Agent step (live progress) -->
+			<div v-else-if="message.message_type === 'agent-step'" class="alfred-agent-step-msg">
+				<span class="alfred-step-icon">{{ message.step_status === 'done' ? '&#10003;' : '&#9679;' }}</span>
+				<span :class="{ 'text-muted': message.step_status === 'done' }">{{ message.content }}</span>
+			</div>
+
 			<!-- Status -->
 			<div v-else-if="message.message_type === 'status'" class="alfred-status-msg">
 				{{ message.content }}

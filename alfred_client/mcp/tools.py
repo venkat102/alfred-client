@@ -292,6 +292,25 @@ def check_has_records(doctype):
 	}
 
 
+# ── Tier 3: Validation Tools (Tester Agent / Pipeline) ───────────
+
+@_safe_execute
+def dry_run_changeset(changes):
+	"""Dry-run a changeset via savepoint rollback.
+
+	Returns {valid, issues, validated}. Does NOT commit to the database.
+	Also validates Server Script Python syntax, Notification Jinja templates,
+	and Client Script balanced-brace checks inside the savepoint window.
+
+	Use this before presenting a final changeset to the user so they only see
+	validated solutions.
+	"""
+	from alfred_client.api.deploy import dry_run_changeset as _dry_run
+	if isinstance(changes, str):
+		changes = json.loads(changes)
+	return _dry_run(changes)
+
+
 # ── Tool Registry ────────────────────────────────────────────────
 
 TOOL_REGISTRY = {
@@ -304,4 +323,5 @@ TOOL_REGISTRY = {
 	"validate_name_available": validate_name_available,
 	"has_active_workflow": has_active_workflow,
 	"check_has_records": check_has_records,
+	"dry_run_changeset": dry_run_changeset,
 }

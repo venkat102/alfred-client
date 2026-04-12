@@ -1,326 +1,211 @@
-# Alfred - Debugging Guide
+# Alfred Debugging Guide
 
-A step-by-step guide to understanding what happens when you send a prompt, how to verify each step is working, and how to diagnose when something breaks.
+## Redis Debugging
 
----
+### Which Redis instance does what?
 
-## The Complete Message Flow
+Frappe runs **two separate Redis servers**:
 
-When you type a prompt in Alfred Chat and press Send, here's exactly what happens:
+| Port | Config key | Purpose |
+|------|-----------|---------|
+| **13000** | `redis_cache` | Cache, pub/sub, **Alfred message queue** - `frappe.cache()` points here |
+| **11000** | `redis_queue` | RQ background job queue (worker jobs) |
 
-```
-Step 1:  Browser → frappe.call("send_message")
-              ↓
-Step 2:  Frappe API saves Alfred Message in database (role=user)
-              ↓
-Step 3:  Frappe API enqueues connection manager as a background job
-              ↓
-Step 4:  Frappe API pushes the message to a Redis queue (list)
-              ↓
-Step 5:  Connection manager (background job) starts
-              ↓
-Step 6:  Connection manager opens WebSocket to Processing App
-              ↓
-Step 7:  Connection manager sends handshake (API key + JWT + site config)
-              ↓
-Step 8:  Processing App validates JWT, extracts user/site_id
-              ↓
-Step 9:  Connection manager drains Redis queue → sends prompt via WebSocket
-              ↓
-Step 10: Processing App runs prompt defense (sanitizer + intent classifier)
-              ↓
-Step 11: Processing App builds CrewAI crew and runs agent pipeline
-              ↓
-Step 12: Agents call LLM (Ollama/Claude/OpenAI) for reasoning
-              ↓
-Step 13: Processing App streams results back via WebSocket
-              ↓
-Step 14: Connection manager receives results
-              ↓
-Step 15: Connection manager calls frappe.publish_realtime() to browser
-              ↓
-Step 16: Browser receives Socket.IO event → updates chat UI
-```
+**Critical**: Alfred's message queue uses port **13000** (cache Redis). The connection manager must connect to this same instance. Using port 11000 will silently fail - messages are written to one Redis and the reader looks at another.
 
----
+### Watch Redis live
 
-## Setting Up for Debugging
-
-Open **3 terminals** side by side before sending a prompt:
-
-### Terminal 1 - Processing App Logs (AI agents, WebSocket)
+Open a terminal before clicking Send:
 
 ```bash
-docker logs -f alfred_processing-processing-1 2>&1 | grep -v health
+redis-cli -p 13000 MONITOR | grep -i alfred
 ```
 
-This shows: WebSocket connections, authentication, prompt receipt, agent pipeline execution, LLM calls, errors.
+You'll see the `RPUSH` (durable queue write) and `PUBLISH` (wakeup notification) calls in real time.
 
-### Terminal 2 - Frappe Worker Logs (background jobs)
+### Read the queue directly
 
 ```bash
-tail -f ~/bench/develop/frappe-bench/logs/worker.log ~/bench/develop/frappe-bench/logs/worker.error.log
+# Find all Alfred queue keys
+redis-cli -p 13000 KEYS "*alfred:ws:outbound:queue*"
+
+# Read messages in the queue (without removing them)
+redis-cli -p 13000 LRANGE "_01519ca146aa2388|alfred:ws:outbound:queue:YOUR-CONV-ID" 0 -1
+
+# Check queue depth
+redis-cli -p 13000 LLEN "_01519ca146aa2388|alfred:ws:outbound:queue:YOUR-CONV-ID"
 ```
 
-This shows: connection manager job start/stop, Redis publish errors, background job failures.
+> **Key prefix**: Frappe's `RedisWrapper.rpush()` auto-prefixes list keys with `<db_name>|`. The actual key looks like `_01519ca146aa2388|alfred:ws:outbound:queue:<conv-id>`. Pub/sub channel names are NOT prefixed.
 
-### Terminal 3 - Browser Developer Console
+### Message flow through Redis
 
-Open `http://dev.alfred:8000/app/alfred-chat`, press **F12** (or Cmd+Option+I on Mac), go to the **Console** tab.
-
-This shows: API call errors, Socket.IO events received, JavaScript errors.
-
----
-
-## Step-by-Step Verification
-
-After sending a prompt, check each step in order. The first step that fails is your root cause.
-
-### Step 1-2: Message Saved?
-
-**Check**: Open `/app/alfred-message` in your browser. Filter by your conversation.
-
-**Expected**: Your message appears with `role = user`, `message_type = text`.
-
-**If missing**:
-- Check browser console (F12) for API errors
-- The `send_message` API call failed
-- Common cause: `validate_alfred_access()` rejected you - check your role is in Alfred Settings → Allowed Roles
-
-### Step 3-4: Background Job Enqueued?
-
-**Check**: Terminal 2 (worker.log)
-
-**Expected**:
 ```
-frappe.utils.background_jobs.execute_job(...
-    method='alfred_client.api.websocket_client._connection_manager'...
+send_message() called by Frappe worker
+    │
+    ├── rpush → durable Redis list (key: <db_prefix>|alfred:ws:outbound:queue:<conv-id>)
+    │
+    └── publish → pub/sub channel (channel: alfred:ws:outbound:<conv-id>)
+                   payload is just "__notify__" (wakeup signal, no data)
+                        │
+                        ▼
+              _listen_redis() receives notification
+                        │
+                        └── lpop loop → drains the list → sends each message over WebSocket
 ```
 
-**If missing**:
-- Redis Queue is not running
-- Fix: Make sure `bench start` is running (it starts Redis, workers, and web server)
-- Verify: `redis-cli -p 11000 ping` should return `PONG`
+## Background Job Debugging
 
-### Step 5-6: WebSocket Connected?
+### Long queue worker
 
-**Check**: Terminal 1 (docker logs)
+Alfred's connection manager runs on the `long` RQ queue (timeout: 7200s / 2 hours). The Procfile must include a `worker_long` entry:
 
-**Expected**:
 ```
-INFO:  192.168.x.x:xxxxx - "WebSocket /ws/<conversation-id>" [accepted]
-INFO:  connection open
+worker_long: OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES NO_PROXY=* bench worker --queue long 1>> logs/worker_long.log 2>> logs/worker_long.error.log
 ```
 
-**If missing**:
-- Processing app is not reachable from the Frappe server
-- Check: `curl http://localhost:8001/health` from the Frappe machine
-- Verify the URL in Alfred Settings → Processing App URL matches the actual port
-- If different machines: check firewall allows the port
-
-### Step 7-8: Authentication Succeeded?
-
-**Check**: Terminal 1 (docker logs)
-
-**Expected**:
-```
-alfred.websocket INFO: WebSocket authenticated: user=you@example.com, site=http://dev.alfred, conversation=<id>
-```
-
-**If you see `connection open` but NOT `WebSocket authenticated`**:
-- The API key in Alfred Settings does not match `API_SECRET_KEY` in `.env`
-- Check both values are exactly the same (no trailing spaces, no quotes)
-- The JWT warning `InsecureKeyLengthWarning` is not the cause - it's just a warning about short keys
-
-**To verify keys match**:
+**Check if the long worker is running:**
 ```bash
-# Check processing app key
-docker exec alfred_processing-processing-1 env | grep API_SECRET
-
-# Check Frappe key (run from bench directory)
-bench --site dev.alfred execute "print(frappe.get_single('Alfred Settings').get_password('api_key'))"
+ps aux | grep 'rq.*long' | grep -v grep
 ```
 
-### Step 9: Prompt Delivered?
-
-**Check**: Terminal 1 (docker logs)
-
-**Expected**:
-```
-alfred.websocket INFO: Custom message from you@example.com@http://dev.alfred: type=prompt
+**Check for stale jobs piling up:**
+```bash
+redis-cli -p 11000 LLEN 'rq:queue:Users-venkatesh-bench-develop-frappe-bench:long'
+# If this number keeps growing, the long worker isn't running
 ```
 
-**If authenticated but no prompt**:
-- The message was published to Redis before the connection manager subscribed
-- This is a race condition - the queue drain should handle it
-- Check: was the message pushed to the Redis list? The connection manager should log `Draining queued message for <conversation-id>`
-- If not draining: the Redis instances may be different (Frappe uses port 11000, Docker uses port 6379)
-
-### Step 10: Prompt Defense Passed?
-
-**Check**: Terminal 1 (docker logs)
-
-**Expected**: No `PROMPT_BLOCKED` or `NEEDS_REVIEW` error sent back.
-
-**If blocked**:
-- Your prompt triggered the security filter
-- You'll see an error message in the chat: "Your message was flagged by the security filter"
-- Rephrase the prompt to avoid patterns like "ignore instructions", "skip permissions", "execute SQL", etc.
-
-### Step 11-12: Agent Pipeline Running?
-
-**Check**: Terminal 1 (docker logs)
-
-**Expected**:
-```
-alfred.websocket INFO: Running agent pipeline for conversation=<id>
-alfred.crew INFO: Built 7 agents with LLM: ollama/llama3.3:70b
+**Clear stale jobs** (only if you're sure they're all stale):
+```bash
+redis-cli -p 11000 DEL 'rq:queue:Users-venkatesh-bench-develop-frappe-bench:long'
 ```
 
-**If pipeline doesn't start**:
-- Plan check may have failed (if admin portal is configured)
-- Check for Python import errors in the logs
-
-**If pipeline starts but hangs**:
-- LLM (Ollama) may be unreachable or slow to respond
-- Check: `curl http://your-ollama-ip:11434/api/tags` - should return model list
-- Check: `curl http://your-ollama-ip:11434/api/generate -H "Content-Type: application/json" -d '{"model":"llama3.3:70b","prompt":"Hi","stream":false}'` - should return a response within 30 seconds
-- If Ollama is loading the model for the first time, it may take 1-2 minutes
-
-### Step 13-16: Results Returned to Browser?
-
-**Check**: Terminal 3 (browser console) - look for Socket.IO events
-
-**Expected**: Messages appear in the chat in real time.
-
-**If processing app sends results but browser doesn't show them**:
-- Socket.IO may not be connected
-- Check browser console for `frappe.realtime` errors
-- Verify `bench start` is running (Socket.IO needs the node process)
-
----
-
-## Quick Diagnostic Commands
-
-### One-liner: Check everything after sending a prompt
+### Check worker logs
 
 ```bash
-echo "=== Processing App (last 15 lines, no health checks) ===" && \
-docker logs alfred_processing-processing-1 2>&1 | grep -v health | tail -15 && \
-echo "" && \
-echo "=== Frappe Worker Errors ===" && \
-tail -10 ~/bench/develop/frappe-bench/logs/worker.error.log 2>/dev/null | grep -v "DeprecationWarning\|fork()" && \
-echo "" && \
-echo "=== Recent Background Jobs ===" && \
-tail -5 ~/bench/develop/frappe-bench/logs/worker.log 2>/dev/null | grep "alfred"
+# Long worker (connection manager runs here)
+tail -f ~/bench/develop/frappe-bench/logs/worker_long.log
+tail -f ~/bench/develop/frappe-bench/logs/worker_long.error.log
+
+# Default worker
+tail -f ~/bench/develop/frappe-bench/logs/worker.log
+tail -f ~/bench/develop/frappe-bench/logs/worker.error.log
 ```
 
-### Check if services are running
+## LLM Debugging
+
+### Test from Alfred Settings UI
+
+Go to `/app/alfred-settings` → **Actions** dropdown:
+- **Test LLM Connection** - checks Ollama reachability, model availability, and generation
+- **Test Processing App** - checks the Processing App's `/health` endpoint
+
+### Test from CLI (Processing App)
 
 ```bash
-echo "Processing App:" && curl -s http://localhost:8001/health | python3 -m json.tool 2>/dev/null || echo "NOT RUNNING"
-echo ""
-echo "Redis (Frappe):" && redis-cli -p 11000 ping 2>/dev/null || echo "NOT RUNNING"
-echo ""
-echo "Redis (Docker):" && docker exec $(docker ps -qf "name=redis") redis-cli ping 2>/dev/null || echo "NOT RUNNING"
-echo ""
-echo "Ollama:" && curl -s http://10.55.69.210:11434/api/tags 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print('RUNNING -', len(d.get('models',[])), 'models')" 2>/dev/null || echo "NOT REACHABLE"
+cd ~/bench/develop/alfred_processing
+
+# Uses .env config
+.venv/bin/python test_llm.py
+
+# Override model/URL
+.venv/bin/python test_llm.py --model ollama/llama3.2:3b --base-url http://localhost:11434
+
+# Test without streaming
+.venv/bin/python test_llm.py --no-stream
+
+# Custom prompt
+.venv/bin/python test_llm.py --prompt "Say hello"
 ```
 
-### Check API key match
+### Common LLM errors
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `[Errno 61] Connection refused` | Ollama not running or wrong URL | Start `ollama serve`, check Base URL |
+| `litellm.Timeout` | LLM unreachable or very slow | Check network, try smaller model |
+| `Model not found` | Model not pulled | Run `ollama pull <model-name>` |
+| `AuthenticationError` | Invalid API key (cloud providers) | Check key in Alfred Settings |
+
+## Processing App Debugging
+
+### Health check
 
 ```bash
-echo "Processing App key:" && docker exec alfred_processing-processing-1 env | grep API_SECRET_KEY
-echo ""
-echo "Alfred Settings key:" && cd ~/bench/develop/frappe-bench && bench --site dev.alfred execute "print(frappe.get_single('Alfred Settings').get_password('api_key'))" 2>/dev/null
+curl http://localhost:8001/health
+# Expected: {"status": "ok", "version": "0.1.0", "redis": "connected"}
 ```
 
-### Check active WebSocket connections
+### Logs (native dev)
+
+When running via `./dev.sh`, logs stream to the terminal. Key markers to grep for:
+
+```
+# WebSocket lifecycle
+alfred.websocket INFO: WebSocket connection opened: conversation=<id>
+alfred.websocket INFO: WebSocket authenticated: user=..., site=dev.alfred
+
+# Pipeline mode resolution (tells you full vs lite and why)
+alfred.websocket INFO: Pipeline mode resolved for <site>: full (source=site_config)
+alfred.websocket INFO: Pipeline mode resolved for <site>: lite (source=plan)
+
+# Agent crew startup (sequential process = 6 agents, not 7 - orchestrator removed)
+alfred.agents INFO: Built 6 agents with LLM: ollama/qwen2.5-coder:32b
+
+# MCP tool round-trips (should appear many times per prompt)
+alfred.mcp_client DEBUG: MCP request sent: tool=get_doctype_schema, id=<uuid>
+# (handle_response logs are only visible at DEBUG level)
+
+# Dry-run validation
+alfred.websocket INFO: Pre-preview dry-run via MCP
+alfred.websocket WARNING: Dry-run MCP call failed: ...
+alfred.websocket ERROR: Dry-run retry failed: ...
+
+# Pipeline concurrency lock (second prompt while first running)
+alfred.websocket WARNING: Rejecting prompt: pipeline already running for user@site
+
+# Lite pipeline starting blind (no MCP tools wired)
+alfred.websocket WARNING: Lite pipeline starting without MCP tools for <site> - ...
+
+# Empty extraction (crew produced something, we couldn't parse it)
+alfred.websocket WARNING: _extract_changes: no JSON found in result ...
+alfred.websocket WARNING: Pipeline completed but _extract_changes returned empty.
+```
+
+### Log markers on the Client App side
 
 ```bash
-docker logs alfred_processing-processing-1 2>&1 | grep "WebSocket" | tail -10
+tail -f ~/bench/develop/frappe-bench/logs/worker.log | grep alfred
+tail -f ~/bench/develop/frappe-bench/logs/web.log | grep alfred
 ```
 
-### Check conversation status in database
+```
+# Connection manager lifecycle (in worker.log - long queue)
+alfred.ws_client INFO: Connected to Processing App: conversation=<id>
+alfred.ws_client INFO: Connection manager stopped: conversation=<id>
 
-```bash
-cd ~/bench/develop/frappe-bench && bench --site dev.alfred execute "print(frappe.get_all('Alfred Conversation', fields=['name','status','current_agent','modified'], order_by='modified desc', limit=5))"
+# MCP dispatch (in worker.log - session user set before handling)
+alfred.mcp.server DEBUG: Tool <name> executed successfully
+alfred.mcp.server ERROR: Tool <name> failed: ...
+
+# Approve-time dry-run disagreement (the belt-and-suspenders check diverged from preview)
+frappe WARNING: Dry-run disagreement for changeset <name>: preview-time valid=0, approve-time valid=1
+
+# Approve flow
+frappe INFO: approve_changeset: deploying <name> with N operation(s) for user <email>
 ```
 
----
+### Common pitfalls
 
-## Common Problems and Fixes
-
-### "Processing..." forever, nothing happens
-
-| Check | Command | Expected |
-|-------|---------|----------|
-| Redis running? | `redis-cli -p 11000 ping` | `PONG` |
-| Workers running? | `ps aux \| grep worker` | Multiple `frappe.worker` processes |
-| Connection manager started? | `grep connection_manager ~/bench/develop/frappe-bench/logs/worker.log \| tail -3` | Job entry with your conversation ID |
-| Processing app running? | `curl http://localhost:8001/health` | `{"status": "ok"}` |
-| WebSocket connected? | `docker logs alfred_processing-processing-1 2>&1 \| grep "WebSocket" \| tail -3` | `[accepted]` and `connection open` |
-| Auth passed? | `docker logs alfred_processing-processing-1 2>&1 \| grep "authenticated"` | `WebSocket authenticated: user=...` |
-
-**Most common cause**: Redis Queue is down. Run `bench start` to start everything.
-
-### Message saved but nothing else happens
-
-The background job didn't run. This means:
-1. Redis Queue is not running (port 11000)
-2. Frappe workers are not running
-3. Fix: `bench start` (starts web, workers, redis, socketio all together)
-
-### WebSocket connects but auth fails silently
-
-The API keys don't match. Both sides see the connection open, but the processing app closes it after JWT verification fails. Check:
-```bash
-# These two values MUST be identical:
-docker exec alfred_processing-processing-1 env | grep API_SECRET_KEY
-bench --site dev.alfred execute "print(frappe.get_single('Alfred Settings').get_password('api_key'))"
-```
-
-### Auth succeeds but prompt never arrives
-
-Race condition: the message was published to Redis before the connection manager subscribed. The queue drain should handle this, but if the Redis instances are different (Frappe Redis on port 11000 vs Docker Redis on port 6379), the message goes to one Redis but the connection manager listens on the other.
-
-**Fix**: The connection manager uses Frappe's Redis (from `frappe.conf.redis_queue`). Make sure the `.env` `REDIS_URL` for Docker and Frappe's `common_site_config.json` `redis_queue` point to accessible Redis instances.
-
-### Pipeline starts but hangs at LLM call
-
-Ollama is either:
-1. Not running: `curl http://your-ollama-ip:11434/api/tags` fails
-2. Model not pulled: the tags response doesn't list your model
-3. Loading model for first time: first call takes 1-2 minutes to load into memory
-4. Out of memory: check Ollama logs
-
-```bash
-# Test Ollama directly
-curl http://10.55.69.210:11434/api/generate \
-  -H "Content-Type: application/json" \
-  -d '{"model":"llama3.3:70b","prompt":"Hello","stream":false}'
-```
-
-If this returns a response, Ollama is fine and the issue is in the pipeline code.
-
-### Error in browser console: "Socket.IO disconnected"
-
-The node socketio process is not running. This is part of `bench start`. If you started services individually, make sure to also run:
-```bash
-node socketio.js  # from the bench directory
-```
-Or just use `bench start` which starts everything.
-
----
-
-## Log File Reference
-
-| Log | Location | What It Shows |
-|-----|----------|--------------|
-| Processing app | `docker logs alfred_processing-processing-1` | WebSocket, auth, pipeline, LLM calls, errors |
-| Frappe worker | `~/bench/develop/frappe-bench/logs/worker.log` | Background job starts and completions |
-| Worker errors | `~/bench/develop/frappe-bench/logs/worker.error.log` | Python tracebacks from background jobs |
-| Frappe web | `~/bench/develop/frappe-bench/logs/frappe.log` | API calls, page loads |
-| Scheduler | `~/bench/develop/frappe-bench/logs/scheduler.log` | Scheduled jobs (stale cleanup, audit cleanup) |
-| Bench | `~/bench/develop/frappe-bench/logs/bench.log` | Bench commands, migrations |
-| Ollama | `docker logs <ollama-container>` or on Mac: `~/.ollama/logs/server.log` | Model loading, generation requests |
+| Pitfall | Symptom | Root cause |
+|---------|---------|------------|
+| Wrong Redis instance | Messages queued but never drained | `websocket_client.py` must use `redis_cache` (port 13000), not `redis_queue` (port 11000) |
+| Missing key prefix | Queue depth stuck at 1 | `frappe.cache().rpush()` auto-prefixes keys with `<db_name>\|` but raw `aioredis.lpop()` doesn't - the consumer must include the prefix |
+| site_id has special chars | `site_id contains invalid characters` | `_get_site_id()` must return bare site name (`dev.alfred`), not full URL (`http://dev.alfred:8000`) |
+| No long worker | Jobs pile up, nothing executes | Procfile needs `worker_long` entry with `--queue long` |
+| Pub/sub message lost | Message sent but connection manager missed it | Fixed: messages are now durably queued (rpush) and pub/sub is just a wakeup notification |
+| MCP tool returns "too many records" when user shouldn't see them | Permission filter bypassed | `_connection_manager` must call `frappe.set_user(user)` at start; the finally block restores it. Without this, all MCP calls run as Administrator. |
+| MCP calls hang for 30s then TimeoutError | Cross-loop future resolution broken | `MCPClient` must be constructed with `main_loop=asyncio.get_running_loop()` in the WS handler; see `alfred/api/websocket.py:_authenticate_handshake` |
+| "Basic" badge stuck on, can't switch | Plan override active | Check admin portal's `check_plan` response - if it returns `pipeline_mode=lite`, the site setting is overridden. Look for `source=plan` in the Pipeline mode resolved log line. |
+| Preview shows old changeset after sending new prompt | Polling/realtime race | The UI's `currentPromptSentAt` cutoff should reject this; if it still happens, check that `get_latest_changeset` / `get_changeset` return `creation` field |
+| Activity ticker stuck showing last tool call | Pipeline timed out without sending completion | Client-side stuck timeout (10 min) should recover; check for "Pipeline stalled" in the chat |

@@ -25,6 +25,7 @@ class AlfredSettings(Document):
 		llm_base_url: DF.Data | None
 		llm_max_tokens: DF.Int
 		llm_model: DF.Data | None
+		llm_num_ctx: DF.Int
 		llm_provider: DF.Literal["", "ollama", "anthropic", "openai", "gemini", "bedrock"]
 		llm_temperature: DF.Float
 		max_retries_per_agent: DF.Int
@@ -172,6 +173,27 @@ def _test_ollama(base_url, model):
 			"message": f"Connected to Ollama at {url}. Model '{short_model}' found but generation test failed: {e}",
 			"models": available_models,
 		}
+
+
+@frappe.whitelist()
+def check_processing_app():
+	"""Test connectivity to the Processing App's /health endpoint."""
+	settings = frappe.get_single("Alfred Settings")
+	url = settings.processing_app_url
+	if not url:
+		return {"reachable": False, "error": "Processing App URL is not configured."}
+
+	try:
+		resp = requests.get(f"{url.rstrip('/')}/health", timeout=10)
+		resp.raise_for_status()
+		data = resp.json()
+		return {"reachable": True, "version": data.get("version"), "redis": data.get("redis")}
+	except requests.ConnectionError:
+		return {"reachable": False, "error": f"Cannot connect to {url}"}
+	except requests.Timeout:
+		return {"reachable": False, "error": f"Connection to {url} timed out"}
+	except Exception as e:
+		return {"reachable": False, "error": str(e)}
 
 
 def _test_cloud_provider(provider, model, api_key, base_url):

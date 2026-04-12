@@ -235,22 +235,83 @@ def get_conversation_health(conversation):
 
 @frappe.whitelist()
 def approve_changeset(changeset_name):
-	"""Approve a changeset for deployment."""
+	"""Approve a changeset - runs dry-run validation first, then deploys."""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
 
 	cs = frappe.get_doc("Alfred Changeset", changeset_name)
 	if cs.status != "Pending":
-		frappe.throw(frappe._("Changeset is not in Pending status"))
+		frappe.throw(
+			frappe._("Changeset is not in Pending status (current: {0})").format(cs.status)
+		)
+
+	# Parse stored changes, handling all the shapes the DB could hold:
+	# - str → JSON-decode
+	# - list → use as-is
+	# - None / empty → fail clearly instead of silently deploying nothing
+	try:
+		if isinstance(cs.changes, str):
+			changes = json.loads(cs.changes)
+		elif isinstance(cs.changes, list):
+			changes = cs.changes
+		else:
+			changes = []
+	except json.JSONDecodeError as e:
+		frappe.logger().error(
+			f"approve_changeset: failed to parse changes for {changeset_name}: {e}"
+		)
+		frappe.throw(
+			frappe._("Changeset data is corrupted and cannot be parsed: {0}").format(e)
+		)
+
+	if not changes:
+		frappe.throw(frappe._("Changeset is empty - nothing to deploy."))
+
+	frappe.logger().info(
+		f"approve_changeset: deploying {changeset_name} with {len(changes)} operation(s) "
+		f"for user {frappe.session.user}"
+	)
+
+	# Dry-run validation - test all operations without committing.
+	# This runs a SECOND time at approve (first was pre-preview) as a safety net
+	# against DB state drift between preview and deploy.
+	from alfred_client.api.deploy import dry_run_changeset
+	dry_run = dry_run_changeset(changes)
+
+	# Log any disagreement between the pre-preview dry-run and this second pass.
+	# If preview-time was invalid but approve-time is now valid, something changed
+	# in the DB (e.g., a conflicting row was deleted). If preview was valid but
+	# approve is now invalid, something was added. Either is worth alerting on.
+	preview_valid = int(cs.dry_run_valid or 0)
+	approve_valid = 1 if dry_run["valid"] else 0
+	if preview_valid != approve_valid:
+		frappe.logger().warning(
+			f"Dry-run disagreement for changeset {changeset_name}: "
+			f"preview-time valid={preview_valid}, approve-time valid={approve_valid}. "
+			f"Database state likely drifted between preview and approve."
+		)
+
+	if not dry_run["valid"]:
+		# Return validation errors without deploying
+		critical_issues = [i for i in dry_run["issues"] if i["severity"] == "critical"]
+		return {
+			"status": "validation_failed",
+			"message": f"Dry-run failed with {len(critical_issues)} critical issue(s). Deployment aborted.",
+			"issues": dry_run["issues"],
+			"validated": dry_run["validated"],
+		}
 
 	cs.status = "Approved"
 	cs.save()
 	frappe.db.commit()
 
-	# Trigger deployment
+	# Deploy (dry-run passed)
 	from alfred_client.api.deploy import apply_changeset
 	result = apply_changeset(changeset_name)
+
+	# Include dry-run results in the response
+	result["dry_run"] = dry_run
 
 	return result
 
@@ -279,6 +340,12 @@ def get_changeset(changeset_name):
 
 	cs = frappe.get_doc("Alfred Changeset", changeset_name)
 	changes = json.loads(cs.changes) if cs.changes else []
+	dry_run_issues = []
+	if cs.dry_run_issues:
+		try:
+			dry_run_issues = json.loads(cs.dry_run_issues)
+		except json.JSONDecodeError:
+			dry_run_issues = []
 
 	return {
 		"name": cs.name,
@@ -286,4 +353,50 @@ def get_changeset(changeset_name):
 		"conversation": cs.conversation,
 		"changes": changes,
 		"deployment_log": cs.deployment_log,
+		"dry_run_valid": int(cs.dry_run_valid or 0),
+		"dry_run_issues": dry_run_issues,
+		"creation": str(cs.creation) if cs.creation else None,
+	}
+
+
+@frappe.whitelist()
+def get_latest_changeset(conversation):
+	"""Get the most recent changeset for a conversation (polling fallback).
+
+	Used when realtime events don't arrive - the UI polls this endpoint
+	every few seconds while processing to detect when a changeset is ready.
+	"""
+	from alfred_client.api.permissions import validate_alfred_access
+
+	validate_alfred_access()
+
+	cs_name = frappe.db.get_value(
+		"Alfred Changeset",
+		{"conversation": conversation},
+		"name",
+		order_by="creation desc",
+	)
+	if not cs_name:
+		return None
+
+	cs = frappe.get_doc("Alfred Changeset", cs_name)
+	changes = json.loads(cs.changes) if cs.changes else []
+	dry_run_issues = []
+	if cs.dry_run_issues:
+		try:
+			dry_run_issues = json.loads(cs.dry_run_issues)
+		except json.JSONDecodeError:
+			dry_run_issues = []
+
+	return {
+		"name": cs.name,
+		"status": cs.status,
+		"conversation": cs.conversation,
+		"changes": changes,
+		"deployment_log": cs.deployment_log,
+		"dry_run_valid": int(cs.dry_run_valid or 0),
+		"dry_run_issues": dry_run_issues,
+		# Creation timestamp lets the UI's polling fallback reject stale
+		# changesets from previous prompts in the same conversation.
+		"creation": str(cs.creation) if cs.creation else None,
 	}

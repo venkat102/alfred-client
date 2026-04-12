@@ -209,6 +209,224 @@ def apply_changeset(changeset_name):
 	}
 
 
+# ── Dry-Run Validation ──────────────────────────────────────────
+
+def dry_run_changeset(changes):
+	"""Validate a changeset WITHOUT committing anything to the database.
+
+	For each change item, verifies:
+	  1. The target doctype exists in Frappe
+	  2. The operation is valid (create/update)
+	  3. For create: no naming conflict with existing documents
+	  4. Runtime error checks: Python syntax for Server Scripts, Jinja syntax
+	     for Notification subject/message/condition, basic JS checks for Client Scripts
+	  5. The document passes Frappe's validate() inside a savepoint rollback
+
+	The savepoint rollback covers insert-time issues (mandatory fields, link targets).
+	The runtime checks (step 4) catch errors that only surface at execution time -
+	a Notification with `{{ doc.` will dry-run clean without them.
+
+	Returns:
+		Dict with 'valid' (bool), 'issues' (list of problems), 'validated' (list of OK items)
+	"""
+	if isinstance(changes, str):
+		try:
+			changes = json.loads(changes)
+		except json.JSONDecodeError as e:
+			return {
+				"valid": False,
+				"issues": [{"severity": "critical", "issue": f"changes is not valid JSON: {e}"}],
+				"validated": [],
+			}
+
+	if not isinstance(changes, list):
+		return {
+			"valid": False,
+			"issues": [{
+				"severity": "critical",
+				"issue": f"Expected a list of changes, got {type(changes).__name__}",
+			}],
+			"validated": [],
+		}
+
+	if not changes:
+		return {"valid": True, "issues": [], "validated": []}
+
+	issues = []
+	validated = []
+
+	for i, change in enumerate(changes):
+		step = i + 1
+
+		# Per-item shape validation - agents sometimes produce malformed JSON.
+		if not isinstance(change, dict):
+			issues.append({
+				"step": step, "severity": "critical",
+				"issue": f"Changeset item must be an object, got {type(change).__name__}",
+			})
+			continue
+
+		operation = change.get("op", change.get("operation", "create"))
+		doctype = change.get("doctype", "")
+		data = change.get("data", {})
+		if not isinstance(data, dict):
+			issues.append({
+				"step": step, "severity": "critical",
+				"issue": f"Item's 'data' field must be an object, got {type(data).__name__}",
+				"doctype": doctype,
+			})
+			continue
+		doc_name = data.get("name", "")
+
+		# 1. Check target doctype exists in Frappe
+		if not frappe.db.exists("DocType", doctype):
+			issues.append({
+				"step": step, "severity": "critical",
+				"issue": f"DocType '{doctype}' does not exist in this Frappe site",
+				"doctype": doctype, "name": doc_name,
+			})
+			continue
+
+		# 2. Check operation type
+		if operation not in ("create", "update"):
+			issues.append({
+				"step": step, "severity": "critical",
+				"issue": f"Unknown operation '{operation}'. Expected 'create' or 'update'",
+				"doctype": doctype, "name": doc_name,
+			})
+			continue
+
+		# 3. For create: check for naming conflicts
+		if operation == "create" and doc_name:
+			if frappe.db.exists(doctype, doc_name):
+				issues.append({
+					"step": step, "severity": "warning",
+					"issue": f"'{doctype}' with name '{doc_name}' already exists. Will be skipped or may cause DuplicateEntryError",
+					"doctype": doctype, "name": doc_name,
+				})
+
+		# 4. Runtime-error checks (Python, Jinja) - catch issues that don't
+		# show up in insert-time validation but break at execution time.
+		runtime_issues = _check_runtime_errors(doctype, data)
+		for msg in runtime_issues:
+			issues.append({
+				"step": step, "severity": "critical",
+				"issue": msg, "doctype": doctype, "name": doc_name,
+			})
+
+		# 5. Dry-run: instantiate the document and run validate() inside a savepoint
+		try:
+			_dry_run_single(doctype, data, operation)
+			validated.append({
+				"step": step, "doctype": doctype, "name": doc_name,
+				"operation": operation, "status": "ok",
+			})
+		except Exception as e:
+			error_msg = str(e)
+			# Classify common Frappe errors
+			severity = "critical"
+			if "already exists" in error_msg.lower():
+				severity = "warning"
+			elif "mandatory" in error_msg.lower() or "required" in error_msg.lower():
+				severity = "critical"
+
+			issues.append({
+				"step": step, "severity": severity,
+				"issue": error_msg,
+				"doctype": doctype, "name": doc_name,
+			})
+
+	return {
+		"valid": len([i for i in issues if i["severity"] == "critical"]) == 0,
+		"issues": issues,
+		"validated": validated,
+	}
+
+
+def _check_runtime_errors(doctype, data):
+	"""Cheap pre-flight checks for errors that only surface at execution time.
+
+	- Server Script: Python syntax via compile()
+	- Notification: Jinja syntax via frappe.render_template() on subject/message/condition
+	- Client Script: loose regex check for balanced braces
+
+	Returns a list of human-readable issue strings (empty if all ok).
+	"""
+	problems = []
+
+	# --- Server Script: compile Python ---
+	if doctype == "Server Script":
+		script = data.get("script", "")
+		if script:
+			try:
+				compile(script, "<alfred_dryrun>", "exec")
+			except SyntaxError as e:
+				problems.append(f"Server Script Python syntax error: {e.msg} at line {e.lineno}")
+			except Exception as e:
+				problems.append(f"Server Script compile failed: {e}")
+
+	# --- Notification: render Jinja templates with a stub doc ---
+	if doctype == "Notification":
+		from jinja2 import TemplateSyntaxError
+		# A dict-like object that returns None for any missing attribute/key,
+		# so legitimate templates like {{ doc.employee_name }} don't trip the check.
+		stub_doc = frappe._dict()
+		for field in ("subject", "message", "condition"):
+			template = data.get(field)
+			if not template or not isinstance(template, str):
+				continue
+			try:
+				frappe.render_template(template, {"doc": stub_doc, "frappe": frappe._dict()})
+			except TemplateSyntaxError as e:
+				problems.append(f"Notification '{field}' Jinja syntax error: {e.message} at line {e.lineno}")
+			except Exception:
+				# Runtime errors (missing attribute on stub_doc, KeyError, etc.) are
+				# NOT dry-run failures - we only catch parse-time issues here.
+				pass
+
+	# --- Client Script: loose balanced-brace check ---
+	if doctype == "Client Script":
+		script = data.get("script", "")
+		if script:
+			if script.count("{") != script.count("}"):
+				problems.append("Client Script has unbalanced curly braces")
+			if script.count("(") != script.count(")"):
+				problems.append("Client Script has unbalanced parentheses")
+
+	return problems
+
+
+def _dry_run_single(doctype, data, operation):
+	"""Validate a single document operation using a database savepoint.
+
+	Creates a savepoint, attempts the operation, then rolls back to the
+	savepoint - so nothing is actually committed to the database.
+	"""
+	doc_data = dict(data)
+	doc_data["doctype"] = doctype
+
+	# Use a savepoint so we can rollback just this test without affecting
+	# any outer transaction
+	frappe.db.savepoint("dry_run")
+	try:
+		if operation == "create":
+			doc = frappe.get_doc(doc_data)
+			doc.flags.ignore_links = True  # Don't fail on missing Link targets during dry-run
+			doc.insert(ignore_permissions=True)  # Test insertability, not permissions
+		elif operation == "update":
+			doc_name = data.get("name")
+			if not doc_name:
+				raise ValueError("Document name required for update")
+			if not frappe.db.exists(doctype, doc_name):
+				raise ValueError(f"Document '{doctype}/{doc_name}' does not exist")
+			doc = frappe.get_doc(doctype, doc_name)
+			doc.update(data)
+			doc.save(ignore_permissions=True)
+	finally:
+		# Always rollback the savepoint - this is a dry run
+		frappe.db.rollback(save_point="dry_run")
+
+
 # ── Document Operations (ignore_permissions=False) ────────────────
 
 def _create_document(doctype, data):

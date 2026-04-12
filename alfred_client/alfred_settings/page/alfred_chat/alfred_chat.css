@@ -1,4 +1,4 @@
-/* Alfred Chat Page Styles — all selectors namespaced with .alfred- */
+/* Alfred Chat Page Styles - all selectors namespaced with .alfred- */
 
 .alfred-page { height: calc(100vh - 80px); overflow: hidden; }
 .alfred-main { display: flex; flex-direction: column; height: 100%; }
@@ -137,6 +137,16 @@
 }
 .alfred-msg-system { align-self: center; max-width: 90%; text-align: center; font-size: 12px; }
 .alfred-status-msg { color: var(--text-muted, #999); font-style: italic; }
+
+/* Agent step messages - live progress feed in chat */
+.alfred-agent-step-msg {
+	display: flex; align-items: center; gap: 8px;
+	font-size: 13px; color: var(--text-muted, #888); padding: 2px 0;
+}
+.alfred-step-icon { font-size: 10px; min-width: 14px; text-align: center; }
+.alfred-msg-type-agent-step { padding: 2px 12px; margin: 0; background: none; }
+.alfred-msg-type-agent-step .alfred-msg-header { display: none; }
+.alfred-msg-type-agent-step .alfred-msg-content { padding: 0; }
 
 /* Error messages (UX-23) */
 .alfred-error-msg {
@@ -277,12 +287,91 @@
 	border: 1px solid var(--green-200, #bbf7d0); border-radius: 8px;
 	margin-bottom: 16px; text-align: center; font-weight: 500; color: var(--green-700, #15803d);
 }
+.alfred-status-rejected {
+	padding: 12px; background: var(--orange-50, #fff7ed);
+	border: 1px solid var(--orange-200, #fed7aa); border-radius: 8px;
+	text-align: center; font-weight: 500; color: var(--orange-700, #c2410c);
+}
+.alfred-status-rolled-back {
+	padding: 12px; background: var(--red-50, #fef2f2);
+	border: 1px solid var(--red-200, #fecaca); border-radius: 8px;
+	text-align: center; font-weight: 500; color: var(--red-700, #b91c1c);
+}
+.alfred-detail-table { margin: 8px 0; font-size: 13px; }
+.alfred-detail-table td:first-child { width: 120px; font-weight: 500; }
+.alfred-msg-preview { margin: 8px 0; font-size: 13px; }
+.alfred-msg-preview .alfred-code-preview { padding: 8px; background: var(--subtle-fg, #f8f8f8); border-radius: 4px; font-size: 12px; max-height: 150px; overflow-y: auto; }
 
 /* Preview Actions */
 .alfred-preview-actions {
 	display: flex; gap: 8px; padding: 12px 0;
 	border-top: 1px solid var(--border-color, #e2e2e2); flex-shrink: 0;
 }
+
+/* ── Pipeline Mode Badge ───────────────────────────────────────── */
+.alfred-mode-badge {
+	display: inline-block;
+	padding: 2px 8px;
+	margin-left: 8px;
+	border-radius: 10px;
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	vertical-align: middle;
+}
+.alfred-mode-lite {
+	background: var(--purple-50, #f3e5f5);
+	color: var(--purple-700, #6a1b9a);
+	border: 1px solid var(--purple-200, #ce93d8);
+}
+
+/* ── Live Activity Ticker ──────────────────────────────────────── */
+.alfred-activity-ticker {
+	display: flex; align-items: center; gap: 8px;
+	padding: 8px 14px; margin: 0 12px 4px 12px;
+	background: var(--blue-50, #e3f2fd); color: var(--blue-900, #0d47a1);
+	border-left: 3px solid var(--blue-500, #2490ef);
+	border-radius: 4px; font-size: 12px;
+	animation: alfred-ticker-in 0.25s ease-out;
+}
+.alfred-activity-ticker-icon {
+	color: var(--blue-500, #2490ef);
+	animation: alfred-pulse 1.5s ease-in-out infinite;
+	font-size: 10px;
+}
+.alfred-activity-ticker-text {
+	font-family: var(--font-stack-monospace, monospace);
+	font-size: 11.5px; line-height: 1.4;
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@keyframes alfred-ticker-in {
+	from { opacity: 0; transform: translateY(4px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Dry-Run Validation Banner ─────────────────────────────────── */
+.alfred-validation-banner {
+	margin-bottom: 12px; padding: 10px 14px; border-radius: 6px;
+	font-size: 13px; border: 1px solid transparent;
+}
+.alfred-validation-ok {
+	background: var(--green-50, #e8f5e9); color: var(--green-800, #1b5e20);
+	border-color: var(--green-200, #a5d6a7); font-weight: 500;
+}
+.alfred-validation-warn {
+	background: var(--orange-50, #fff3e0); color: var(--orange-900, #bf360c);
+	border-color: var(--orange-200, #ffcc80);
+}
+.alfred-validation-heading { font-weight: 500; margin-bottom: 6px; }
+.alfred-validation-issues {
+	margin: 6px 0 0 0; padding-left: 20px; font-size: 12px; max-height: 160px;
+	overflow-y: auto;
+}
+.alfred-validation-issues li { margin-bottom: 4px; line-height: 1.4; }
+.alfred-issue-critical { color: var(--red-700, #c62828); }
+.alfred-issue-critical strong { color: var(--red-800, #b71c1c); }
+.alfred-issue-warning { color: var(--orange-800, #e65100); }
 
 /* ── Mobile ────────────────────────────────────────────────────── */
 @media (max-width: 768px) {

@@ -8,6 +8,9 @@
 		"details_section",
 		"conversation",
 		"status",
+		"validation_section",
+		"dry_run_valid",
+		"dry_run_issues",
 		"changes_section",
 		"changes",
 		"deployment_section",
@@ -41,6 +44,27 @@
 			"in_list_view": 1,
 			"in_standard_filter": 1,
 			"search_index": 1
+		},
+		{
+			"fieldname": "validation_section",
+			"fieldtype": "Section Break",
+			"label": "Validation",
+			"collapsible": 1
+		},
+		{
+			"default": "1",
+			"fieldname": "dry_run_valid",
+			"fieldtype": "Check",
+			"label": "Dry-Run Validated",
+			"description": "1 if the changeset passed pre-preview dry-run validation (safe to deploy). Defaults to 1 so legacy changesets created before dry-run validation was added don't get flagged as invalid. New changesets always explicitly set this based on actual dry-run outcome.",
+			"read_only": 1
+		},
+		{
+			"fieldname": "dry_run_issues",
+			"fieldtype": "Long Text",
+			"label": "Dry-Run Issues",
+			"description": "JSON array of validation issues found during dry-run",
+			"read_only": 1
 		},
 		{
 			"fieldname": "changes_section",

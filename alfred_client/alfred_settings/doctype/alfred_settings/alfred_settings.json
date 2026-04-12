@@ -11,6 +11,7 @@
 		"column_break_conn",
 		"self_hosted_mode",
 		"redis_url",
+		"pipeline_mode",
 		"llm_tab",
 		"llm_configuration_section",
 		"llm_provider",
@@ -20,6 +21,7 @@
 		"llm_base_url",
 		"llm_max_tokens",
 		"llm_temperature",
+		"llm_num_ctx",
 		"access_control_tab",
 		"access_control_section",
 		"allowed_roles",
@@ -80,6 +82,14 @@
 			"description": "Redis connection URL for self-hosted mode (e.g., redis://localhost:6379)"
 		},
 		{
+			"default": "full",
+			"fieldname": "pipeline_mode",
+			"fieldtype": "Select",
+			"label": "Pipeline Mode",
+			"options": "full\nlite",
+			"description": "Full: 6-agent SDLC pipeline (highest quality, ~5-10 min per task). Lite: single-agent fast pass (~1 min, ~5x cheaper, good for simple customizations like adding a field or notification). NOTE: If the Alfred Admin Portal is configured, the subscription plan tier may override this setting - the portal's value always wins for SaaS deployments."
+		},
+		{
 			"fieldname": "llm_tab",
 			"fieldtype": "Tab Break",
 			"label": "LLM Configuration"
@@ -131,6 +141,14 @@
 			"fieldtype": "Float",
 			"label": "Temperature",
 			"description": "Generation temperature (0.0 = deterministic, 1.0 = creative). Recommended: 0.1 for code generation."
+		},
+		{
+			"default": "8192",
+			"fieldname": "llm_num_ctx",
+			"fieldtype": "Int",
+			"label": "Context Window Size",
+			"depends_on": "eval:doc.llm_provider == 'ollama'",
+			"description": "Ollama context window (num_ctx). Limits memory usage for large models. Default 8192 is sufficient for agent tasks. Set 0 to use model default (may cause OOM on large models like 70B)."
 		},
 		{
 			"fieldname": "access_control_tab",

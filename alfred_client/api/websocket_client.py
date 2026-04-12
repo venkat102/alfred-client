@@ -4,13 +4,15 @@ Architecture:
   Browser <-> Frappe (Socket.IO) <-> This module <-> Processing App (WebSocket)
 
 Message flow:
-  - Outbound: send_message() publishes to Redis channel -> connection manager picks up -> sends via WS
+  - Outbound: send_message() pushes to Redis list + notifies via pub/sub ->
+              connection manager drains list -> sends via WS
   - Inbound: WS message arrives -> connection manager routes -> frappe.publish_realtime() to browser
 
-The connection manager runs as a single long-running background job per conversation.
-Messages are passed via Redis pub/sub to decouple senders from the event loop that
-holds the WebSocket connection. This avoids the broken pattern of creating a new
-asyncio event loop per frappe.enqueue call.
+The connection manager runs as a single long-running background job per conversation
+(enqueued to the "long" RQ queue - requires worker_long in Procfile).
+Messages are durably queued in a Redis list; pub/sub is used only as a wakeup
+notification to avoid polling. This ensures no messages are lost if the connection
+manager isn't subscribed at the moment send_message() fires.
 """
 
 import asyncio
@@ -29,8 +31,17 @@ _REDIS_CHANNEL_PREFIX = "alfred:ws:outbound:"
 
 
 def _get_site_id():
-	"""Get the canonical site_id - the Frappe site URL."""
-	return frappe.utils.get_url()
+	"""Get the canonical site_id used for multi-tenant isolation in the Processing App.
+
+	Returns the bare Frappe site name (e.g. "dev.alfred"), NOT the full URL.
+	The Processing App validates this against ^[a-zA-Z0-9._-]+$ because it's used
+	as a Redis key namespace - characters like ":" or "/" would either fail
+	validation or break key parsing.
+
+	If the Processing App ever needs the full URL (e.g. for Admin Portal callbacks),
+	pass it separately via site_config["site_url"], not through site_id.
+	"""
+	return frappe.local.site
 
 
 def _generate_jwt(api_key, user=None, roles=None):
@@ -62,6 +73,8 @@ def _get_site_config():
 		"llm_base_url": settings.llm_base_url or "",
 		"llm_max_tokens": settings.llm_max_tokens,
 		"llm_temperature": settings.llm_temperature,
+		"llm_num_ctx": settings.llm_num_ctx,
+		"pipeline_mode": settings.pipeline_mode or "full",
 		"max_retries_per_agent": settings.max_retries_per_agent,
 		"max_tasks_per_user_per_hour": settings.max_tasks_per_user_per_hour,
 		"task_timeout_seconds": settings.task_timeout_seconds,
@@ -80,8 +93,11 @@ def _route_incoming_message(message, user, conversation_name):
 	if msg_type == "ping":
 		return
 
+	logger.info("Routing message: type=%s, user=%s, conversation=%s", msg_type, user, conversation_name)
+
 	event_map = {
 		"agent_status": "alfred_agent_status",
+		"agent_activity": "alfred_activity",
 		"question": "alfred_question",
 		"preview": "alfred_preview",
 		"changeset": "alfred_preview",
@@ -94,19 +110,41 @@ def _route_incoming_message(message, user, conversation_name):
 
 	event_name = event_map.get(msg_type)
 	if event_name:
+		logger.info("Publishing realtime event: %s -> %s", msg_type, event_name)
 		frappe.publish_realtime(event_name, data, user=user, after_commit=False)
 
-	# Store changeset previews in the database
+	# Store changeset previews in the database and notify browser with the doc name
 	if msg_type in ("preview", "changeset") and data.get("changes"):
 		try:
+			# Dry-run result is optional - older processing app versions may not send it.
+			# Default to {valid: True, issues: []} so the UI treats legacy changesets as
+			# valid (matching the prior behavior where no pre-validation existed).
+			dry_run = data.get("dry_run") or {"valid": True, "issues": []}
+			dry_run_valid = 1 if dry_run.get("valid") else 0
+			dry_run_issues = json.dumps(dry_run.get("issues", []))
+
 			changeset = frappe.get_doc({
 				"doctype": "Alfred Changeset",
 				"conversation": conversation_name,
 				"status": "Pending",
 				"changes": json.dumps(data.get("changes", [])),
+				"dry_run_valid": dry_run_valid,
+				"dry_run_issues": dry_run_issues,
+				# Explicit owner - ignore_permissions=True bypasses the default
+				# session-user assignment, so set it manually so row-level
+				# permissions (the conversation owner should see their own
+				# changesets) work correctly.
+				"owner": user,
 			})
 			changeset.insert(ignore_permissions=True)
 			frappe.db.commit()
+			# Re-publish with the saved changeset name so the UI can fetch it
+			frappe.publish_realtime(
+				"alfred_preview",
+				{"changeset_name": changeset.name, "conversation": conversation_name},
+				user=user,
+				after_commit=False,
+			)
 		except Exception as e:
 			logger.error("Failed to store changeset: %s", e)
 
@@ -135,9 +173,21 @@ def _connection_manager(conversation_name, user):
 	2. Subscribes to a Redis pub/sub channel for outbound messages
 	3. Routes inbound WS messages to the browser via frappe.publish_realtime()
 	4. Handles reconnection with exponential backoff
+	5. Dispatches MCP (JSON-RPC) tool calls from the Processing App to the
+	   Frappe-backed MCP server under the conversation owner's session so
+	   permission enforcement works correctly.
 
 	All message sending goes through Redis pub/sub - no cross-loop issues.
 	"""
+	# Critical: RQ worker jobs start as Administrator by default. MCP tools rely on
+	# frappe.session.user for permission_query_conditions row-level filters - set
+	# it to the conversation owner so tool calls respect that user's permissions.
+	# Capture the original user so we can restore it in the finally block - RQ
+	# worker processes handle multiple jobs, and leaving frappe.session.user on
+	# a stale value would leak into the next job.
+	original_user = frappe.session.user
+	frappe.set_user(user)
+
 	_publish_connection_event(user, conversation_name, "starting", "Starting connection manager...")
 	loop = asyncio.new_event_loop()
 	asyncio.set_event_loop(loop)
@@ -155,6 +205,11 @@ def _connection_manager(conversation_name, user):
 	finally:
 		_publish_connection_event(user, conversation_name, "stopped", "Connection manager stopped.")
 		loop.close()
+		# Restore the session user for the RQ worker process.
+		try:
+			frappe.set_user(original_user)
+		except Exception as e:
+			logger.warning("Failed to restore session user after connection manager: %s", e)
 
 
 async def _connection_loop(conversation_name, user):
@@ -180,15 +235,27 @@ async def _connection_loop(conversation_name, user):
 		ws_url = base_url
 	ws_url = f"{ws_url.rstrip('/')}/ws/{conversation_name}"
 
-	# Connect to the bench's Redis for pub/sub (outbound message channel)
-	redis_url = frappe.conf.get("redis_queue") or "redis://localhost:11000"
+	# Connect to the SAME Redis instance that frappe.cache() uses (the cache redis,
+	# typically port 13000). send_message in alfred_chat.py uses frappe.cache().rpush()
+	# and frappe.cache().publish(), so we MUST use the same instance to see those writes.
+	# Using frappe.conf.get("redis_queue") instead would point at port 11000 (RQ's redis),
+	# which is a different server - no messages would ever be delivered.
+	redis_url = frappe.conf.get("redis_cache") or "redis://localhost:13000"
 	redis_client = aioredis.from_url(redis_url, decode_responses=True)
 	pubsub = redis_client.pubsub()
+
+	# Frappe's RedisWrapper auto-prefixes LIST keys (rpush/lpop/llen) with "<db_name>|"
+	# but does NOT prefix pub/sub channel names. We must match that behavior here:
+	#   - channel name → bare (no prefix)
+	#   - list key → prefixed with "<db_name>|"
+	site_prefix = f"{frappe.conf.get('db_name')}|"
 	channel = f"{_REDIS_CHANNEL_PREFIX}{conversation_name}"
 	await pubsub.subscribe(channel)
 
 	backoff = 1
 	max_backoff = 60
+	max_retries = 10  # Give up after 10 consecutive failures instead of looping forever
+	retry_count = 0
 	last_msg_id = None
 	should_stop = False
 
@@ -208,6 +275,7 @@ async def _connection_loop(conversation_name, user):
 					raise ConnectionError(f"Handshake failed: {auth_response}")
 
 				backoff = 1  # Reset on successful connect
+				retry_count = 0
 				logger.info("Connected to Processing App: conversation=%s", conversation_name)
 				_publish_connection_event(user, conversation_name, "connected", "Connected to Processing App")
 
@@ -219,8 +287,9 @@ async def _connection_loop(conversation_name, user):
 						"data": {"last_msg_id": last_msg_id},
 					}))
 
-				# Drain any queued messages that arrived before we were listening
-				queue_key = f"{_REDIS_CHANNEL_PREFIX}queue:{conversation_name}"
+				# Drain any queued messages that arrived before we were listening.
+				# Must use the site-prefixed key to match what frappe.cache().rpush() wrote.
+				queue_key = f"{site_prefix}{_REDIS_CHANNEL_PREFIX}queue:{conversation_name}"
 				while True:
 					queued = await redis_client.lpop(queue_key)
 					if not queued:
@@ -232,7 +301,7 @@ async def _connection_loop(conversation_name, user):
 				# 1. Listen for inbound WS messages (from Processing App)
 				# 2. Listen for outbound Redis pub/sub messages (from Frappe workers)
 				ws_listen = asyncio.create_task(_listen_ws(ws, user, conversation_name))
-				redis_listen = asyncio.create_task(_listen_redis(ws, pubsub, channel))
+				redis_listen = asyncio.create_task(_listen_redis(ws, pubsub, channel, redis_client, queue_key))
 
 				done, pending = await asyncio.wait(
 					[ws_listen, redis_listen], return_when=asyncio.FIRST_COMPLETED
@@ -253,16 +322,28 @@ async def _connection_loop(conversation_name, user):
 		except _ShutdownRequested:
 			should_stop = True
 		except Exception as e:
-			logger.warning(
-				"Connection lost (conversation=%s): %s. Reconnecting in %ds...",
-				conversation_name, e, backoff,
-			)
-			_publish_connection_event(
-				user, conversation_name, "reconnecting",
-				f"Connection lost. Retrying in {backoff}s...", str(e),
-			)
-			await asyncio.sleep(backoff)
-			backoff = min(backoff * 2, max_backoff)
+			retry_count += 1
+			if retry_count >= max_retries:
+				logger.error(
+					"Connection manager giving up after %d retries (conversation=%s): %s",
+					max_retries, conversation_name, e,
+				)
+				_publish_connection_event(
+					user, conversation_name, "failed",
+					f"Gave up after {max_retries} retries. Last error: {e}",
+				)
+				should_stop = True
+			else:
+				logger.warning(
+					"Connection lost (conversation=%s): %s. Retry %d/%d in %ds...",
+					conversation_name, e, retry_count, max_retries, backoff,
+				)
+				_publish_connection_event(
+					user, conversation_name, "reconnecting",
+					f"Connection lost. Retry {retry_count}/{max_retries} in {backoff}s...", str(e),
+				)
+				await asyncio.sleep(backoff)
+				backoff = min(backoff * 2, max_backoff)
 
 	await pubsub.unsubscribe(channel)
 	await redis_client.aclose()
@@ -275,13 +356,41 @@ class _ShutdownRequested(Exception):
 
 
 async def _listen_ws(ws, user, conversation_name):
-	"""Listen for inbound messages from the Processing App and route to browser."""
+	"""Listen for inbound messages from the Processing App and route to browser.
+
+	Two kinds of inbound messages:
+	1. Custom protocol (has "type" field) - route to browser via _route_incoming_message.
+	2. MCP JSON-RPC requests (has "jsonrpc" field) - dispatch to the local MCP server
+	   synchronously on this loop. Sync Frappe ORM calls block briefly (10-100ms typical,
+	   up to a few seconds for dry_run_changeset), which is acceptable: WS heartbeats
+	   are 30s. Running in a thread executor would lose frappe.local.session.user
+	   (thread-local) and frappe.local.site, breaking permission enforcement.
+	"""
+	from alfred_client.mcp.transport import is_mcp_message
+	from alfred_client.mcp.server import handle_mcp_request
+
 	async for raw in ws:
 		try:
 			message = json.loads(raw)
 		except json.JSONDecodeError:
 			continue
 
+		# MCP requests from the Processing App's agents
+		if is_mcp_message(message):
+			try:
+				response = handle_mcp_request(message)
+				await ws.send(json.dumps(response))
+			except Exception as e:
+				logger.error("MCP dispatch failed: %s", e, exc_info=True)
+				# Send a JSON-RPC error response so the caller's future resolves
+				await ws.send(json.dumps({
+					"jsonrpc": "2.0",
+					"id": message.get("id"),
+					"error": {"code": -32603, "message": f"MCP dispatch failed: {e}"},
+				}))
+			continue
+
+		# Custom protocol messages → browser
 		_route_incoming_message(message, user, conversation_name)
 
 		# ACK non-ping messages
@@ -294,22 +403,26 @@ async def _listen_ws(ws, user, conversation_name):
 			}))
 
 
-async def _listen_redis(ws, pubsub, channel):
-	"""Listen for outbound messages from Redis pub/sub and forward to WS."""
+async def _listen_redis(ws, pubsub, channel, redis_client, queue_key):
+	"""Listen for outbound messages from Redis pub/sub and forward to WS.
+
+	Pub/sub is used only as a wakeup notification. The actual messages are
+	read from the durable Redis list (queue_key), so nothing is lost if the
+	connection manager isn't subscribed when send_message() fires.
+	"""
 	while True:
 		message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
 		if message and message["type"] == "message":
 			data = message["data"]
 			# Check for shutdown signal
-			try:
-				parsed = json.loads(data)
-				if parsed.get("type") == "__shutdown__":
-					raise _ShutdownRequested()
-			except (json.JSONDecodeError, _ShutdownRequested):
-				if isinstance(data, str) and "__shutdown__" in data:
-					raise _ShutdownRequested()
-				raise
-			await ws.send(data)
+			if data == "__shutdown__" or (isinstance(data, str) and "__shutdown__" in data):
+				raise _ShutdownRequested()
+			# Notification received - drain the queue
+			while True:
+				queued = await redis_client.lpop(queue_key)
+				if not queued:
+					break
+				await ws.send(queued)
 		await asyncio.sleep(0.05)
 
 
@@ -317,11 +430,16 @@ async def _listen_redis(ws, pubsub, channel):
 
 @frappe.whitelist()
 def send_message(conversation_name, message, msg_type="prompt"):
-	"""Send a message to the Processing App via Redis pub/sub.
+	"""Send a message to the Processing App via durable Redis queue.
 
-	This is safe to call from any Frappe worker - it publishes to a Redis
-	channel, and the connection manager (running in its own event loop)
-	picks it up and forwards it over the WebSocket.
+	NOTE: This is a **test/CLI utility**, NOT the function the chat UI calls.
+	The UI calls `alfred_client.alfred_settings.page.alfred_chat.alfred_chat.send_message`
+	which additionally creates an Alfred Message row and starts the connection
+	manager. Keep this lightweight helper for tests and scripts.
+
+	Pushes the message to a Redis list (durable) and sends a pub/sub
+	notification. The connection manager drains the list and forwards
+	over the WebSocket. Safe to call from any Frappe worker.
 	"""
 	from alfred_client.api.permissions import validate_alfred_access
 	validate_alfred_access()
@@ -344,17 +462,50 @@ def send_message(conversation_name, message, msg_type="prompt"):
 	})
 	redis_conn = frappe.cache()
 	channel = f"{_REDIS_CHANNEL_PREFIX}{conversation_name}"
-	redis_conn.publish(channel, msg)
+	# Push to durable queue first (connection manager drains on connect/reconnect),
+	# then notify via pub/sub for immediate delivery if already listening.
+	queue_key = f"{_REDIS_CHANNEL_PREFIX}queue:{conversation_name}"
+	redis_conn.rpush(queue_key, msg)
+	# Pub/sub is just a notification - the actual message is read from the queue.
+	redis_conn.publish(channel, "__notify__")
 
 
 @frappe.whitelist()
 def start_conversation(conversation_name):
-	"""Start a WebSocket connection for a conversation."""
+	"""Start a WebSocket connection for a conversation.
+
+	Each active conversation consumes one slot on the 'long' RQ worker queue
+	for up to 7200s. If the user has more active conversations than the worker
+	can handle, the new job will queue indefinitely - we warn the user when we
+	detect the queue is already saturated.
+	"""
 	from alfred_client.api.permissions import validate_alfred_access
 	validate_alfred_access()
 
 	if not frappe.db.exists("Alfred Conversation", conversation_name):
 		frappe.throw(frappe._("Conversation not found"), frappe.DoesNotExistError)
+
+	# Soft check: count queued + started jobs on the long queue for this site.
+	# If we're at/above the worker count, the new job will sit idle and the user
+	# will see nothing happen. Surface that as a clear error.
+	try:
+		from frappe.utils.background_jobs import get_jobs
+		site_jobs = get_jobs(site=frappe.local.site, queue="long")
+		long_queue_jobs = sum(len(jobs) for jobs in site_jobs.values())
+		# Rough heuristic: alert above 10 concurrent long-queue jobs since the
+		# default bench worker count is 1-3 for the long queue.
+		if long_queue_jobs > 10:
+			frappe.msgprint(
+				frappe._(
+					"Warning: {0} long-running jobs are already active. "
+					"This conversation may take longer to start - close unused "
+					"conversations if it doesn't start within 30 seconds."
+				).format(long_queue_jobs),
+				indicator="orange",
+				alert=True,
+			)
+	except Exception:
+		pass  # Best-effort check; don't block on saturation detection
 
 	frappe.enqueue(
 		"alfred_client.api.websocket_client._connection_manager",
@@ -373,4 +524,4 @@ def stop_conversation(conversation_name):
 
 	redis_conn = frappe.cache()
 	channel = f"{_REDIS_CHANNEL_PREFIX}{conversation_name}"
-	redis_conn.publish(channel, json.dumps({"type": "__shutdown__"}))
+	redis_conn.publish(channel, "__shutdown__")
