@@ -83,6 +83,14 @@
 						>
 							<i class="fa fa-share-alt"></i>
 						</button>
+
+						<!-- Divider isolating the destructive action from the safe
+						     actions. Plus the toolbar's right padding keeps the
+						     Delete button away from the preview panel edge so a
+						     user reaching for Approve in the preview panel can't
+						     accidentally drag into Delete. -->
+						<span class="alfred-toolbar-divider" aria-hidden="true"></span>
+
 						<button
 							v-if="isCurrentConvOwner"
 							type="button"
