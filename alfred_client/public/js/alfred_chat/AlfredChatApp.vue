@@ -31,25 +31,68 @@
 				<div v-else class="alfred-chat-area">
 					<!-- Chat Toolbar -->
 					<div class="alfred-chat-toolbar">
-						<button class="btn btn-xs btn-default" @click="goBack" :title="__('Back to conversations')">
-							← {{ __("Back") }}
+						<!-- Navigation: icon-only back button, ghost style -->
+						<button
+							type="button"
+							class="alfred-icon-btn"
+							@click="goBack"
+							:aria-label="__('Back to conversations')"
+							:title="__('Back to conversations')"
+						>
+							<i class="fa fa-arrow-left"></i>
 						</button>
+
+						<!-- Title fills the gap between nav and mode switcher -->
 						<span class="alfred-chat-title text-muted text-sm">{{ conversationSummary }}</span>
+
+						<!-- Mode switcher - the centrepiece of the toolbar -->
 						<ModeSwitcher v-model="currentMode" />
-						<div class="alfred-chat-toolbar-actions">
-							<button class="btn btn-xs btn-primary" @click="newConversationFromChat" :title="__('Start a new conversation')">
-								+ {{ __("New") }}
-							</button>
-							<button class="btn btn-xs btn-default" @click="checkHealth" :title="__('Check pipeline health (Redis queue, background job, Processing App)')">
-								{{ __("Health") }}
-							</button>
-							<button v-if="isCurrentConvOwner" class="btn btn-xs btn-default" @click="shareConversation(currentConversation)" :title="__('Share this conversation')">
-								{{ __("Share") }}
-							</button>
-							<button v-if="isCurrentConvOwner" class="btn btn-xs btn-danger" @click="deleteConversation" :title="__('Delete this conversation')">
-								{{ __("Delete") }}
-							</button>
-						</div>
+
+						<!-- Divider between mode-selector region and action region -->
+						<span class="alfred-toolbar-divider" aria-hidden="true"></span>
+
+						<!-- Primary action: start a new conversation -->
+						<button
+							type="button"
+							class="alfred-primary-btn"
+							@click="newConversationFromChat"
+							:aria-label="__('Start a new conversation')"
+							:title="__('Start a new conversation')"
+						>
+							<i class="fa fa-plus"></i>
+							<span>{{ __("New") }}</span>
+						</button>
+
+						<!-- Secondary actions: icon-only ghost buttons -->
+						<button
+							type="button"
+							class="alfred-icon-btn"
+							@click="checkHealth"
+							:aria-label="__('Check pipeline health')"
+							:title="__('Check pipeline health (Redis queue, background job, Processing App)')"
+						>
+							<i class="fa fa-heartbeat"></i>
+						</button>
+						<button
+							v-if="isCurrentConvOwner"
+							type="button"
+							class="alfred-icon-btn"
+							@click="shareConversation(currentConversation)"
+							:aria-label="__('Share this conversation')"
+							:title="__('Share this conversation')"
+						>
+							<i class="fa fa-share-alt"></i>
+						</button>
+						<button
+							v-if="isCurrentConvOwner"
+							type="button"
+							class="alfred-icon-btn alfred-icon-btn-danger"
+							@click="deleteConversation"
+							:aria-label="__('Delete this conversation')"
+							:title="__('Delete this conversation')"
+						>
+							<i class="fa fa-trash-o"></i>
+						</button>
 					</div>
 					<div ref="messagesContainer" class="alfred-messages">
 						<MessageBubble

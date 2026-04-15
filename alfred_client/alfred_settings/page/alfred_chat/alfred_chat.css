@@ -103,13 +103,85 @@
 
 /* ── Chat Area ─────────────────────────────────────────────────── */
 .alfred-chat-area { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+/* Toolbar: navigation | title | mode switcher | divider | actions.
+   Uses a flex row with a gap; the title grows to fill. */
 .alfred-chat-toolbar {
-	display: flex; align-items: center; justify-content: space-between;
-	padding: 6px 12px; border-bottom: 1px solid var(--border-color, #e2e2e2);
+	display: flex; align-items: center; gap: 8px;
+	padding: 8px 12px; border-bottom: 1px solid var(--border-color, #e2e2e2);
 	background: var(--subtle-fg, #f8f8f8); flex-shrink: 0;
+	min-height: 48px;
 }
-.alfred-chat-title { flex: 1; margin: 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.alfred-chat-toolbar-actions { display: flex; gap: 6px; }
+.alfred-chat-title {
+	flex: 1; min-width: 0;
+	margin: 0 4px 0 8px;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	font-size: 13px;
+}
+
+/* Vertical divider separating the mode-selector region from the
+   action region. Thin, muted, and aligned to the toolbar height. */
+.alfred-toolbar-divider {
+	display: inline-block;
+	width: 1px; height: 22px;
+	background: var(--border-color, #e2e2e2);
+	margin: 0 4px;
+	flex-shrink: 0;
+}
+
+/* Primary action pill: dark background, white text, icon + label.
+   Used for "+ New". The only non-ghost button in the toolbar aside
+   from the mode switcher's active state. */
+.alfred-primary-btn {
+	display: inline-flex; align-items: center; gap: 6px;
+	padding: 6px 12px;
+	font-size: 12px; font-weight: 500;
+	color: var(--bg-color, #ffffff);
+	background: var(--text-color, #111827);
+	border: 1px solid var(--text-color, #111827);
+	border-radius: 6px;
+	cursor: pointer;
+	transition: background 0.12s ease, transform 0.05s ease;
+	flex-shrink: 0;
+}
+.alfred-primary-btn:hover {
+	background: var(--gray-800, #1f2937);
+	border-color: var(--gray-800, #1f2937);
+}
+.alfred-primary-btn:active { transform: translateY(1px); }
+.alfred-primary-btn i { font-size: 11px; }
+
+/* Secondary icon-only button (ghost style). Used for Back, Health,
+   Share. 32x32 hit area, icon centered, no background until hover. */
+.alfred-icon-btn {
+	display: inline-flex; align-items: center; justify-content: center;
+	width: 32px; height: 32px;
+	padding: 0;
+	color: var(--text-muted, #6b7280);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	cursor: pointer;
+	transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+	flex-shrink: 0;
+}
+.alfred-icon-btn:hover {
+	color: var(--text-color, #111827);
+	background: var(--bg-tertiary, #f3f4f6);
+	border-color: var(--border-color, #e2e2e2);
+}
+.alfred-icon-btn:active { transform: translateY(1px); }
+.alfred-icon-btn i { font-size: 14px; line-height: 1; }
+
+/* Danger variant: Delete button. Subtle red accent instead of a
+   solid red fill - less visually dominant than the old btn-danger
+   but still signals destructive intent on hover. */
+.alfred-icon-btn-danger { color: var(--red-500, #ef4444); }
+.alfred-icon-btn-danger:hover {
+	color: var(--red-700, #b91c1c);
+	background: var(--red-50, #fef2f2);
+	border-color: var(--red-200, #fecaca);
+}
 .alfred-messages {
 	flex: 1; overflow-y: auto; padding: 16px;
 	display: flex; flex-direction: column; gap: 12px;
