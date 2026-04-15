@@ -100,6 +100,66 @@ Open `/app/alfred-chat`. If this is your first time, you'll see a welcome screen
 >
 > Alfred will ask: "What specific aspect of HR training do you want to manage? Training programs, training requests, attendance tracking, or something else?"
 
+**Conversational messages get conversational replies.** When the
+three-mode orchestrator is enabled (`ALFRED_ORCHESTRATOR_ENABLED=1` on
+the processing app), Alfred recognises greetings, thank-yous, and meta
+questions and replies in kind without running the full SDLC pipeline:
+
+> **You:** hi
+>
+> **Alfred:** Hi! I'm Alfred, your Frappe customization assistant. Tell me what you'd like to build, or ask about what's already on your site.
+
+These conversational turns are fast (~5 seconds), don't consume agent
+tokens, and never produce a changeset.
+
+**You can also ask about what's already on your site.** If you ask a
+read-only question, Alfred answers from your live site state using
+read-only tools - no build, no approval, no changes:
+
+> **You:** what DocTypes do I have in the HR module?
+>
+> **Alfred (Insights):** You have 18 DocTypes in the HR module: Employee, Leave Application, Attendance, Expense Claim, ... The Leave Application DocType is submittable and currently has 2 custom fields added on this site.
+
+Insights-mode replies are markdown, usually a few sentences or a short
+list, and complete in about 10-30 seconds. They're budget-capped at 5
+tool calls per question so the assistant won't fan out into expensive
+queries.
+
+**You can ask for a plan before committing to a build.** If you want to
+discuss the approach first, phrase it as a design question and Alfred
+responds with a structured plan panel:
+
+> **You:** how would we approach adding approval to Expense Claims?
+>
+> **Alfred (Plan panel):**
+> Title: *Approval workflow for Expense Claims*
+> Summary: Add a 2-step approval with manager, then finance.
+> Steps:
+>   1. Create Workflow 'Expense Claim Approval'
+>   2. Create Notification for the approver
+> Doctypes touched: Workflow, Notification
+> Open questions: Who approves when the manager is absent?
+> [Refine] [Approve and Build]
+
+Click **Refine** to tweak the plan with another prompt, or **Approve &
+Build** to promote it straight to Dev mode. Approved plans are injected
+into the Developer agent's context as an explicit spec so the build
+follows your plan exactly.
+
+**You can also force a specific mode via the switcher** in the chat
+header (Auto / Dev / Plan / Insights). Auto is the default and lets
+Alfred decide; the other three force the mode for every prompt on that
+conversation. Your pick is remembered per conversation so switching
+away and back doesn't reset it. Use the forced modes when Alfred keeps
+mis-routing - e.g. force Insights to explore your site without any
+build risk, or force Dev if you want to skip the planning dance and
+go straight to code.
+
+Build requests ("add a priority field to Sales Order") still run the
+full 6-agent pipeline. See
+[how-alfred-works.md#chat-modes-and-the-orchestrator](how-alfred-works.md#chat-modes-and-the-orchestrator)
+for the full details.
+
 ### Step 2: Alfred Gathers Requirements
 
 The **Requirement Analyst** agent processes your request. You'll see:
@@ -169,22 +229,53 @@ The preview panel shows the complete changeset:
 - ✓ **Validated - ready to deploy** - dry-run passed, deploy is safe
 - ⚠ **N validation issue(s) found - review before deploying** - shows a list of critical/warning issues, Approve button relabels to "Deploy Anyway"
 
-**DocType preview:**
-| Field | Type | Label | Required |
-|-------|------|-------|----------|
-| program_name | Data | Program Name | Yes |
-| duration_days | Int | Duration (Days) | |
-| trainer | Link | Trainer | |
-| status | Select | Status | |
+**DocType preview** - shows module, naming rule, submittable/tree/single flags,
+and a field table:
+| Field | Type | Label | Options | Required |
+|-------|------|-------|---------|----------|
+| program_name | Data | Program Name | | Yes |
+| duration_days | Int | Duration (Days) | | |
+| trainer | Link | Trainer | Employee | |
+| status | Select | Status | Draft\nActive\nCompleted | |
+
+**Notification preview** - document type, event, channel, subject with Jinja
+template rendering, recipient summary (field/role/cc), `enabled` flag, and
+the full HTML message body.
+
+**Custom Field preview** - target DocType, field name (as `code`), type,
+label, options, default, insert_after, required flag, list-view visibility.
+
+**Server Script preview** - reference DocType, script type, doctype event,
+cron / api_method / event_frequency for scheduled scripts, disabled flag,
+and the full Python source in a syntax-highlighted block.
+
+**Workflow preview** - workflow name, target DocType, state field, active
+flag, and **two additional tables**:
+
+*States:*
+| State | Doc Status | Allow Edit | Update Field |
+|-------|-----------|-----------|-------------|
+| Draft | Draft (0) | Employee, Leave Approver | |
+| Pending Approval | Submitted (1) | Leave Approver | |
+| Approved | Submitted (1) | | |
+
+*Transitions:*
+| From State | Action | To State | Allowed | Condition |
+|-----------|--------|----------|---------|-----------|
+| Draft | Submit | Pending Approval | Employee | |
+| Pending Approval | Approve | Approved | Leave Approver | |
 
 **Permission preview:**
 | Role | Read | Write | Create | Delete |
 |------|------|-------|--------|--------|
 | System Manager | Yes | Yes | Yes | Yes |
 
-**Script preview** (dark code block with syntax highlighting)
-
 Below the preview, a summary shows: "3 operation(s) will be applied to your site"
+
+**Reflection banner** (if the minimality step is enabled and dropped anything):
+you'll see a purple "Dropped N item(s) as not strictly needed" note listing
+each trimmed item and why Alfred thought it wasn't in your original request.
+Nothing you asked for is ever removed - only extras the agent volunteered.
 
 Three buttons appear:
 
@@ -209,8 +300,14 @@ After you approve:
 
 Your customization is live. You can:
 - Navigate to the new DocType (e.g., `/app/training-program`)
-- Continue the conversation with follow-up requests ("Now add a child table for training sessions")
-- Start a new conversation for a different customization
+- **Continue the conversation with follow-up requests** - Alfred remembers
+  every DocType, field, script, and notification it built earlier in this
+  chat, plus the clarifications you provided. So after deploying a Training
+  Program DocType you can say *"now add a description field to that DocType"*
+  and Alfred will know "that" means Training Program without you spelling it
+  out. The memory lasts for the lifetime of the conversation.
+- Start a new conversation for a different customization (memory does not
+  carry across conversations - each new chat is a fresh slate)
 
 ---
 

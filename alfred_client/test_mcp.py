@@ -15,7 +15,11 @@ def run_tests():
 	print("\n=== Alfred MCP Server Tests ===\n")
 
 	# Test 1: tools/list
-	print("Test 1: tools/list returns all 9 tools...")
+	# TOOL_REGISTRY grew post Phase 1 tool consolidation: dry_run_changeset
+	# (pipeline validation) and the consolidated lookup_doctype +
+	# lookup_pattern (Framework KG) joined the original 9. Keep this set in
+	# sync with TOOL_REGISTRY in alfred_client/mcp/tools.py.
+	print("Test 1: tools/list returns all 12 tools...")
 	response = handle_mcp_request({
 		"jsonrpc": "2.0",
 		"method": "tools/list",
@@ -31,8 +35,16 @@ def run_tests():
 		"get_existing_customizations", "get_user_context",
 		"check_permission", "validate_name_available",
 		"has_active_workflow", "check_has_records",
+		# Phase 1: pipeline validation
+		"dry_run_changeset",
+		# Phase 1b: consolidated Framework KG tools
+		"lookup_doctype", "lookup_pattern",
 	}
 	assert tool_names == expected_tools, f"Expected {expected_tools}, got {tool_names}"
+	# Every tool must carry a non-empty docstring so agents can decide when
+	# to call it - empty docs were a documented drift failure in phase 1 QA.
+	for t in tools:
+		assert t.get("description"), f"Tool {t['name']} has no description"
 	print(f"  Found {len(tools)} tools: {', '.join(sorted(tool_names))}")
 	print("  PASSED\n")
 
@@ -246,6 +258,119 @@ def run_tests():
 	assert content["has_records"] is True  # Users always exist
 	assert content["count"] > 0
 	print(f"  User records: {content['count']}")
+	print("  PASSED\n")
+
+	# Test 16: dry_run_changeset - empty list is valid
+	print("Test 16: tools/call dry_run_changeset (empty list)...")
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "dry_run_changeset", "arguments": {"changes": "[]"}},
+		"id": 16,
+	})
+	assert "result" in response
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content["valid"] is True
+	assert content["issues"] == []
+	print("  Empty changeset valid: OK")
+
+	# Dry-run an obviously-broken Notification - should flag missing doctype
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {
+			"name": "dry_run_changeset",
+			"arguments": {
+				"changes": json.dumps([{
+					"op": "create",
+					"doctype": "NonExistentDocType_XYZ",
+					"data": {"name": "X", "doctype": "NonExistentDocType_XYZ"},
+				}])
+			},
+		},
+		"id": 17,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content["valid"] is False
+	assert any("does not exist" in (i.get("issue", "")) for i in content.get("issues", []))
+	print("  Invalid doctype flagged: OK")
+	print("  PASSED\n")
+
+	# Test 17: lookup_doctype (framework layer) - User is a core framework DocType
+	print("Test 17: tools/call lookup_doctype layer=framework...")
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {
+			"name": "lookup_doctype",
+			"arguments": {"name": "User", "layer": "framework"},
+		},
+		"id": 18,
+	})
+	assert "result" in response
+	content = json.loads(response["result"]["content"][0]["text"])
+	# Framework KG may or may not have the record depending on whether build
+	# has run - either a record with fields or a not_found error is acceptable
+	# for a smoke test. A third state (unexpected key shape) should fail.
+	assert "error" in content or "fields" in content or "name" in content
+	print(f"  layer=framework shape: {list(content.keys())[:4]}")
+
+	# Site layer should always return a record for User
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {
+			"name": "lookup_doctype",
+			"arguments": {"name": "User", "layer": "site"},
+		},
+		"id": 19,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("doctype") == "User" or content.get("name") == "User"
+	assert "fields" in content
+	print(f"  layer=site returned {len(content['fields'])} fields")
+
+	# Invalid layer value must be rejected
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {
+			"name": "lookup_doctype",
+			"arguments": {"name": "User", "layer": "banana"},
+		},
+		"id": 20,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("error") == "invalid_argument"
+	print("  invalid layer rejected: OK")
+	print("  PASSED\n")
+
+	# Test 18: lookup_pattern kind=list
+	print("Test 18: tools/call lookup_pattern kind=list...")
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "lookup_pattern", "arguments": {"query": "", "kind": "list"}},
+		"id": 21,
+	})
+	assert "result" in response
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert "patterns" in content
+	# Should have at least the 5 starter patterns (approval_notification etc)
+	# but we only assert presence, not count, so the test survives expansions.
+	assert isinstance(content["patterns"], list)
+	print(f"  {len(content['patterns'])} pattern(s) registered")
+
+	# Invalid kind must be rejected
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "lookup_pattern", "arguments": {"query": "x", "kind": "banana"}},
+		"id": 22,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("error") == "invalid_argument"
+	print("  invalid kind rejected: OK")
 	print("  PASSED\n")
 
 	print("=== All MCP Server Tests PASSED ===\n")

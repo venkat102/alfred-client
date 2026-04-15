@@ -74,7 +74,7 @@ def _get_site_config():
 		"llm_max_tokens": settings.llm_max_tokens,
 		"llm_temperature": settings.llm_temperature,
 		"llm_num_ctx": settings.llm_num_ctx,
-		"pipeline_mode": settings.pipeline_mode or "full",
+		"pipeline_mode": getattr(settings, "pipeline_mode", None) or "full",
 		"max_retries_per_agent": settings.max_retries_per_agent,
 		"max_tasks_per_user_per_hour": settings.max_tasks_per_user_per_hour,
 		"task_timeout_seconds": settings.task_timeout_seconds,
@@ -106,12 +106,35 @@ def _route_incoming_message(message, user, conversation_name):
 		"mcp_request": "alfred_mcp_request",
 		"deploy": "alfred_deploy",
 		"auth_success": None,
+		# Three-mode chat (Phase A/B/C): conversational, read-only, and
+		# planning handlers stream their output as these new event types.
+		# The browser renders them as regular Alfred Message rows, NOT
+		# changesets.
+		"chat_reply": "alfred_chat_reply",
+		"insights_reply": "alfred_insights_reply",
+		"plan_doc": "alfred_plan_doc",
+		"mode_switch": "alfred_mode_switch",
 	}
 
 	event_name = event_map.get(msg_type)
 	if event_name:
 		logger.info("Publishing realtime event: %s -> %s", msg_type, event_name)
 		frappe.publish_realtime(event_name, data, user=user, after_commit=False)
+
+	# Persist chat / insights replies and plan docs as Alfred Message
+	# rows so the conversation scrollback survives page reload. None of
+	# them go through the changeset approval flow, so this is the only
+	# place they get durably stored.
+	if msg_type in ("chat_reply", "insights_reply"):
+		try:
+			_store_agent_reply_message(conversation_name, msg_type, data)
+		except Exception as e:
+			logger.warning("Failed to store %s message: %s", msg_type, e)
+	elif msg_type == "plan_doc":
+		try:
+			_store_plan_doc_message(conversation_name, data)
+		except Exception as e:
+			logger.warning("Failed to store plan_doc message: %s", e)
 
 	# Store changeset previews in the database and notify browser with the doc name
 	if msg_type in ("preview", "changeset") and data.get("changes"):
@@ -149,20 +172,118 @@ def _route_incoming_message(message, user, conversation_name):
 			logger.error("Failed to store changeset: %s", e)
 
 
+def _store_agent_reply_message(conversation_name, msg_type, data):
+	"""Store a chat_reply or insights_reply as an Alfred Message row.
+
+	Three-mode chat (Phase A/B): these messages are conversational / read-only
+	and never become changesets, but the user should see them on page reload
+	the same way they see dev-mode agent replies.
+	"""
+	reply_text = (data or {}).get("reply") or ""
+	if not reply_text:
+		return
+
+	# The current Alfred Message.message_type select enum is
+	# text / question / preview / changeset / status / error. Store
+	# chat_reply / insights_reply as `text` with a mode marker in
+	# metadata so the frontend can distinguish them (and so we don't
+	# have to migrate the select field for Phase A/B).
+	metadata = {
+		"mode": "chat" if msg_type == "chat_reply" else "insights",
+		"handler": msg_type,
+	}
+
+	msg = frappe.get_doc({
+		"doctype": "Alfred Message",
+		"conversation": conversation_name,
+		"role": "agent",
+		"agent_name": "Alfred" if msg_type == "chat_reply" else "Insights",
+		"message_type": "text",
+		"content": reply_text,
+		"metadata": json.dumps(metadata),
+	})
+	msg.insert(ignore_permissions=True)
+	frappe.db.commit()
+
+
+def _store_plan_doc_message(conversation_name, data):
+	"""Store a plan_doc (Phase C) as an Alfred Message row.
+
+	The plan itself is embedded in metadata.plan so the frontend's
+	PlanDocPanel can read it back after a page reload. Content is set to
+	the plan title so list views and search still show something useful
+	even if the JSON isn't unpacked.
+	"""
+	plan = (data or {}).get("plan") or {}
+	title = plan.get("title") or "Plan"
+
+	metadata = {
+		"mode": "plan",
+		"handler": "plan_doc",
+		"plan": plan,
+	}
+
+	msg = frappe.get_doc({
+		"doctype": "Alfred Message",
+		"conversation": conversation_name,
+		"role": "agent",
+		"agent_name": "Planner",
+		"message_type": "text",
+		"content": title,
+		"metadata": json.dumps(metadata),
+	})
+	msg.insert(ignore_permissions=True)
+	frappe.db.commit()
+
+
 def _publish_connection_event(user, conversation_name, state, message="", detail=""):
-	"""Publish a connection lifecycle event to the browser."""
-	frappe.publish_realtime(
-		"alfred_connection_status",
-		{
-			"conversation": conversation_name,
-			"state": state,  # "starting", "connected", "disconnected", "reconnecting", "failed", "stopped"
-			"message": message,
-			"detail": detail,
-			"timestamp": time.time(),
-		},
-		user=user,
-		after_commit=False,
-	)
+	"""Publish a connection lifecycle event to the browser.
+
+	Swallows MySQL staleness errors so a dead DB connection cannot crash the
+	connection manager's outer retry loop. If the publish fails for any other
+	reason we also swallow - this is a notification channel, not critical path.
+	"""
+	try:
+		_reconnect_db_if_stale()
+		frappe.publish_realtime(
+			"alfred_connection_status",
+			{
+				"conversation": conversation_name,
+				"state": state,  # "starting", "connected", "disconnected", "reconnecting", "failed", "stopped"
+				"message": message,
+				"detail": detail,
+				"timestamp": time.time(),
+			},
+			user=user,
+			after_commit=False,
+		)
+	except Exception as e:
+		logger.warning(
+			"Failed to publish connection event (state=%s, conv=%s): %s",
+			state, conversation_name, e,
+		)
+
+
+def _reconnect_db_if_stale():
+	"""Reconnect MySQL if the worker's connection went stale.
+
+	RQ workers hold DB connections for the lifetime of the job (up to 7200s
+	for alfred's long-running connection manager). A `bench restart` or a
+	network hiccup can kill the MySQL connection mid-job, leading to
+	`(2006, 'Server has gone away')` on the next query. This helper pings
+	the DB and reconnects if the ping fails.
+	"""
+	try:
+		frappe.db.sql("SELECT 1")
+	except Exception:
+		try:
+			frappe.db.close()
+		except Exception:
+			pass
+		try:
+			frappe.connect(site=frappe.local.site)
+		except Exception as e:
+			logger.warning("Failed to reconnect DB: %s", e)
 
 
 def _connection_manager(conversation_name, user):
@@ -258,8 +379,24 @@ async def _connection_loop(conversation_name, user):
 	retry_count = 0
 	last_msg_id = None
 	should_stop = False
+	# Total lifetime cap for the connection manager job. Prevents a stale
+	# browser tab (user closed it without cleanup) from occupying a long-queue
+	# worker slot forever. RQ's job timeout is 7200s; we self-exit slightly
+	# before that so RQ never has to force-kill us.
+	max_lifetime_seconds = int(frappe.conf.get("alfred_conn_max_lifetime") or 6300)
+	started_at = time.time()
 
 	while not should_stop:
+		if time.time() - started_at > max_lifetime_seconds:
+			logger.info(
+				"Connection manager reached lifetime cap (%ds) for conversation=%s; exiting",
+				max_lifetime_seconds, conversation_name,
+			)
+			_publish_connection_event(
+				user, conversation_name, "stopped",
+				"Connection manager lifetime reached. Reopen the chat to reconnect.",
+			)
+			break
 		try:
 			async with websockets.connect(ws_url, ping_interval=30, ping_timeout=10) as ws:
 				# Authenticated handshake
@@ -437,12 +574,19 @@ def send_message(conversation_name, message, msg_type="prompt"):
 	which additionally creates an Alfred Message row and starts the connection
 	manager. Keep this lightweight helper for tests and scripts.
 
+	Caller must have write permission on the target conversation - without
+	that gate, the ignore_permissions=True insert below would let any user
+	with Alfred role pollute any other user's chat.
+
 	Pushes the message to a Redis list (durable) and sends a pub/sub
 	notification. The connection manager drains the list and forwards
 	over the WebSocket. Safe to call from any Frappe worker.
 	"""
 	from alfred_client.api.permissions import validate_alfred_access
 	validate_alfred_access()
+	frappe.has_permission(
+		"Alfred Conversation", ptype="write", doc=conversation_name, throw=True,
+	)
 
 	# Store the user message in the database
 	frappe.get_doc({
@@ -478,12 +622,42 @@ def start_conversation(conversation_name):
 	for up to 7200s. If the user has more active conversations than the worker
 	can handle, the new job will queue indefinitely - we warn the user when we
 	detect the queue is already saturated.
+
+	SECURITY:
+	  - Caller must have read permission on the conversation (owner, shared,
+	    or System Manager). Without this, a user with the Alfred role could
+	    boot a worker for any conversation ID they could guess.
+	  - The connection manager runs as the CONVERSATION OWNER, not the
+	    caller. This matters because the MCP dispatch path sets
+	    frappe.session.user from this value; downstream tool calls see the
+	    owner's permissions, which is the correct trust boundary for an
+	    agent working on the owner's problem. Before this fix, starting a
+	    shared conversation would silently run all MCP calls as the caller,
+	    letting the agent see data the owner can't and leaking it into the
+	    conversation.
 	"""
 	from alfred_client.api.permissions import validate_alfred_access
 	validate_alfred_access()
 
 	if not frappe.db.exists("Alfred Conversation", conversation_name):
 		frappe.throw(frappe._("Conversation not found"), frappe.DoesNotExistError)
+
+	frappe.has_permission(
+		"Alfred Conversation", ptype="read", doc=conversation_name, throw=True,
+	)
+
+	# The connection manager MUST run as the conversation's owner. MCP tool
+	# calls made from the processing app run under frappe.session.user inside
+	# the manager; using the caller's user here would let a shared-conv user
+	# see data the owner can't (or vice versa) and would pollute the agent's
+	# world view.
+	conversation_owner = frappe.db.get_value(
+		"Alfred Conversation", conversation_name, "user",
+	)
+	if not conversation_owner:
+		frappe.throw(
+			frappe._("Conversation {0} has no owner recorded").format(conversation_name)
+		)
 
 	# Soft check: count queued + started jobs on the long queue for this site.
 	# If we're at/above the worker count, the new job will sit idle and the user
@@ -510,7 +684,7 @@ def start_conversation(conversation_name):
 	frappe.enqueue(
 		"alfred_client.api.websocket_client._connection_manager",
 		conversation_name=conversation_name,
-		user=frappe.session.user,
+		user=conversation_owner,
 		queue="long",
 		timeout=7200,
 	)
@@ -518,9 +692,16 @@ def start_conversation(conversation_name):
 
 @frappe.whitelist()
 def stop_conversation(conversation_name):
-	"""Stop the WebSocket connection for a conversation."""
+	"""Stop the WebSocket connection for a conversation.
+
+	Write permission required - stopping a live run in the middle of a
+	pipeline is effectively cancelling another user's work.
+	"""
 	from alfred_client.api.permissions import validate_alfred_access
 	validate_alfred_access()
+	frappe.has_permission(
+		"Alfred Conversation", ptype="write", doc=conversation_name, throw=True,
+	)
 
 	redis_conn = frappe.cache()
 	channel = f"{_REDIS_CHANNEL_PREFIX}{conversation_name}"

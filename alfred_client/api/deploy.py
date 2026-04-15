@@ -31,7 +31,13 @@ FRAPPE_DEFAULT_FIELDS = {
 def apply_changeset(changeset_name):
 	"""Apply an approved changeset to the site.
 
-	Runs all operations as the requesting user with Frappe permission enforcement.
+	Caller must have write permission on the changeset (owner of the parent
+	conversation, shared-with-write, or System Manager). Operations then run
+	as the conversation owner (not the caller) so the owner's permissions
+	are what's enforced on each create/update - this is a deliberate two-
+	step authorization: the CALLER needs permission to trigger, and the
+	OWNER's permissions apply to the actual writes.
+
 	On any failure, automatically rolls back all previously applied changes.
 
 	Args:
@@ -43,6 +49,9 @@ def apply_changeset(changeset_name):
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
+	frappe.has_permission(
+		"Alfred Changeset", ptype="write", doc=changeset_name, throw=True,
+	)
 
 	changeset = frappe.get_doc("Alfred Changeset", changeset_name)
 
@@ -396,23 +405,86 @@ def _check_runtime_errors(doctype, data):
 	return problems
 
 
-def _dry_run_single(doctype, data, operation):
-	"""Validate a single document operation using a database savepoint.
+# Doctypes whose .insert() triggers DDL (CREATE TABLE / ALTER TABLE) either
+# directly or via controller side effects. MariaDB implicitly commits ALL
+# pending DML before any DDL statement, which silently destroys a savepoint
+# rollback - the intended "test insert" lands in the database for real and
+# the user sees it as if they'd approved a deploy. We refuse to call .insert()
+# on these and use meta-level validation instead.
+#
+# - DocType:       CREATE TABLE
+# - Custom Field:  ALTER TABLE ADD COLUMN
+# - Property Setter: can trigger schema rebuilds for specific property changes
+# - Workflow:      on_update() calls Custom Field.save() to add workflow_state
+#                  to the target doctype, cascading into an ALTER TABLE
+# - Workflow State: same cascade via workflow_state Link target
+_DDL_TRIGGERING_DOCTYPES = frozenset({
+	"DocType",
+	"Custom Field",
+	"Property Setter",
+	"Workflow",
+	"Workflow State",
+	"Workflow Action Master",
+	"DocField",
+})
 
-	Creates a savepoint, attempts the operation, then rolls back to the
-	savepoint - so nothing is actually committed to the database.
+# Doctypes whose .insert() is truly a DML-only row write with no schema side
+# effects. These we validate via savepoint-rollback because that catches more
+# controller-level validators (uniqueness, format checks, workflow rules).
+_SAVEPOINT_SAFE_DOCTYPES = frozenset({
+	"Notification",
+	"Server Script",
+	"Client Script",
+	"Print Format",
+	"Letter Head",
+	"Report",
+	"Dashboard",
+	"Dashboard Chart",
+	"Role",
+	"User Permission",
+	"Translation",
+	"Web Form",
+	"Web Page",
+})
+
+
+def _dry_run_single(doctype, data, operation):
+	"""Validate a single document operation without risking a commit.
+
+	DDL-triggering doctypes go through `_meta_check_only`, which never calls
+	.insert() and so can never cause an implicit MariaDB commit. Known-safe
+	doctypes (where .insert() writes one row with no schema side effects)
+	go through `_savepoint_dry_run` so we still catch controller validators
+	and uniqueness constraints. Unknown doctypes fall through to
+	`_meta_check_only` because the safe default is "don't touch the DB".
+	"""
+	if doctype in _DDL_TRIGGERING_DOCTYPES:
+		_meta_check_only(doctype, data, operation)
+		return
+	if doctype in _SAVEPOINT_SAFE_DOCTYPES:
+		_savepoint_dry_run(doctype, data, operation)
+		return
+	# Unknown doctype: be conservative. A new doctype we've never classified
+	# might trigger schema changes we don't know about.
+	_meta_check_only(doctype, data, operation)
+
+
+def _savepoint_dry_run(doctype, data, operation):
+	"""Savepoint-rollback path for known-safe doctypes only.
+
+	This path calls .insert() / .save() so it catches controller-level errors
+	the meta-only path would miss. Must NEVER be used for a doctype whose
+	controller runs DDL via side effects - see `_DDL_TRIGGERING_DOCTYPES`.
 	"""
 	doc_data = dict(data)
 	doc_data["doctype"] = doctype
 
-	# Use a savepoint so we can rollback just this test without affecting
-	# any outer transaction
 	frappe.db.savepoint("dry_run")
 	try:
 		if operation == "create":
 			doc = frappe.get_doc(doc_data)
-			doc.flags.ignore_links = True  # Don't fail on missing Link targets during dry-run
-			doc.insert(ignore_permissions=True)  # Test insertability, not permissions
+			doc.flags.ignore_links = True
+			doc.insert(ignore_permissions=True)
 		elif operation == "update":
 			doc_name = data.get("name")
 			if not doc_name:
@@ -423,8 +495,186 @@ def _dry_run_single(doctype, data, operation):
 			doc.update(data)
 			doc.save(ignore_permissions=True)
 	finally:
-		# Always rollback the savepoint - this is a dry run
 		frappe.db.rollback(save_point="dry_run")
+
+
+def _meta_check_only(doctype, data, operation):
+	"""Validate a document at the meta level only - never touches the DB.
+
+	Checks:
+	  1. `frappe.get_doc()` succeeds (catches unknown field names, bad
+	     child-table shapes, unparseable values).
+	  2. Mandatory fields are populated.
+	  3. Link field targets exist on the live site.
+	  4. Doctype-specific semantic checks (see `_DOCTYPE_SPECIFIC_CHECKS`).
+
+	Raises with a descriptive message on the first failure. Intentionally
+	does NOT call `.insert()`, `.save()`, or `.validate()` - any of those
+	can trigger hooks that commit inline.
+	"""
+	doc_data = dict(data)
+	doc_data["doctype"] = doctype
+
+	if operation == "update":
+		doc_name = data.get("name")
+		if not doc_name:
+			raise ValueError("Document name required for update")
+		if not frappe.db.exists(doctype, doc_name):
+			raise ValueError(f"Document '{doctype}/{doc_name}' does not exist")
+
+	# 1. Instantiate. frappe.get_doc() builds the controller object and
+	# coerces child-table rows but does not write anything.
+	try:
+		frappe.get_doc(doc_data)
+	except Exception as e:
+		raise ValueError(f"Document construction failed: {e}") from e
+
+	# 2. Doctype-specific semantic checks (must run BEFORE the generic
+	# mandatory-field walk so the caller sees the most actionable error).
+	checker = _DOCTYPE_SPECIFIC_CHECKS.get(doctype)
+	if checker:
+		checker(doc_data)
+
+	# 3. Generic mandatory-field check via the target doctype's meta.
+	# DocType and Custom Field rows define other doctypes, so their own
+	# "mandatory" fields come from frappe.get_meta(doctype). For most
+	# types that's the right thing.
+	try:
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		# If the meta itself can't be fetched, we've already failed the
+		# "target doctype exists" check upstream - skip silently here.
+		return
+
+	missing = []
+	for field in meta.fields:
+		if not getattr(field, "reqd", 0):
+			continue
+		fieldname = field.fieldname
+		value = doc_data.get(fieldname)
+		if value in (None, "", []):
+			missing.append(fieldname)
+	if missing:
+		raise ValueError(
+			f"Missing mandatory field(s): {', '.join(missing)}"
+		)
+
+	# 4. Link field targets must exist on the live site.
+	for field in meta.fields:
+		if field.fieldtype != "Link":
+			continue
+		link_value = doc_data.get(field.fieldname)
+		if not link_value:
+			continue
+		link_doctype = field.options
+		if not link_doctype:
+			continue
+		if not frappe.db.exists(link_doctype, link_value):
+			raise ValueError(
+				f"Link field '{field.fieldname}' references "
+				f"{link_doctype} '{link_value}' which does not exist"
+			)
+
+
+def _check_custom_field(data):
+	target = data.get("dt")
+	if not target:
+		raise ValueError("Custom Field requires 'dt' (target DocType)")
+	if not frappe.db.exists("DocType", target):
+		raise ValueError(f"Custom Field target DocType '{target}' does not exist")
+	fieldname = data.get("fieldname")
+	if not fieldname:
+		raise ValueError("Custom Field requires 'fieldname'")
+	if not data.get("fieldtype"):
+		raise ValueError("Custom Field requires 'fieldtype'")
+	# Conflict with an existing standard field
+	meta = frappe.get_meta(target)
+	if meta.get_field(fieldname):
+		existing = "standard" if fieldname in {f.fieldname for f in meta.fields if not getattr(f, "is_custom_field", 0)} else "custom"
+		raise ValueError(
+			f"Field '{fieldname}' already exists on '{target}' (as {existing} field)"
+		)
+
+
+def _check_doctype(data):
+	name = data.get("name")
+	if not name:
+		raise ValueError("DocType requires 'name'")
+	if frappe.db.exists("DocType", name):
+		raise ValueError(f"DocType '{name}' already exists")
+	if not data.get("module"):
+		raise ValueError("DocType requires 'module'")
+	fields = data.get("fields") or []
+	if not fields:
+		raise ValueError("DocType must have at least one field")
+
+
+def _check_workflow(data):
+	target = data.get("document_type")
+	if not target:
+		raise ValueError("Workflow requires 'document_type'")
+	if not frappe.db.exists("DocType", target):
+		raise ValueError(f"Workflow document_type '{target}' does not exist")
+	states = data.get("states") or []
+	if not states:
+		raise ValueError("Workflow must have at least one state")
+	transitions = data.get("transitions") or []
+	if not transitions:
+		raise ValueError("Workflow must have at least one transition")
+	# Every transition's state and next_state must be declared in states
+	declared = {s.get("state") for s in states if isinstance(s, dict)}
+	for idx, t in enumerate(transitions, 1):
+		if not isinstance(t, dict):
+			raise ValueError(f"Workflow transition {idx} must be an object")
+		for key in ("state", "next_state"):
+			val = t.get(key)
+			if val and val not in declared:
+				raise ValueError(
+					f"Workflow transition {idx} {key} '{val}' is not declared in states"
+				)
+	# Submittable vs non-submittable consistency check
+	try:
+		meta = frappe.get_meta(target)
+		if not meta.is_submittable:
+			for s in states:
+				if isinstance(s, dict) and (s.get("doc_status") or 0) != 0:
+					raise ValueError(
+						f"Workflow state '{s.get('state')}' has doc_status "
+						f"{s.get('doc_status')} but '{target}' is not submittable - "
+						"only doc_status 0 is allowed for non-submittable doctypes"
+					)
+	except ValueError:
+		raise
+	except Exception:
+		pass
+
+
+def _check_notification(data):
+	target = data.get("document_type")
+	if target and not frappe.db.exists("DocType", target):
+		raise ValueError(f"Notification document_type '{target}' does not exist")
+
+
+def _check_server_script(data):
+	target = data.get("reference_doctype")
+	if target and not frappe.db.exists("DocType", target):
+		raise ValueError(f"Server Script reference_doctype '{target}' does not exist")
+
+
+def _check_client_script(data):
+	target = data.get("dt")
+	if target and not frappe.db.exists("DocType", target):
+		raise ValueError(f"Client Script dt '{target}' does not exist")
+
+
+_DOCTYPE_SPECIFIC_CHECKS = {
+	"Custom Field": _check_custom_field,
+	"DocType": _check_doctype,
+	"Workflow": _check_workflow,
+	"Notification": _check_notification,
+	"Server Script": _check_server_script,
+	"Client Script": _check_client_script,
+}
 
 
 # ── Document Operations (ignore_permissions=False) ────────────────
@@ -526,13 +776,11 @@ def _execute_rollback(rollback_data, conversation_name):
 					_write_audit_log(conversation_name, item["doctype"], item["name"], "rollback_restore")
 					rollback_log.append({"operation": "restore", "doctype": item["doctype"], "name": item["name"], "status": "success"})
 
-			elif op == "create":
-				data = item.get("data")
-				if data:
-					doc = frappe.get_doc(data)
-					doc.insert(ignore_permissions=True)
-					_write_audit_log(conversation_name, item["doctype"], data.get("name", ""), "rollback_recreate")
-					rollback_log.append({"operation": "recreate", "doctype": item["doctype"], "status": "success"})
+			# Note: there is no `elif op == "create":` branch. apply_changeset
+			# only ever adds "delete" (for forward "create") and "restore"
+			# (for forward "update") to rollback_data - those are the only
+			# two ops that need inverses. A "create" rollback would require
+			# the forward path to have a "delete" op, which doesn't exist.
 
 			frappe.db.commit()
 
@@ -555,10 +803,20 @@ def rollback_changeset(changeset_name):
 
 	Checks for data in created DocTypes before deletion and offers
 	alternatives to preserve user data.
+
+	SECURITY: rollback uses ignore_permissions=True (via _execute_rollback
+	which calls frappe.delete_doc with force=True). That is the correct
+	runtime behaviour for an inverse operation, but it means we MUST gate
+	the trigger itself on write permission. Without that gate, any user
+	with the Alfred role could undo another user's deploy and trigger
+	privileged deletes on documents they don't own.
 	"""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
+	frappe.has_permission(
+		"Alfred Changeset", ptype="write", doc=changeset_name, throw=True,
+	)
 
 	changeset = frappe.get_doc("Alfred Changeset", changeset_name)
 	if changeset.status != "Deployed":

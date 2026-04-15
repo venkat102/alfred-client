@@ -11,3 +11,6 @@ build/
 *.swp
 *.swo
 node_modules/
+# Framework Knowledge Graph is auto-generated per site from installed bench
+# apps at every bench migrate (see alfred_client/mcp/framework_kg.py).
+alfred_client/data/framework_kg.json

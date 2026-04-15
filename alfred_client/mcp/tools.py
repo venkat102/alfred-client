@@ -311,12 +311,138 @@ def dry_run_changeset(changes):
 	return _dry_run(changes)
 
 
+# ── Tier 1b: Framework Knowledge Graph (consolidated tools) ──────
+#
+# The KG layer separates vanilla framework facts (from bench app JSONs) from
+# live site state (from get_doctype_schema). These two consolidated tools
+# replace get_doctypes + get_doctype_schema + the originally planned
+# get_framework_doctype / list_framework_doctypes / get_customization_pattern
+# / list_customization_patterns / search_framework_knowledge. Fewer tools with
+# richer semantics = lower agent cognitive load (SWE-Agent ACI principle).
+
+
+@_safe_execute
+def lookup_doctype(name, layer="both"):
+	"""Look up a DocType across the framework KG and/or the live site.
+
+	Args:
+		name: DocType name (e.g. "Sales Order").
+		layer: "framework" returns vanilla facts from the bench app JSONs.
+			"site" returns the current live schema (includes custom fields).
+			"both" (default) returns a merged view with custom fields flagged.
+
+	Example:
+		lookup_doctype("Sales Order", layer="framework")
+		  -> {"name": "Sales Order", "is_submittable": 1, "fields": [...], ...}
+		lookup_doctype("Sales Order", layer="both")
+		  -> {"name": ..., "framework": {...}, "site": {...}, "custom_fields": [...]}
+	"""
+	from alfred_client.mcp import framework_kg
+
+	layer = (layer or "both").lower()
+	if layer not in {"framework", "site", "both"}:
+		return {"error": "invalid_argument", "message": f"layer must be framework|site|both, got {layer!r}"}
+
+	framework_record = None
+	if layer in {"framework", "both"}:
+		framework_record = framework_kg.lookup_framework_doctype(name)
+		if layer == "framework":
+			if framework_record is None:
+				return {
+					"error": "not_found",
+					"message": f"DocType {name!r} not found in the framework KG. Try lookup_doctype(name, layer='site') to check the live site.",
+				}
+			return framework_record
+
+	# layer == "site" or "both"
+	site_record = get_doctype_schema(name)  # reuses existing Tier 2 tool + permission check
+	if isinstance(site_record, dict) and site_record.get("error"):
+		# If site layer failed but we have framework data (in "both" mode), return that
+		if layer == "both" and framework_record is not None:
+			return {
+				"name": name,
+				"framework": framework_record,
+				"site": site_record,
+				"custom_fields": [],
+			}
+		return site_record
+
+	if layer == "site":
+		return site_record
+
+	# layer == "both" - merge
+	framework_fieldnames = set()
+	if framework_record:
+		framework_fieldnames = {
+			f.get("fieldname") for f in framework_record.get("fields", [])
+			if isinstance(f, dict) and f.get("fieldname")
+		}
+
+	site_fields = site_record.get("fields", []) if isinstance(site_record, dict) else []
+	custom_fields = [
+		f for f in site_fields
+		if isinstance(f, dict) and f.get("fieldname") not in framework_fieldnames
+	]
+
+	return {
+		"name": name,
+		"framework": framework_record,
+		"site": site_record,
+		"custom_fields": custom_fields,
+	}
+
+
+@_safe_execute
+def lookup_pattern(query, kind="all"):
+	"""Look up a customization pattern from the curated library.
+
+	Args:
+		query: Pattern name or keyword(s) depending on kind.
+		kind: "name" - exact match by pattern name.
+			"search" - keyword search across names + descriptions + keywords.
+			"list" - return all pattern summaries (query ignored).
+			"all" (default) - try exact name first, fall back to search.
+
+	Example:
+		lookup_pattern("approval_notification", kind="name")
+		  -> {"pattern": {...curated template...}}
+		lookup_pattern("email approver on leave", kind="search")
+		  -> {"doctypes": [...], "patterns": [{"name": "approval_notification", ...}]}
+		lookup_pattern("", kind="list")
+		  -> {"patterns": [{"name": "...", "description": "...", "when_to_use": "..."}]}
+	"""
+	from alfred_client.mcp import framework_kg
+
+	kind = (kind or "all").lower()
+	if kind not in {"name", "search", "list", "all"}:
+		return {"error": "invalid_argument", "message": f"kind must be name|search|list|all, got {kind!r}"}
+
+	if kind == "list":
+		return {"patterns": framework_kg.list_patterns()}
+
+	if kind == "name":
+		entry = framework_kg.lookup_pattern(query)
+		if entry is None:
+			return {"error": "not_found", "message": f"Pattern {query!r} not found"}
+		return {"pattern": entry, "name": query}
+
+	if kind == "search":
+		return framework_kg.search_framework_knowledge(query)
+
+	# kind == "all"
+	entry = framework_kg.lookup_pattern(query)
+	if entry is not None:
+		return {"pattern": entry, "name": query, "source": "exact"}
+	search = framework_kg.search_framework_knowledge(query)
+	return {"source": "search", **search}
+
+
 # ── Tool Registry ────────────────────────────────────────────────
 
 TOOL_REGISTRY = {
 	"get_site_info": get_site_info,
 	"get_doctypes": get_doctypes,
-	"get_doctype_schema": get_doctype_schema,
+	"get_doctype_schema": get_doctype_schema,  # kept for backwards-compat; prefer lookup_doctype
 	"get_existing_customizations": get_existing_customizations,
 	"get_user_context": get_user_context,
 	"check_permission": check_permission,
@@ -324,4 +450,7 @@ TOOL_REGISTRY = {
 	"has_active_workflow": has_active_workflow,
 	"check_has_records": check_has_records,
 	"dry_run_changeset": dry_run_changeset,
+	# Consolidated tools from the Framework KG (Tier 1b)
+	"lookup_doctype": lookup_doctype,
+	"lookup_pattern": lookup_pattern,
 }

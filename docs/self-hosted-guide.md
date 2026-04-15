@@ -21,7 +21,17 @@ API_SECRET_KEY=<generate-a-strong-random-key>
 REDIS_URL=redis://redis:6379/0
 FALLBACK_LLM_MODEL=ollama/llama3.1
 FALLBACK_LLM_BASE_URL=http://ollama:11434
+
+# Optional feature flags
+# ALFRED_ORCHESTRATOR_ENABLED=1        # three-mode chat: dev / plan / insights / chat (see how-alfred-works.md)
+# ALFRED_REFLECTION_ENABLED=1          # trim agent over-reach from the changeset
+# ALFRED_TRACING_ENABLED=1             # per-phase JSONL span tracing
+# ALFRED_TRACE_PATH=./alfred_trace.jsonl
+# ALFRED_TRACE_STDOUT=1                # also echo spans to stderr
 ```
+
+See the [Admin Guide](admin-guide.md#part-3-processing-app-configuration) for
+the full environment variable reference.
 
 ## Step 2: Start Services
 

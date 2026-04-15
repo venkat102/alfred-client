@@ -16,11 +16,15 @@ def escalate_conversation(conversation_name, reason=""):
 	"""Escalate a conversation to a human developer.
 
 	Sets status to 'Escalated', sends notification, and creates
-	an escalation entry for the admin dashboard.
+	an escalation entry for the admin dashboard. Caller must have
+	write permission on the conversation.
 	"""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
+	frappe.has_permission(
+		"Alfred Conversation", ptype="write", doc=conversation_name, throw=True,
+	)
 
 	conv = frappe.get_doc("Alfred Conversation", conversation_name)
 	conv.status = "Escalated"
@@ -117,10 +121,21 @@ def return_to_agent(conversation_name):
 
 @frappe.whitelist()
 def get_escalated_conversations():
-	"""Get all escalated conversations for the admin dashboard."""
+	"""Get all escalated conversations for the admin dashboard.
+
+	System-Manager only - this is the escalation dashboard and returns
+	every user's escalated conversation (including owner names). Without
+	the role check any user with the Alfred role could enumerate other
+	users' escalated conversations.
+	"""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
+	if "System Manager" not in frappe.get_roles():
+		frappe.throw(
+			_("Only System Managers can view the escalation dashboard"),
+			frappe.PermissionError,
+		)
 
 	conversations = frappe.get_all(
 		"Alfred Conversation",

@@ -52,7 +52,9 @@ after_install = "alfred_client.install.after_install"
 before_uninstall = "alfred_client.uninstall.before_uninstall"
 
 # Migration Hooks
-# after_migrate = "alfred_client.setup.after_migrate"
+# Rebuild the Framework Knowledge Graph after every migrate so agents always
+# query the exact DocType schemas of the currently-installed bench apps.
+after_migrate = "alfred_client.mcp.framework_kg.build_knowledge_graph"
 
 # Fixtures
 # fixtures = []

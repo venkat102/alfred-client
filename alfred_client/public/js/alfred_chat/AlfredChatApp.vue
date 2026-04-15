@@ -35,6 +35,7 @@
 							← {{ __("Back") }}
 						</button>
 						<span class="alfred-chat-title text-muted text-sm">{{ conversationSummary }}</span>
+						<ModeSwitcher v-model="currentMode" />
 						<div class="alfred-chat-toolbar-actions">
 							<button class="btn btn-xs btn-primary" @click="newConversationFromChat" :title="__('Start a new conversation')">
 								+ {{ __("New") }}
@@ -57,6 +58,8 @@
 							:message="msg"
 							@option-click="sendMessage"
 							@retry="retryLastMessage"
+							@plan-refine="onPlanRefine"
+							@plan-approve="onPlanApprove"
 						/>
 						<TypingIndicator v-if="isProcessing && !currentActivity" />
 					</div>
@@ -137,6 +140,7 @@ import MessageBubble from "./MessageBubble.vue";
 import TypingIndicator from "./TypingIndicator.vue";
 import PhasePipeline from "./PhasePipeline.vue";
 import PreviewPanel from "./PreviewPanel.vue";
+import ModeSwitcher from "./ModeSwitcher.vue";
 
 // ── State ──────────────────────────────────────────────────────
 const conversations = ref([]);
@@ -154,6 +158,12 @@ const changeset = ref(null);
 const deploySteps = ref([]);
 const isDeployed = ref(false);
 const elapsedTime = ref(null);
+
+// Three-mode chat (Phase D): user's per-conversation mode preference.
+// "auto" lets the orchestrator decide; "dev"/"plan"/"insights" force a
+// specific mode. Persisted on Alfred Conversation.mode via
+// set_conversation_mode, reloaded on conversation select.
+const currentMode = ref("auto");
 
 const activityLog = ref([]);
 const activityLogOpen = ref(false);
@@ -313,6 +323,15 @@ function openConversation(name) {
 	statusText.value = __("Ready");
 	statusState.value = "disconnected";
 
+	// Three-mode chat (Phase D): restore the sticky mode for this
+	// conversation from the server-side record so navigating away and
+	// back preserves the user's pick.
+	const conv = conversations.value.find(c => c.name === name);
+	const savedMode = ((conv?.mode) || "Auto").toLowerCase();
+	currentMode.value = ["auto", "dev", "plan", "insights"].includes(savedMode)
+		? savedMode
+		: "auto";
+
 	// Update URL so refresh preserves the open conversation
 	if (getConversationFromRoute() !== name) {
 		frappe.set_route("alfred-chat", name);
@@ -324,6 +343,23 @@ function openConversation(name) {
 		callback: (r) => { if (r.message) messages.value = r.message; },
 	});
 }
+
+// Three-mode chat (Phase D): persist the user's mode pick to the
+// conversation whenever it changes. Watched with a short debounce
+// (immediate: false) so the initial load from openConversation doesn't
+// trigger a write back to the server.
+watch(currentMode, (next, prev) => {
+	if (!currentConversation.value) return;
+	if (prev === undefined) return;  // initial assignment on load - skip
+	const frappeValue = next.charAt(0).toUpperCase() + next.slice(1);
+	frappe.call({
+		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.set_conversation_mode",
+		args: { conversation: currentConversation.value, mode: frappeValue },
+		error: (err) => {
+			console.warn("Failed to save chat mode:", err);
+		},
+	});
+});
 
 const conversationSummary = computed(() => {
 	const conv = conversations.value.find(c => c.name === currentConversation.value);
@@ -489,7 +525,11 @@ function shareConversation(name) {
 	d.show();
 }
 
-function sendMessage(text) {
+// Three-mode chat: `mode` is optional. When omitted, the user's current
+// UI mode selection (currentMode - see ModeSwitcher) is used. When
+// passed explicitly (e.g. from Plan-doc "Approve and Build" button),
+// that mode overrides the UI selection for this one turn.
+function sendMessage(text, modeOverride) {
 	const msg = typeof text === "string" ? text.trim() : inputText.value.trim();
 	if (!msg || !currentConversation.value) return;
 
@@ -520,9 +560,15 @@ function sendMessage(text) {
 	startTimer();
 	startPolling(); // Poll for changeset as fallback if realtime events don't arrive
 
+	const effectiveMode = (modeOverride || currentMode.value || "auto").toLowerCase();
+
 	frappe.call({
 		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.send_message",
-		args: { conversation: currentConversation.value, message: msg },
+		args: {
+			conversation: currentConversation.value,
+			message: msg,
+			mode: effectiveMode,
+		},
 		error: () => {
 			isProcessing.value = false;
 			inputDisabled.value = false;
@@ -788,6 +834,123 @@ function setupRealtime() {
 			content: `Deployment failed at step ${data.step}: ${data.error}. All changes rolled back.`,
 		});
 	});
+
+	// ── Three-mode chat (Phase A/B) realtime events ───────────────
+	// chat_reply: conversational short-circuit from the orchestrator
+	// (no crew, no changeset, fast reply).
+	frappe.realtime.on("alfred_chat_reply", (data) => {
+		if (!currentConversation.value || data.conversation !== currentConversation.value) return;
+		isProcessing.value = false;
+		inputDisabled.value = false;
+		stopTimer();
+		stopPolling();
+		statusText.value = __("Ready");
+		statusState.value = "success";
+		currentActivity.value = null;
+		messages.value.push({
+			_id: Date.now(),
+			role: "agent",
+			agent_name: "Alfred",
+			message_type: "chat_reply",
+			content: data.reply || "",
+			mode: "chat",
+			creation: new Date().toISOString(),
+		});
+	});
+
+	// insights_reply: read-only Q&A short-circuit (single-agent crew,
+	// markdown output, no changeset).
+	frappe.realtime.on("alfred_insights_reply", (data) => {
+		if (!currentConversation.value || data.conversation !== currentConversation.value) return;
+		isProcessing.value = false;
+		inputDisabled.value = false;
+		stopTimer();
+		stopPolling();
+		statusText.value = __("Ready");
+		statusState.value = "success";
+		currentActivity.value = null;
+		messages.value.push({
+			_id: Date.now(),
+			role: "agent",
+			agent_name: "Insights",
+			message_type: "insights_reply",
+			content: data.reply || "",
+			mode: "insights",
+			creation: new Date().toISOString(),
+		});
+	});
+
+	// mode_switch: orchestrator decision notice. Rendered as a small
+	// inline status line so the user can see what mode Alfred picked.
+	frappe.realtime.on("alfred_mode_switch", (data) => {
+		if (!currentConversation.value || data.conversation !== currentConversation.value) return;
+		messages.value.push({
+			_id: Date.now(),
+			role: "system",
+			message_type: "mode_switch",
+			content: "",
+			mode: data.mode,
+			metadata: JSON.stringify({
+				mode: data.mode,
+				reason: data.reason,
+				source: data.source,
+				confidence: data.confidence,
+			}),
+			creation: new Date().toISOString(),
+		});
+	});
+
+	// plan_doc: Phase C plan mode output. Rendered as a structured panel
+	// via MessageBubble -> PlanDocPanel. The user can then click Refine
+	// or Approve & Build.
+	frappe.realtime.on("alfred_plan_doc", (data) => {
+		if (!currentConversation.value || data.conversation !== currentConversation.value) return;
+		isProcessing.value = false;
+		inputDisabled.value = false;
+		stopTimer();
+		stopPolling();
+		statusText.value = __("Plan ready for review");
+		statusState.value = "success";
+		currentActivity.value = null;
+		messages.value.push({
+			_id: Date.now(),
+			role: "agent",
+			agent_name: "Planner",
+			message_type: "plan_doc",
+			content: data.plan?.title || __("Plan"),
+			plan: data.plan,
+			mode: "plan",
+			metadata: JSON.stringify({ mode: "plan", plan: data.plan }),
+			creation: new Date().toISOString(),
+		});
+	});
+}
+
+// Phase C plan action handlers: Refine drops the suggested text into the
+// input so the user can edit it before sending. Approve & Build sends
+// the canned approval prompt with mode=dev so the backend flips the
+// plan to approved and the Dev crew picks it up as a spec.
+function onPlanRefine(message) {
+	const plan = message?.plan;
+	const title = plan?.title || "";
+	const suggestion = title
+		? `Refine the plan '${title}': `
+		: "Refine the plan: ";
+	inputText.value = suggestion;
+	// Focus the input so the user can keep typing immediately.
+	try {
+		const ta = document.querySelector(".alfred-chat-input textarea");
+		if (ta) ta.focus();
+	} catch (e) { /* ignore */ }
+}
+
+function onPlanApprove(message) {
+	const plan = message?.plan;
+	const title = plan?.title || "";
+	const canned = title
+		? `Approve and build the plan: ${title}`
+		: "Approve and build the plan";
+	sendMessage(canned, "dev");
 }
 
 // ── Agent Status / Phase Pipeline ──────────────────────────────

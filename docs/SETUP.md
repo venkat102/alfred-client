@@ -102,16 +102,20 @@ Your Browser
 │  Your Frappe Site                │
 │  (alfred_client app installed)   │
 │                                  │
-│  /app/alfred-chat ← Chat UI           │
+│  /app/alfred-chat ← Chat UI      │
 │  /app/alfred-settings ← Config   │
-│  MCP Server (9 tools)            │
-│  Deployment Engine               │
+│  MCP Server (12 tools, Framework │
+│     KG + pattern library)        │
+│  Deployment Engine (savepoint +  │
+│     meta-only DDL path)          │
 └──────────┬───────────────────────┘
            │ WebSocket (outbound)
            ▼
 ┌──────────────────────────────────┐
 │  Processing App                  │
 │  FastAPI + CrewAI agents         │
+│  AgentPipeline state machine     │
+│  (10 phases, tracer spans)       │
 │  (native dev / Docker prod)      │
 │  ┌────────┐  ┌────────┐          │
 │  │ Redis  │  │  LLM   │          │
@@ -518,6 +522,8 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 
 ### Processing App Environment Variables
 
+**Core**
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | API_SECRET_KEY | Yes | - | JWT signing key + API auth key |
@@ -533,6 +539,33 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 | ADMIN_PORTAL_URL | No | - | Admin portal URL (SaaS mode) |
 | ADMIN_SERVICE_KEY | No | - | Admin portal auth key |
 | DEBUG | No | false | Enable debug logging |
+
+**Feature flags** (all optional, all default off)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| ALFRED_ORCHESTRATOR_ENABLED | off | Enable the three-mode chat orchestrator. When on, prompts are classified into `dev` / `plan` / `insights` / `chat` and conversational / read-only turns short-circuit the crew. See the three-mode chat section of `how-alfred-works.md` for the full flow. `1` to enable. |
+| ALFRED_REFLECTION_ENABLED | off | Enable the post-crew reflection step that drops items the user didn't ask for. Accepts `1` / `true` / `yes`. Default off for cautious rollout. Once on, the UI shows `minimality_review` events when the reviewer trims an over-reaching changeset. |
+| ALFRED_TRACING_ENABLED | off | Enable structured span tracing. Emits one JSON object per pipeline phase to `ALFRED_TRACE_PATH`. Accepts `1` / `true` / `yes`. |
+| ALFRED_TRACE_PATH | `./alfred_trace.jsonl` | JSONL output file for tracer spans. Only relevant when `ALFRED_TRACING_ENABLED=1`. |
+| ALFRED_TRACE_STDOUT | off | Also emit a human-readable summary per span to stderr. Useful for live debugging. |
+| ALFRED_PHASE1_DISABLED | - | Set to `1` to opt out of per-run MCP tracking state (budget cap, dedup cache, failure counter). Used only for benchmark comparisons against baseline. Leave unset in production. |
+
+### Framework Knowledge Graph
+
+The client app builds a framework KG (extracted DocType metadata from every
+installed bench app) at `bench migrate` time and writes it to
+`alfred_client/data/framework_kg.json`. This file is `.gitignore`d and
+rebuilt on every migration. The `lookup_doctype(layer="framework")` tool
+reads it. If you add a new Frappe app after Alfred is installed, run:
+
+```bash
+bench --site <your-site> migrate
+```
+
+to rebuild the KG with the new app's DocTypes. Missing KG file makes
+`layer="framework"` return `{"error": "not_found"}` but the `layer="site"`
+and merged `layer="both"` paths still work from live `frappe.get_meta()`.
 
 ---
 

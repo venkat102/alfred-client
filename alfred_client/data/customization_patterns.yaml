@@ -1,0 +1,266 @@
+# Alfred Customization Patterns
+#
+# Curated library of common Frappe customization idioms. Each entry is a TEMPLATE
+# for a pattern, not a specific implementation. Agents retrieve these via the
+# `lookup_pattern` MCP tool and adapt the template to the user's actual request
+# (different DocTypes, different field names).
+#
+# Schema per entry:
+#   description:    One-line summary shown in list_patterns results
+#   category:       notification | script | field | workflow | audit | report | ...
+#   keywords:       List of words used by search_framework_knowledge for matching
+#   when_to_use:    Human-readable criteria for picking this pattern
+#   when_not_to_use: Counter-criteria so agents don't mis-apply
+#   template:       Example changeset item(s) with <placeholders> for substitution
+#   event:          For notification/script patterns, the canonical trigger event
+#   event_reasoning: Why this event and not another (critical for avoiding mistakes)
+#   required_clarifications: Questions the clarifier should ask if any of these are ambiguous
+#   anti_patterns:  Common wrong choices + why they're wrong
+#
+# Adding a pattern: every new pattern MUST include when_to_use, when_not_to_use,
+# and anti_patterns. Naked templates without scope rules accumulate the same
+# opinion-bloat we're trying to escape. Patterns are reviewed like code.
+
+approval_notification:
+  description: >
+    Email the approver when a document requiring approval is created, BEFORE
+    they click submit.
+  category: notification
+  keywords: [approver, approval, review, notify, alert, pending, manager, supervisor]
+  when_to_use: >
+    The recipient of the notification is the person who will APPROVE or REVIEW
+    the document. They need to be told the document exists so they can go act
+    on it. Example: "email the expense approver when a new expense claim is
+    submitted", "notify the project manager when a new project is created",
+    "alert the sales supervisor when an opportunity is logged".
+  when_not_to_use: >
+    The recipient is the REQUESTER who needs to hear back after approval
+    (use `post_approval_notification` instead). Also not for downstream teams
+    who need to know AFTER the document is finalized.
+  event: New
+  event_reasoning: >
+    In Frappe, the approver is the user who clicks Submit to approve the
+    document. Triggering on Submit would fire the notification AFTER the
+    approver has already acted - they would be emailing themselves their own
+    approval, which is both redundant and confusing. Use event=New so the
+    notification fires when the requester creates/submits the draft document,
+    alerting the approver BEFORE any approval action is needed.
+  template:
+    op: create
+    doctype: Notification
+    data:
+      doctype: Notification
+      name: "<descriptive name, e.g. 'Notify Expense Approver'>"
+      document_type: "<target DocType from user request, e.g. 'Expense Claim'>"
+      event: New
+      channel: Email
+      recipients:
+        - receiver_by_document_field: "<link field on target DocType holding the approver user, e.g. 'expense_approver'>"
+      subject: "New {{ doc.doctype }} {{ doc.name }} for review"
+      message: "<p>A new {{ doc.doctype }} has been submitted and needs your review.</p>"
+      enabled: 1
+  required_clarifications:
+    - "Which field on the target DocType holds the approver user? Check via lookup_doctype first - common names include approver, reviewer, manager, owner."
+    - "Should non-approval draft edits also trigger an email? If yes, use event=Save instead of New."
+  anti_patterns:
+    - choice: "event=Submit with approver as recipient"
+      reason: "The approver IS the submitter in Frappe approval flows. The notification fires AFTER their own click, so they email themselves."
+    - choice: "Hardcoding the approver as a static email address"
+      reason: "Breaks when the approver changes or when different documents have different approvers. Use receiver_by_document_field to dynamically pick the user from the document."
+
+post_approval_notification:
+  description: >
+    Email the requester or a downstream team AFTER a document is approved/submitted.
+  category: notification
+  keywords: [approved, submitted, confirmed, downstream, requester, employee, notify_after]
+  when_to_use: >
+    The recipient should hear back that their request was approved, OR a
+    downstream team needs to know the document is now active and they should
+    start their follow-up work. Example: "email the employee when their leave
+    application is approved", "notify the warehouse when a sales order is
+    confirmed".
+  when_not_to_use: >
+    The recipient is the approver themselves (use `approval_notification` with
+    event=New instead) - triggering on Submit when the recipient IS the
+    submitter is a self-email anti-pattern.
+  event: Submit
+  event_reasoning: >
+    Submit fires exactly when docstatus goes 0 -> 1, which is the canonical
+    "document approved" transition in Frappe. The notification recipient is
+    NOT the submitter - they are a party who should be informed that the
+    approval has happened.
+  template:
+    op: create
+    doctype: Notification
+    data:
+      doctype: Notification
+      name: "<descriptive name>"
+      document_type: "<target DocType>"
+      event: Submit
+      channel: Email
+      recipients:
+        - receiver_by_document_field: "<link field holding the requester, e.g. 'employee' or 'owner'>"
+      subject: "{{ doc.doctype }} {{ doc.name }} has been approved"
+      message: "<p>Your {{ doc.doctype }} has been approved and is now active.</p>"
+      enabled: 1
+  required_clarifications:
+    - "Who should be notified - the requester, a downstream team, or both? Use a static role/email for team alerts, document field for personalized recipient."
+  anti_patterns:
+    - choice: "event=New when the requester is the recipient"
+      reason: "The requester already knows they made the request. They want to hear about the OUTCOME (approval or rejection), not the creation."
+
+validation_server_script:
+  description: >
+    Block a document from saving or submitting unless a custom rule passes.
+    Always include a permission check before running the validation logic.
+  category: script
+  keywords: [validate, validation, check, enforce, require, prevent, block, rule]
+  when_to_use: >
+    You need to enforce a rule that can't be expressed as a simple field
+    constraint (reqd flag, options list). Example: "require that Leave
+    Application from_date is not in the past", "block Sales Order if customer
+    has outstanding invoices older than 30 days".
+  when_not_to_use: >
+    The rule is just "field X is required" (use reqd=1 on the field instead)
+    or "field X must be one of a list" (use Select with options). Server
+    scripts should handle LOGIC not DATA CONSTRAINTS.
+  event: Before Save
+  event_reasoning: >
+    Before Save runs on every save attempt BEFORE the document hits the
+    database, giving you a chance to frappe.throw() and cancel the save.
+    Before Submit is tighter (only runs on submit) if you only want to block
+    the approval transition but allow draft saves.
+  template:
+    op: create
+    doctype: Server Script
+    data:
+      doctype: Server Script
+      name: "<descriptive name, e.g. 'Validate Leave Application Dates'>"
+      script_type: DocType Event
+      reference_doctype: "<target DocType>"
+      doctype_event: Before Save
+      script: |
+        # Permission check first - never trust doc state without verifying the user can read it.
+        if not frappe.has_permission("<target DocType>", "read", doc.name):
+            frappe.throw("Not permitted to access this document.")
+
+        # Validation logic using fields verified via lookup_doctype.
+        if <condition that should be false for valid documents>:
+            frappe.throw("<user-facing error message explaining why this was blocked>")
+  required_clarifications:
+    - "Should the rule block only submit, or every save including drafts? Drafts usually allow incomplete data."
+    - "Which fields does the validation compare? Verify field names via lookup_doctype before using them."
+  anti_patterns:
+    - choice: "Skipping the frappe.has_permission() check"
+      reason: "Server scripts run with the calling user's session. Without an explicit permission check, a low-privilege user might read a document they shouldn't just because your script accessed it."
+    - choice: "Using frappe.db.sql() with string interpolation"
+      reason: "SQL injection risk. Use frappe.db.get_value() or ORM methods with parameterized queries instead."
+    - choice: "Putting data constraints (required field, select options) in a validation script"
+      reason: "Those belong on the DocType field definition (reqd=1, Select fieldtype with options). Scripts should handle LOGIC, not constraints the framework can enforce."
+
+custom_field_on_existing_doctype:
+  description: >
+    Add a field to an existing DocType without creating a new DocType. Fields
+    added via Custom Field persist across app updates and are the standard
+    Frappe extension mechanism.
+  category: field
+  keywords: [field, add, custom, extend, column, attribute, property]
+  when_to_use: >
+    The user wants to store one new piece of information on an existing
+    DocType. Example: "add a priority Select field to Sales Order", "add a
+    reason Text field to Leave Application".
+  when_not_to_use: >
+    The user needs to create a WHOLE NEW entity (use a new DocType). Also not
+    for relationships between existing DocTypes (use Link field in the
+    existing DocType's standard schema if possible, or a join table if
+    many-to-many).
+  template:
+    op: create
+    doctype: Custom Field
+    data:
+      doctype: Custom Field
+      dt: "<target DocType name>"
+      fieldname: "<snake_case field name, e.g. 'priority'>"
+      label: "<Human Readable Label>"
+      fieldtype: "<Data | Select | Link | Int | Float | Date | Check | Small Text | Text | Long Text | Currency | ...>"
+      options: "<Select options newline-separated, or Link target DocType; empty for other types>"
+      insert_after: "<existing fieldname to place this after, optional but recommended>"
+      reqd: 0
+      in_list_view: 0
+  required_clarifications:
+    - "What fieldtype? If the user says 'a status', is it Select (fixed options) or Link (to a State DocType)?"
+    - "Is the field required?"
+    - "Where should it appear on the form? Verify via lookup_doctype that the insert_after fieldname exists."
+  anti_patterns:
+    - choice: "Creating a new DocType when a Custom Field would suffice"
+      reason: "Custom Fields are lighter, survive app updates, and don't create schema churn. New DocTypes should represent new ENTITIES, not new attributes."
+    - choice: "Forgetting insert_after"
+      reason: "Without it, the field lands at the bottom of the form which confuses users. Place it near semantically related fields."
+
+audit_log_server_script:
+  description: >
+    Record every change to a DocType in a separate audit log DocType. Captures
+    who changed what, when, and the before/after values.
+  category: script
+  keywords: [audit, log, track, history, changes, trail, record]
+  when_to_use: >
+    Compliance or accountability requirement to know who modified a record.
+    Example: "log all changes to Customer records", "audit trail on Supplier
+    payments". Typically paired with a simple audit log DocType to hold the
+    log entries.
+  when_not_to_use: >
+    You just need "when was this last updated" - Frappe already tracks
+    `creation`, `modified`, `modified_by` on every DocType. Only add an audit
+    log when you need a HISTORY of changes, not just the latest.
+    Also: if the target DocType already has `track_changes: 1` set, Frappe's
+    built-in Version DocType handles this automatically - check first.
+  event: After Save
+  event_reasoning: >
+    After Save fires after the document is successfully persisted, so you
+    know the change was durable before you log it. Before Save would log
+    changes that may not have been saved if a later validation failed.
+  template:
+    - op: create
+      doctype: DocType
+      data:
+        doctype: DocType
+        name: "<Target DocType> Audit Log"
+        module: Alfred
+        naming_rule: Autoincrement
+        fields:
+          - {fieldname: reference_name, fieldtype: Data, label: "Reference", reqd: 1}
+          - {fieldname: action, fieldtype: Select, label: "Action", options: "Create\nUpdate\nDelete"}
+          - {fieldname: changed_by, fieldtype: Link, options: User, label: "Changed By"}
+          - {fieldname: changed_at, fieldtype: Datetime, label: "Changed At"}
+          - {fieldname: changes, fieldtype: Long Text, label: "Changes"}
+        permissions:
+          - {role: System Manager, read: 1, write: 1, create: 1}
+    - op: create
+      doctype: Server Script
+      data:
+        doctype: Server Script
+        name: "Log <Target DocType> Changes"
+        script_type: DocType Event
+        reference_doctype: "<target DocType>"
+        doctype_event: After Save
+        script: |
+          if not frappe.has_permission("<target DocType>", "read", doc.name):
+              return
+          frappe.get_doc({
+              "doctype": "<Target DocType> Audit Log",
+              "reference_name": doc.name,
+              "action": "Update" if not doc.is_new() else "Create",
+              "changed_by": frappe.session.user,
+              "changed_at": frappe.utils.now(),
+              "changes": str(doc.get_dict()),
+          }).insert(ignore_permissions=True)
+  required_clarifications:
+    - "Does the target DocType already have track_changes=1? If yes, Frappe's built-in Version doctype handles auditing automatically - no custom audit log needed."
+    - "Should delete events also be logged? That requires a second Server Script on doctype_event=On Trash."
+  anti_patterns:
+    - choice: "Storing the full doc as a pickled blob"
+      reason: "Breaks when the DocType schema changes. Serialize to JSON or store only the fields that matter."
+    - choice: "Not checking permissions before logging"
+      reason: "Users without read access to the target DocType should not be able to trigger log entries that expose its contents."
+    - choice: "Logging from Before Save"
+      reason: "Change may not persist if a later validation rejects the save. Log from After Save so you only record durable changes."

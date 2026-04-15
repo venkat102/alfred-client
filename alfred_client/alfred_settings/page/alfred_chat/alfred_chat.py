@@ -16,7 +16,11 @@ def get_conversations():
 	# which returns own + shared conversations.
 	conversations = frappe.get_all(
 		"Alfred Conversation",
-		fields=["name", "status", "current_agent", "summary", "user", "creation", "modified"],
+		fields=[
+			"name", "status", "current_agent", "summary", "user",
+			"mode",  # Three-mode chat (Phase D): sticky UI mode preference
+			"creation", "modified",
+		],
 		order_by="modified desc",
 		limit_page_length=50,
 	)
@@ -26,6 +30,42 @@ def get_conversations():
 		conv["is_owner"] = conv["user"] == frappe.session.user
 
 	return conversations
+
+
+_VALID_CONVERSATION_MODES = {"Auto", "Dev", "Plan", "Insights"}
+
+
+@frappe.whitelist()
+def set_conversation_mode(conversation, mode):
+	"""Persist the user's UI mode preference on the conversation.
+
+	Three-mode chat (Phase D). The frontend calls this whenever the user
+	clicks a button in ModeSwitcher. The value is used as the sticky
+	default for subsequent prompts on this conversation - the send_message
+	`mode` parameter still wins for per-turn overrides.
+
+	Args:
+		conversation: Alfred Conversation name.
+		mode: One of "Auto" / "Dev" / "Plan" / "Insights". Case-insensitive
+			input is normalised to title case. Invalid values raise.
+	"""
+	from alfred_client.api.permissions import validate_alfred_access
+
+	validate_alfred_access()
+	frappe.has_permission(
+		"Alfred Conversation", ptype="write", doc=conversation, throw=True
+	)
+
+	normalised = (mode or "Auto").strip().title()
+	if normalised not in _VALID_CONVERSATION_MODES:
+		frappe.throw(
+			f"Invalid chat mode: {mode!r}. Expected one of "
+			f"{sorted(_VALID_CONVERSATION_MODES)}."
+		)
+
+	frappe.db.set_value("Alfred Conversation", conversation, "mode", normalised)
+	frappe.db.commit()
+	return {"name": conversation, "mode": normalised}
 
 
 @frappe.whitelist()
@@ -64,13 +104,28 @@ def get_messages(conversation):
 	return messages
 
 
+_VALID_CHAT_MODES = {"auto", "dev", "plan", "insights"}
+
+
 @frappe.whitelist()
-def send_message(conversation, message):
-	"""Send a user message in a conversation."""
+def send_message(conversation, message, mode="auto"):
+	"""Send a user message in a conversation.
+
+	Args:
+		conversation: Alfred Conversation name.
+		message: User's prompt text.
+		mode: Chat mode override from the UI switcher. One of
+			"auto" (orchestrator decides), "dev", "plan", "insights".
+			Ignored by the processing app when feature flag is off.
+	"""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
 	frappe.has_permission("Alfred Conversation", ptype="write", doc=conversation, throw=True)
+
+	normalized_mode = (mode or "auto").strip().lower()
+	if normalized_mode not in _VALID_CHAT_MODES:
+		normalized_mode = "auto"
 
 	conv = frappe.get_doc("Alfred Conversation", conversation)
 
@@ -111,7 +166,11 @@ def send_message(conversation, message):
 		redis_msg = json.dumps({
 			"msg_id": str(_uuid.uuid4()),
 			"type": "prompt",
-			"data": {"text": message, "user": frappe.session.user},
+			"data": {
+				"text": message,
+				"user": frappe.session.user,
+				"mode": normalized_mode,
+			},
 		})
 		redis_conn = frappe.cache()
 		queue_key = f"{_REDIS_CHANNEL_PREFIX}queue:{conversation}"
@@ -123,7 +182,7 @@ def send_message(conversation, message):
 		frappe.logger().error(f"Failed to send to Processing App: {e}")
 		# Message is saved in DB even if WS fails - user can retry
 
-	return {"name": msg.name, "status": "sent"}
+	return {"name": msg.name, "status": "sent", "mode": normalized_mode}
 
 
 @frappe.whitelist()
@@ -235,10 +294,21 @@ def get_conversation_health(conversation):
 
 @frappe.whitelist()
 def approve_changeset(changeset_name):
-	"""Approve a changeset - runs dry-run validation first, then deploys."""
+	"""Approve a changeset - runs dry-run validation first, then deploys.
+
+	Caller must have write permission on the changeset's parent conversation
+	(owner, shared-with-write, or System Manager). Otherwise any user with
+	the Alfred role could approve any other user's pending changeset.
+	"""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
+
+	# Route through the `changeset_has_permission` hook which delegates to
+	# the parent conversation's owner/share/System-Manager check.
+	frappe.has_permission(
+		"Alfred Changeset", ptype="write", doc=changeset_name, throw=True,
+	)
 
 	cs = frappe.get_doc("Alfred Changeset", changeset_name)
 	if cs.status != "Pending":
@@ -318,10 +388,13 @@ def approve_changeset(changeset_name):
 
 @frappe.whitelist()
 def reject_changeset(changeset_name):
-	"""Reject a changeset."""
+	"""Reject a changeset. Caller must have write perm on the changeset."""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
+	frappe.has_permission(
+		"Alfred Changeset", ptype="write", doc=changeset_name, throw=True,
+	)
 
 	cs = frappe.get_doc("Alfred Changeset", changeset_name)
 	cs.status = "Rejected"
@@ -333,10 +406,13 @@ def reject_changeset(changeset_name):
 
 @frappe.whitelist()
 def get_changeset(changeset_name):
-	"""Get changeset details for preview."""
+	"""Get changeset details for preview. Read permission required."""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
+	frappe.has_permission(
+		"Alfred Changeset", ptype="read", doc=changeset_name, throw=True,
+	)
 
 	cs = frappe.get_doc("Alfred Changeset", changeset_name)
 	changes = json.loads(cs.changes) if cs.changes else []
@@ -365,10 +441,17 @@ def get_latest_changeset(conversation):
 
 	Used when realtime events don't arrive - the UI polls this endpoint
 	every few seconds while processing to detect when a changeset is ready.
+	Caller must have read permission on the parent conversation.
 	"""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
+	# Gate on the PARENT conversation, not the changeset - at poll start there
+	# may be no changeset yet and we don't want to leak a "no changeset"
+	# vs "exists but you can't see it" side channel.
+	frappe.has_permission(
+		"Alfred Conversation", ptype="read", doc=conversation, throw=True,
+	)
 
 	cs_name = frappe.db.get_value(
 		"Alfred Changeset",

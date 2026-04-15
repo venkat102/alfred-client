@@ -11,6 +11,7 @@
 		"status",
 		"column_break_details",
 		"current_agent",
+		"mode",
 		"requirement_summary_section",
 		"requirement_summary",
 		"escalation_section",
@@ -66,6 +67,14 @@
 			"description": "Name of the currently active agent in the pipeline",
 			"in_list_view": 1,
 			"read_only": 1
+		},
+		{
+			"default": "Auto",
+			"fieldname": "mode",
+			"fieldtype": "Select",
+			"label": "Chat Mode",
+			"options": "Auto\nDev\nPlan\nInsights",
+			"description": "User's sticky mode preference for this conversation. Auto = orchestrator decides. Dev/Plan/Insights = force the mode for every prompt. Read by the three-mode chat feature when ALFRED_ORCHESTRATOR_ENABLED=1 on the processing app."
 		},
 		{
 			"fieldname": "requirement_summary_section",

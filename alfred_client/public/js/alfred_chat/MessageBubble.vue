@@ -2,6 +2,7 @@
 	<div :class="['alfred-message', `alfred-msg-${message.role || 'system'}`, `alfred-msg-type-${message.message_type || 'text'}`]">
 		<div v-if="message.role !== 'user'" class="alfred-msg-header">
 			<span v-if="message.agent_name" class="alfred-agent-badge">{{ message.agent_name }}</span>
+			<span v-if="modeBadge" :class="['alfred-mode-badge', `alfred-mode-${modeBadge.toLowerCase()}`]">{{ modeBadge }}</span>
 			<span class="alfred-msg-time text-muted text-xs">{{ formattedTime }}</span>
 		</div>
 		<div class="alfred-msg-content">
@@ -49,6 +50,26 @@
 				{{ message.content }}
 			</div>
 
+			<!-- Mode switch notice (three-mode chat orchestrator decision) -->
+			<div v-else-if="message.message_type === 'mode_switch'" class="alfred-mode-switch-msg text-xs text-muted">
+				<span class="alfred-mode-switch-icon">&#8651;</span>
+				{{ modeSwitchLabel }}
+			</div>
+
+			<!-- Chat reply (conversational mode, no crew) -->
+			<div v-else-if="message.message_type === 'chat_reply'" class="alfred-chat-reply-msg" v-html="renderedContent"></div>
+
+			<!-- Insights reply (read-only Q&A mode, markdown) -->
+			<div v-else-if="message.message_type === 'insights_reply'" class="alfred-insights-reply-msg" v-html="renderedContent"></div>
+
+			<!-- Plan doc (Phase C plan mode, structured panel) -->
+			<PlanDocPanel
+				v-else-if="message.message_type === 'plan_doc' && planData"
+				:plan="planData"
+				@refine="$emit('plan-refine', message)"
+				@approve="$emit('plan-approve', message)"
+			/>
+
 			<!-- Default: text with markdown -->
 			<div v-else class="alfred-text-msg" v-html="renderedContent"></div>
 		</div>
@@ -57,12 +78,13 @@
 
 <script setup>
 import { computed } from "vue";
+import PlanDocPanel from "./PlanDocPanel.vue";
 
 const props = defineProps({
 	message: { type: Object, required: true },
 });
 
-defineEmits(["option-click", "retry"]);
+defineEmits(["option-click", "retry", "plan-refine", "plan-approve"]);
 
 const formattedTime = computed(() => {
 	if (!props.message.creation) return "";
@@ -79,6 +101,54 @@ const options = computed(() => {
 			: props.message.metadata;
 		return meta?.options || [];
 	} catch { return []; }
+});
+
+// Three-mode chat: pull the mode out of metadata / explicit field so we
+// can render a small badge next to agent messages. Returns one of
+// "Dev" / "Plan" / "Insights" / "Chat" or an empty string (no badge).
+const modeBadge = computed(() => {
+	if (props.message.role === "user") return "";
+	try {
+		const meta = typeof props.message.metadata === "string"
+			? JSON.parse(props.message.metadata)
+			: props.message.metadata;
+		const m = (props.message.mode || meta?.mode || "").toLowerCase();
+		if (!m) return "";
+		if (m === "dev") return "Dev";
+		if (m === "plan") return "Plan";
+		if (m === "insights") return "Insights";
+		if (m === "chat") return "Chat";
+		return "";
+	} catch { return ""; }
+});
+
+// Three-mode chat (Phase C): extract the plan doc dict from a plan_doc
+// message. The backend sends the plan in metadata.plan (via the
+// connection manager's store helper); older messages may have the plan
+// inline on the message object.
+const planData = computed(() => {
+	try {
+		const meta = typeof props.message.metadata === "string"
+			? JSON.parse(props.message.metadata)
+			: props.message.metadata;
+		return meta?.plan || props.message.plan || null;
+	} catch { return null; }
+});
+
+// Three-mode chat: user-visible label for a mode_switch event. Falls back
+// to a generic sentence if the reason/mode are missing.
+const modeSwitchLabel = computed(() => {
+	try {
+		const meta = typeof props.message.metadata === "string"
+			? JSON.parse(props.message.metadata)
+			: props.message.metadata;
+		const mode = (meta?.mode || props.message.mode || "").toLowerCase();
+		const reason = meta?.reason || "";
+		const pretty = mode ? mode.charAt(0).toUpperCase() + mode.slice(1) : "";
+		if (pretty && reason) return `Switched to ${pretty} mode: ${reason}`;
+		if (pretty) return `Switched to ${pretty} mode`;
+		return props.message.content || "Mode changed";
+	} catch { return props.message.content || "Mode changed"; }
 });
 
 // Error mapping
