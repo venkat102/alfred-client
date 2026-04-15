@@ -270,6 +270,72 @@ def test_search_empty_query_returns_empty():
 	_assert(framework_kg.search_framework_knowledge("") == {"doctypes": [], "patterns": []})
 
 
+def test_search_validation_prompt_picks_server_script_over_notification():
+	"""Regression: Employee age validation prompt must match
+	validation_server_script, NOT post_approval_notification.
+
+	Pre-fix, post_approval_notification had `employee` in its keywords
+	(a domain-example leak) and search scoring treated all field hits
+	equally. A query containing 'employee' + 'validation' tied the two
+	patterns, and the alphabetical tiebreaker gave the notification
+	pattern the win. Agent then adapted a notification template for an
+	Employee Extension doctype, producing a DocType+Notification pair
+	instead of a Server Script.
+
+	The fix: remove domain-example keywords from patterns, add
+	validation-specific keywords (throw, restrict, reject, age, etc.)
+	to validation_server_script, and weight name/keyword matches higher
+	than description matches.
+	"""
+	from alfred_client.mcp import framework_kg
+
+	with tempfile.TemporaryDirectory() as tmp:
+		kg_file = Path(tmp) / "kg.json"
+		pat_file = Path(tmp) / "patterns.yaml"
+		kg_file.write_text(json.dumps({
+			"Employee": {"name": "Employee", "app": "hrms", "module": "HR", "is_submittable": 0},
+		}))
+		# Real keyword sets from customization_patterns.yaml (post-fix)
+		pat_file.write_text(
+			"post_approval_notification:\n"
+			"  description: Email the requester or downstream team AFTER a document is approved or submitted.\n"
+			"  category: notification\n"
+			"  keywords: [approved, submitted, confirmed, downstream, requester, notify_after, after_approval]\n"
+			"  when_to_use: recipient should hear back that their request was approved\n"
+			"\n"
+			"validation_server_script:\n"
+			"  description: Block a document from saving unless a custom rule passes. Use when user asks to validate restrict reject throw block or prevent saves.\n"
+			"  category: script\n"
+			"  keywords: [validate, validation, check, enforce, require, prevent, block, rule, throw, restrict, reject, forbid, constraint, condition, disallow, age, minimum, maximum, not_allowed, blocklist]\n"
+			"  when_to_use: enforce a rule that cannot be expressed as a simple field constraint\n"
+		)
+		with patch.object(framework_kg, "_kg_json_path", return_value=kg_file):
+			with patch.object(framework_kg, "_patterns_yaml_path", return_value=pat_file):
+				framework_kg.clear_caches()
+				# The exact user prompt shape that failed pre-fix
+				result = framework_kg.search_framework_knowledge(
+					"add a validation to the employee doctype for any employee only above the age of 24 can be created if the employees age is lessthan 24 then restrict and throw a message"
+				)
+				_assert(
+					result["patterns"],
+					"expected at least one pattern hit for validation prompt"
+				)
+				top_name = result["patterns"][0]["name"]
+				_assert(
+					top_name == "validation_server_script",
+					f"top hit should be validation_server_script, got {top_name!r}",
+				)
+				# validation_server_script should beat post_approval_notification
+				# by a LARGE margin (many keyword hits vs none)
+				top_score = result["patterns"][0]["_score"]
+				other_scores = [p["_score"] for p in result["patterns"][1:]]
+				if other_scores:
+					_assert(
+						top_score >= 3 * max(other_scores),
+						f"top score {top_score} should dominate runner-up {max(other_scores)} by 3x or more",
+					)
+
+
 # ── MCP tool entry points ──────────────────────────────────────────
 
 
@@ -362,6 +428,7 @@ def run_tests():
 		test_list_framework_doctypes_filters_by_app,
 		test_search_ranks_pattern_hits_by_term_count,
 		test_search_empty_query_returns_empty,
+		test_search_validation_prompt_picks_server_script_over_notification,
 		test_lookup_doctype_tool_framework_layer,
 		test_lookup_doctype_tool_invalid_layer,
 		test_lookup_pattern_tool_kinds,

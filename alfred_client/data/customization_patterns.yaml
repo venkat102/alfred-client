@@ -72,7 +72,7 @@ post_approval_notification:
   description: >
     Email the requester or a downstream team AFTER a document is approved/submitted.
   category: notification
-  keywords: [approved, submitted, confirmed, downstream, requester, employee, notify_after]
+  keywords: [approved, submitted, confirmed, downstream, requester, notify_after, after_approval]
   when_to_use: >
     The recipient should hear back that their request was approved, OR a
     downstream team needs to know the document is now active and they should
@@ -113,8 +113,12 @@ validation_server_script:
   description: >
     Block a document from saving or submitting unless a custom rule passes.
     Always include a permission check before running the validation logic.
+    Use this whenever the user asks to "validate", "restrict", "reject",
+    "throw", "block", or "prevent" saves that fail a custom condition.
   category: script
-  keywords: [validate, validation, check, enforce, require, prevent, block, rule]
+  keywords: [validate, validation, check, enforce, require, prevent, block, rule,
+    throw, restrict, reject, forbid, constraint, condition, disallow, age, minimum,
+    maximum, not_allowed, blocklist]
   when_to_use: >
     You need to enforce a rule that can't be expressed as a simple field
     constraint (reqd flag, options list). Example: "require that Leave

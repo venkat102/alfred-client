@@ -331,14 +331,27 @@ def list_patterns(category: str | None = None) -> list[dict[str, Any]]:
 
 
 def search_framework_knowledge(query: str, limit: int = 5) -> dict[str, Any]:
-	"""Simple keyword search across the framework KG AND the pattern library.
+	"""Weighted keyword search across the framework KG AND the pattern library.
 
-	No embeddings, no BM25 - substring matching over hand-curated short strings.
-	Returns top `limit` matches from each category. Good enough for v1.
+	Substring matching over hand-curated short strings, with field-level
+	weights so strong signals (name/keyword hits) beat weak ones
+	(description text bleed). Each query term can only contribute to the
+	score once per pattern so a single word in both the name and the
+	description doesn't double-count.
 
-	Match targets:
-	  DocTypes: name + module
-	  Patterns: name + description + keywords + when_to_use
+	Field weights (higher = stronger signal):
+	  Patterns:
+	    name        = 5  (exact semantic match, e.g. "validate" in "validation_server_script")
+	    keyword     = 3  (curated pattern marker)
+	    when_to_use = 1  (example text, weakest)
+	    description = 1  (example text, weakest)
+	  DocTypes:
+	    name        = 5
+	    module      = 2
+
+	Returns top `limit` matches per category. Ties broken by alphabetical
+	name (deterministic but rarely matters now because weights spread the
+	scores out).
 	"""
 	if not query:
 		return {"doctypes": [], "patterns": []}
@@ -348,15 +361,17 @@ def search_framework_knowledge(query: str, limit: int = 5) -> dict[str, Any]:
 	if not query_terms:
 		return {"doctypes": [], "patterns": []}
 
-	def _score(text: str) -> int:
+	def _field_score(text: str, weight: int) -> int:
 		text_lc = (text or "").lower()
-		return sum(1 for t in query_terms if t in text_lc)
+		return sum(weight for t in query_terms if t in text_lc)
 
-	# Score doctypes
+	# Score doctypes: name weighted 5, module weighted 2
 	doctype_hits: list[tuple[int, dict]] = []
 	for record in _load_kg().values():
-		haystack = f"{record.get('name', '')} {record.get('module', '')}"
-		score = _score(haystack)
+		score = (
+			_field_score(record.get("name", ""), 5)
+			+ _field_score(record.get("module", ""), 2)
+		)
 		if score > 0:
 			doctype_hits.append((score, {
 				"name": record.get("name"),
@@ -367,18 +382,20 @@ def search_framework_knowledge(query: str, limit: int = 5) -> dict[str, Any]:
 			}))
 	doctype_hits.sort(key=lambda x: (-x[0], x[1]["name"] or ""))
 
-	# Score patterns
+	# Score patterns: name weighted 5, keywords weighted 3, when_to_use/description weighted 1
 	pattern_hits: list[tuple[int, dict]] = []
 	for name, entry in _load_patterns().items():
 		if not isinstance(entry, dict):
 			continue
-		haystack = " ".join([
-			name,
-			entry.get("description", ""),
-			" ".join(entry.get("keywords", []) if isinstance(entry.get("keywords"), list) else []),
-			entry.get("when_to_use", ""),
-		])
-		score = _score(haystack)
+		keywords_text = " ".join(
+			entry.get("keywords", []) if isinstance(entry.get("keywords"), list) else []
+		)
+		score = (
+			_field_score(name, 5)
+			+ _field_score(keywords_text, 3)
+			+ _field_score(entry.get("when_to_use", ""), 1)
+			+ _field_score(entry.get("description", ""), 1)
+		)
 		if score > 0:
 			pattern_hits.append((score, {
 				"name": name,
