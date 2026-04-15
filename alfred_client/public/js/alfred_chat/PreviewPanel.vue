@@ -75,6 +75,32 @@
 						<strong>{{ (item.data || {}).name || "Unnamed" }}</strong>
 					</div>
 
+					<!-- Plain-English description card -->
+					<div class="alfred-describe-card" :class="`alfred-describe-${describe(type, item).tone}`">
+						<div class="alfred-describe-what">
+							<span class="alfred-describe-icon">{{ describe(type, item).icon }}</span>
+							<span>{{ describe(type, item).what }}</span>
+						</div>
+						<div v-if="describe(type, item).when" class="alfred-describe-row">
+							<span class="alfred-describe-label">When:</span>
+							<span>{{ describe(type, item).when }}</span>
+						</div>
+						<div v-if="describe(type, item).who" class="alfred-describe-row">
+							<span class="alfred-describe-label">Affects:</span>
+							<span>{{ describe(type, item).who }}</span>
+						</div>
+						<div v-if="describe(type, item).impact" class="alfred-describe-row">
+							<span class="alfred-describe-label">Effect:</span>
+							<span>{{ describe(type, item).impact }}</span>
+						</div>
+						<div v-if="describe(type, item).warning" class="alfred-describe-warning">
+							<span>&#9888; {{ describe(type, item).warning }}</span>
+						</div>
+					</div>
+
+					<details class="alfred-details-expand">
+						<summary class="alfred-details-summary">{{ __("Technical details") }}</summary>
+
 					<!-- Fields table for DocTypes -->
 					<table v-if="type === 'DocType' && item.data" class="table table-sm alfred-detail-table">
 						<tbody>
@@ -226,6 +252,7 @@
 							</tr>
 						</tbody>
 					</table>
+					</details>
 				</div>
 			</div>
 
@@ -333,6 +360,324 @@ function recipientsSummary(data) {
 	}).join(", ");
 }
 
+// ── describe(): plain-English summary of a changeset item ───────────
+//
+// Returns { what, when, who, impact, warning, icon, tone } where:
+//   what    - one-line human-readable description of what the change does
+//   when    - when it fires / takes effect (optional, for triggers)
+//   who     - who/what it affects (optional, for scoped changes)
+//   impact  - business outcome the user cares about (optional)
+//   warning - caveat the user should know about (optional)
+//   icon    - single emoji-like char for the description card
+//   tone    - "info" | "warn" | "danger" for styling
+//
+// The goal is that a user reviewing the preview panel can read one sentence
+// per item and understand what they're approving, without having to read
+// the Python / Jinja / field tables underneath.
+
+const SERVER_SCRIPT_EVENT_LABELS = {
+	before_insert: "when a new record is about to be created",
+	after_insert: "right after a new record is created",
+	before_save: "before every save",
+	after_save: "right after every save",
+	before_submit: "when a user tries to submit the document",
+	on_submit: "right after the document is submitted",
+	before_cancel: "when a user tries to cancel a submitted document",
+	on_cancel: "right after the document is cancelled",
+	before_validate: "during the validation step",
+	validate: "during the validation step",
+	on_trash: "when the document is being deleted",
+	after_delete: "after the document is deleted",
+	on_update: "on every update to the document",
+};
+
+const NOTIFICATION_EVENT_LABELS = {
+	"New": "a new record is created",
+	"Save": "the document is saved (create or update)",
+	"Submit": "the document is submitted",
+	"Cancel": "the document is cancelled",
+	"Value Change": "a specific field value changes",
+	"Days Before": "a number of days before a date field",
+	"Days After": "a number of days after a date field",
+	"Method": "a custom method fires",
+};
+
+function _extractThrowMessage(script) {
+	// Find the first `frappe.throw("...")` or `frappe.throw('...')` and
+	// return the message. Best-effort; returns empty string if no throw.
+	if (!script || typeof script !== "string") return "";
+	const match = script.match(/frappe\.throw\s*\(\s*(['"`])([^'"`\n]{1,200})\1/);
+	return match ? match[2] : "";
+}
+
+function _classifyScriptIntent(script) {
+	// Classify what a Server Script does based on keywords. Returns one
+	// of "validation", "notification", "auto_update", "audit_log",
+	// "integration", or "custom".
+	if (!script || typeof script !== "string") return "custom";
+	const s = script.toLowerCase();
+	if (s.includes("frappe.throw") || s.includes("frappe.validationerror")) {
+		return "validation";
+	}
+	if (s.includes("frappe.sendmail") || s.includes("frappe.send_email")) {
+		return "notification";
+	}
+	if (s.includes("frappe.db.set_value") || s.includes("doc.db_set(")) {
+		return "auto_update";
+	}
+	if (s.includes("alfred audit") || s.includes("audit_log")) {
+		return "audit_log";
+	}
+	if (s.includes("requests.") || s.includes("urllib") || s.includes("http.client")) {
+		return "integration";
+	}
+	return "custom";
+}
+
+function _describeServerScript(data) {
+	const ref = data?.reference_doctype || "<unknown DocType>";
+	const scriptType = data?.script_type || "DocType Event";
+	const event = data?.doctype_event || "";
+	const script = data?.script || "";
+	const throwMsg = _extractThrowMessage(script);
+	const intent = _classifyScriptIntent(script);
+
+	if (scriptType === "DocType Event") {
+		const whenPhrase = SERVER_SCRIPT_EVENT_LABELS[event] || `on \`${event}\``;
+		if (intent === "validation") {
+			return {
+				what: `Adds a validation rule to **${ref}**.`,
+				when: `Runs ${whenPhrase}.`,
+				who: `Every ${ref} record.`,
+				impact: throwMsg
+					? `Blocks the save with the message: "${throwMsg}"`
+					: "Blocks the save if the script's condition is not met.",
+				icon: "⛔",
+				tone: "warn",
+			};
+		}
+		if (intent === "auto_update") {
+			return {
+				what: `Automatically updates fields on **${ref}**.`,
+				when: `Runs ${whenPhrase}.`,
+				who: `Every ${ref} record.`,
+				impact: "Fields are written server-side; users won't see a prompt.",
+				icon: "⚡",
+				tone: "info",
+			};
+		}
+		if (intent === "notification") {
+			return {
+				what: `Sends a programmatic email when **${ref}** events fire.`,
+				when: `Runs ${whenPhrase}.`,
+				who: `Recipients determined inside the script.`,
+				icon: "✉",
+				tone: "info",
+			};
+		}
+		if (intent === "audit_log") {
+			return {
+				what: `Writes an audit log entry for **${ref}** changes.`,
+				when: `Runs ${whenPhrase}.`,
+				who: `Every ${ref} record.`,
+				icon: "📜",
+				tone: "info",
+			};
+		}
+		return {
+			what: `Runs custom server-side logic on **${ref}**.`,
+			when: `Fires ${whenPhrase}.`,
+			icon: "⚙",
+			tone: "info",
+		};
+	}
+	if (scriptType === "API") {
+		return {
+			what: `Exposes a custom API endpoint: \`${data?.api_method || "<method>"}\`.`,
+			when: "Runs when a client calls the endpoint.",
+			who: "Users with permission to call the method.",
+			icon: "🔌",
+			tone: "info",
+		};
+	}
+	if (scriptType === "Scheduler Event") {
+		return {
+			what: `Runs a scheduled background job.`,
+			when: `Fires on \`${data?.event_frequency || data?.cron_format || "scheduled cron"}\`.`,
+			icon: "⏰",
+			tone: "info",
+		};
+	}
+	if (scriptType === "Permission Query") {
+		return {
+			what: `Customises the list-view permission filter for **${ref}**.`,
+			impact: "Users will only see records the script allows.",
+			icon: "🔒",
+			tone: "warn",
+		};
+	}
+	return {
+		what: `Adds a Server Script of type ${scriptType}.`,
+		icon: "⚙",
+		tone: "info",
+	};
+}
+
+function _describeNotification(data) {
+	const doc = data?.document_type || "<target DocType>";
+	const ev = data?.event || "";
+	const channel = data?.channel || "Email";
+	const whenPhrase = NOTIFICATION_EVENT_LABELS[ev] || (ev ? `on \`${ev}\`` : "");
+	const recipients = recipientsSummary(data) || "the recipients configured below";
+	return {
+		what: `Sends a ${channel} notification for **${doc}** events.`,
+		when: whenPhrase ? `Fires when ${whenPhrase}.` : undefined,
+		who: `Delivered to: ${recipients}.`,
+		impact: data?.subject ? `Subject: "${data.subject}"` : undefined,
+		warning: data?.enabled === 0 ? "This notification will be created DISABLED." : undefined,
+		icon: "✉",
+		tone: "info",
+	};
+}
+
+function _describeCustomField(data) {
+	const target = data?.dt || "<target DocType>";
+	const fieldname = data?.fieldname || "<fieldname>";
+	const fieldtype = data?.fieldtype || "Data";
+	const label = data?.label || fieldname;
+	const optionsNote = data?.options
+		? ` Options: ${String(data.options).replace(/\n/g, " / ").slice(0, 80)}`
+		: "";
+	const reqd = data?.reqd ? " Required." : "";
+	return {
+		what: `Adds a new **${fieldtype}** field \`${fieldname}\` (label: "${label}") to **${target}**.`,
+		who: `Visible on every ${target} form.${reqd}`,
+		impact: `Existing records get NULL for this field until edited.${optionsNote}`,
+		warning: data?.reqd ? "Required fields can block save on existing records that lack a value." : undefined,
+		icon: "＋",
+		tone: "info",
+	};
+}
+
+function _describeWorkflow(data) {
+	const doc = data?.document_type || "<target DocType>";
+	const stateField = data?.workflow_state_field || "workflow_state";
+	const states = Array.isArray(data?.states) ? data.states : [];
+	const transitions = Array.isArray(data?.transitions) ? data.transitions : [];
+	const stateNames = states.map((s) => s.state).filter(Boolean).join(" → ");
+	return {
+		what: `Sets up a workflow on **${doc}** with ${states.length} state(s).`,
+		when: `Activated on creation of this Workflow definition.`,
+		who: `Every existing and future ${doc} record.`,
+		impact: stateNames
+			? `State flow: ${stateNames}. ${transitions.length} transition(s) defined. State field: \`${stateField}\`.`
+			: `${transitions.length} transition(s) defined. State field: \`${stateField}\`.`,
+		warning: data?.is_active === 0
+			? "This workflow will be created INACTIVE."
+			: "Existing records will immediately be subject to this workflow's transitions.",
+		icon: "↻",
+		tone: "warn",
+	};
+}
+
+function _describeDocType(data) {
+	const name = data?.name || "<DocType name>";
+	const module = data?.module || "Alfred";
+	const fields = Array.isArray(data?.fields) ? data.fields.filter(
+		(f) => !["Section Break", "Column Break", "Tab Break"].includes(f.fieldtype)
+	) : [];
+	const fieldNames = fields.slice(0, 5).map((f) => f.fieldname).join(", ");
+	const extra = fields.length > 5 ? ` (+${fields.length - 5} more)` : "";
+	const flags = [];
+	if (data?.is_submittable) flags.push("submittable");
+	if (data?.is_tree) flags.push("tree");
+	if (data?.is_single) flags.push("singleton");
+	const flagNote = flags.length ? ` [${flags.join(", ")}]` : "";
+	return {
+		what: `Creates a new DocType **${name}** in the **${module}** module${flagNote}.`,
+		who: `A new database table \`tab${name}\` will be created.`,
+		impact: fields.length
+			? `Fields: ${fieldNames}${extra}. Naming: ${data?.naming_rule || data?.autoname || "default"}.`
+			: "No fields defined yet.",
+		warning: data?.is_submittable
+			? "Submittable DocTypes have a docstatus workflow (Draft → Submitted → Cancelled)."
+			: undefined,
+		icon: "▢",
+		tone: "info",
+	};
+}
+
+function _describeClientScript(data) {
+	const target = data?.dt || "<target DocType>";
+	const view = data?.view || "Form";
+	return {
+		what: `Adds client-side JavaScript to the **${target}** ${view} view.`,
+		when: `Runs in the browser when the user opens or interacts with a ${target}.`,
+		who: `Every user who opens this ${target} view.`,
+		warning: data?.enabled === 0 ? "This client script will be created DISABLED." : undefined,
+		icon: "⚛",
+		tone: "info",
+	};
+}
+
+function _describePropertySetter(data) {
+	const doc = data?.doc_type || "<DocType>";
+	const field = data?.field_name || "<field>";
+	const prop = data?.property || "<property>";
+	const val = data?.value;
+	return {
+		what: `Changes the \`${prop}\` property of \`${field}\` on **${doc}**.`,
+		impact: val !== undefined ? `New value: \`${val}\`.` : undefined,
+		icon: "⚙",
+		tone: "info",
+	};
+}
+
+function describe(type, item) {
+	const data = item?.data || {};
+	const op = item?.op || item?.operation || "create";
+	let out;
+	switch (type) {
+		case "Server Script":
+			out = _describeServerScript(data);
+			break;
+		case "Notification":
+			out = _describeNotification(data);
+			break;
+		case "Custom Field":
+			out = _describeCustomField(data);
+			break;
+		case "Workflow":
+			out = _describeWorkflow(data);
+			break;
+		case "DocType":
+			out = _describeDocType(data);
+			break;
+		case "Client Script":
+			out = _describeClientScript(data);
+			break;
+		case "Property Setter":
+			out = _describePropertySetter(data);
+			break;
+		default:
+			out = {
+				what: `${op === "create" ? "Creates" : op === "update" ? "Updates" : op} a ${type}.`,
+				icon: "•",
+				tone: "info",
+			};
+	}
+	// For update/delete ops, prefix the `what` so users see the op explicitly
+	if (op !== "create" && out.what && !out.what.toLowerCase().startsWith(op.toLowerCase())) {
+		const verb = op === "update" ? "Updates" : op === "delete" ? "DELETES" : op;
+		out.what = `${verb}: ${out.what}`;
+		if (op === "delete") {
+			out.tone = "danger";
+			out.warning = (out.warning ? out.warning + " " : "") + "This will remove the record and cannot be undone without rollback data.";
+		}
+	}
+	return out;
+}
+
 function stepIcon(status) {
 	return status === "success" ? "✓" : status === "in_progress" ? "⏳" : "✗";
 }
@@ -341,3 +686,98 @@ function stepColor(status) {
 	return status === "success" ? "var(--green-600)" : status === "in_progress" ? "var(--orange-600)" : "var(--red-600)";
 }
 </script>
+
+<style scoped>
+/* Plain-English description card (one per changeset item) */
+.alfred-describe-card {
+	margin: 10px 0;
+	padding: 12px 14px;
+	border-radius: 6px;
+	border-left: 3px solid var(--blue-500, #3b82f6);
+	background: var(--bg-secondary, #f9fafb);
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.alfred-describe-info {
+	border-left-color: var(--blue-500, #3b82f6);
+	background: var(--bg-light-blue, #eff6ff);
+}
+
+.alfred-describe-warn {
+	border-left-color: var(--orange-500, #f59e0b);
+	background: var(--bg-light-orange, #fffbeb);
+}
+
+.alfred-describe-danger {
+	border-left-color: var(--red-500, #ef4444);
+	background: var(--bg-light-red, #fef2f2);
+}
+
+.alfred-describe-what {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	font-weight: 500;
+	color: var(--text-color, #111827);
+	margin-bottom: 6px;
+}
+
+.alfred-describe-icon {
+	font-size: 16px;
+	line-height: 1;
+	flex-shrink: 0;
+	margin-top: 1px;
+}
+
+.alfred-describe-row {
+	display: flex;
+	gap: 6px;
+	margin-top: 3px;
+	color: var(--text-color, #374151);
+}
+
+.alfred-describe-label {
+	font-weight: 600;
+	color: var(--text-muted, #6b7280);
+	min-width: 56px;
+	flex-shrink: 0;
+}
+
+.alfred-describe-warning {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px solid rgba(0, 0, 0, 0.08);
+	color: var(--orange-700, #b45309);
+	font-weight: 500;
+}
+
+/* Expandable technical details section - hides the field tables and
+   code blocks behind a toggle so the description card is the primary
+   thing the user reads, not the JSON dump. */
+.alfred-details-expand {
+	margin-top: 10px;
+	border-top: 1px dashed var(--border-color, #e5e7eb);
+	padding-top: 8px;
+}
+
+.alfred-details-summary {
+	cursor: pointer;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: var(--text-muted, #6b7280);
+	user-select: none;
+	padding: 4px 0;
+}
+
+.alfred-details-summary:hover {
+	color: var(--text-color, #111827);
+}
+
+.alfred-details-expand[open] .alfred-details-summary {
+	color: var(--text-color, #111827);
+	margin-bottom: 6px;
+}
+</style>
