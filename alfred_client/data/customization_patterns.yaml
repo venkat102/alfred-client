@@ -144,23 +144,38 @@ validation_server_script:
       reference_doctype: "<target DocType>"
       doctype_event: Before Save
       script: |
+        # NO `import` STATEMENTS. Frappe RestrictedPython bans imports at compile
+        # time. Use frappe / frappe.utils / frappe.db / json / datetime DIRECTLY,
+        # no import line needed.
+
         # Permission check first - never trust doc state without verifying the user can read it.
         if not frappe.has_permission("<target DocType>", "read", doc.name):
             frappe.throw("Not permitted to access this document.")
 
         # Validation logic using fields verified via lookup_doctype.
+        # Examples of the pre-bound helpers you already have in scope:
+        #   - frappe.utils.getdate(doc.some_date) -> date object
+        #   - frappe.utils.date_diff(frappe.utils.nowdate(), doc.dob) -> days (int)
+        #   - frappe.utils.flt(doc.amount), frappe.utils.cint(doc.qty)
+        #   - json.loads(doc.some_json_field), json.dumps({"k": "v"})
+        #   - frappe.db.get_value("DocType", name, "field")
+        #   - frappe.make_get_request(url)  (instead of `requests.get`)
         if <condition that should be false for valid documents>:
             frappe.throw("<user-facing error message explaining why this was blocked>")
   required_clarifications:
     - "Should the rule block only submit, or every save including drafts? Drafts usually allow incomplete data."
     - "Which fields does the validation compare? Verify field names via lookup_doctype before using them."
   anti_patterns:
+    - choice: "Writing `import` inside a Server Script (any form)"
+      reason: "Frappe Server Scripts run under RestrictedPython, which bans `import` at compile time. The deploy dry-run rejects any script containing `import`. Use the pre-bound `frappe`, `frappe.utils`, `frappe.db`, `json`, and `datetime` directly - they are already in scope."
     - choice: "Skipping the frappe.has_permission() check"
       reason: "Server scripts run with the calling user's session. Without an explicit permission check, a low-privilege user might read a document they shouldn't just because your script accessed it."
     - choice: "Using frappe.db.sql() with string interpolation"
       reason: "SQL injection risk. Use frappe.db.get_value() or ORM methods with parameterized queries instead."
     - choice: "Putting data constraints (required field, select options) in a validation script"
       reason: "Those belong on the DocType field definition (reqd=1, Select fieldtype with options). Scripts should handle LOGIC, not constraints the framework can enforce."
+    - choice: "Using `datetime.date.today()` or `datetime.datetime.now()` directly"
+      reason: "Those call signatures work but system-timezone-aware equivalents are safer: `frappe.utils.nowdate()` and `frappe.utils.now_datetime()`. They honor the site's timezone setting and return values Frappe's date fields expect."
 
 custom_field_on_existing_doctype:
   description: >

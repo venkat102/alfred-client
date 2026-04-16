@@ -1,0 +1,427 @@
+# Frappe Knowledge Base - Style / conventions
+#
+# Alfred's code-gen PREFERENCES - how we want generated code to look.
+# These differ from rules.yaml: breaking a style entry doesn't fail
+# dry-run or runtime, it just doesn't match our house style.
+#
+# The auto-inject phase pulls style entries like any other kind, so
+# when a user request implicates code generation, the Developer task
+# sees the relevant style rules alongside FKB rules and site state.
+#
+# Adding a new style entry retires the copies of the same text that
+# currently live in agent backstories / crew task descriptions -
+# maintained in one place, applied everywhere.
+
+style_indentation:
+  kind: style
+  title: "Use tabs for indentation (Frappe convention)"
+  summary: >
+    Frappe's convention is tabs, 4-column visual width. Don't mix tabs
+    and spaces in generated Python, JavaScript, or YAML.
+  keywords:
+    - indent
+    - indentation
+    - tabs
+    - spaces
+    - whitespace
+    - formatting
+  body: |
+    - Python files: tabs (matches Frappe core, ERPNext, and the rest of
+      the Frappe ecosystem).
+    - JavaScript: tabs (matches Frappe JS convention).
+    - YAML: tabs are invalid per the YAML spec - use SPACES in YAML
+      specifically. Two-space indentation in YAML files.
+    - Never mix - one file, one convention.
+
+    Editor configs in the Frappe ecosystem (`.editorconfig`) already
+    enforce this; generated code should match out of the box so
+    linters don't immediately rewrite it.
+  verified_on: "2026-04-16"
+
+style_server_script_permission_check_first:
+  kind: style
+  title: "Server Scripts start with a permission check"
+  summary: >
+    Every generated Server Script body should open with
+    frappe.has_permission(...) and bail (frappe.throw) if the user lacks
+    read on the parent doc. Defense in depth against sandbox-escape via
+    related-doc reads.
+  keywords:
+    - server_script
+    - permission
+    - defensive
+    - has_permission
+    - safety
+    - first_line
+  applies_to:
+    - "Server Script"
+  body: |
+    Pattern:
+
+        if not frappe.has_permission("<Target DocType>", "read", doc.name):
+            frappe.throw(_("Not permitted to access this document."))
+
+        # ... business logic below ...
+
+    Why it matters: Server Scripts run with the calling user's session.
+    Without this guard, a low-privilege user who can save the doc
+    indirectly triggers any code that later accesses related records -
+    bypassing row-level permission checks on those records.
+
+    For scripts triggered by Before Insert (where doc.name doesn't exist
+    yet), use:
+
+        if not frappe.has_permission("<Target DocType>", "create"):
+            frappe.throw(_("Not permitted to create this document."))
+  related:
+    - server_script_permission_check
+    - server_script_no_imports
+  verified_on: "2026-04-16"
+
+style_user_facing_errors_use_throw:
+  kind: style
+  title: "Use frappe.throw(_(msg)) for user-facing validation errors"
+  summary: >
+    Validation errors that the user must see in the UI go through
+    frappe.throw. Wrap the message in _() so it's translatable. Don't
+    use bare raise ValueError / raise Exception - the user sees a
+    generic "Internal Error".
+  keywords:
+    - throw
+    - raise
+    - error
+    - exception
+    - validation
+    - user_facing
+    - translate
+  body: |
+    Correct:
+        frappe.throw(_("Grand total cannot be negative"))
+        frappe.throw(_("Employee {0} does not exist").format(name))
+
+    Wrong:
+        raise ValueError("grand total negative")   # user sees "Internal Error"
+        frappe.throw(f"Grand total is {doc.total}")  # un-translatable
+        assert doc.total >= 0, "bad total"            # debug-only, not user-facing
+
+    For non-user-facing errors (truly internal assertions a user can
+    never trigger), `raise` is fine - but almost everything in a
+    Frappe customization is user-triggered.
+
+    Use `frappe.msgprint(_(msg))` for non-blocking notices (continues
+    execution, shown as a toast).
+  examples:
+    good: |
+      if doc.grand_total < 0:
+          frappe.throw(_("Grand total cannot be negative"))
+    bad: |
+      if doc.grand_total < 0:
+          raise Exception("negative total")  # -> generic internal error
+  related:
+    - api_frappe_throw
+    - api_frappe_msgprint
+  verified_on: "2026-04-16"
+
+style_translate_user_strings:
+  kind: style
+  title: "Wrap user-visible strings with _() / __()"
+  summary: >
+    Any string that reaches a user - error messages, button labels,
+    Notification subjects, Print Format text - passes through the
+    translator. Python uses `_()`; client JS uses `__()`.
+  keywords:
+    - translate
+    - localisation
+    - i18n
+    - _
+    - underscore
+    - gettext
+  body: |
+    Imports / availability:
+      Python:       `from frappe import _` (also pre-bound in Server Scripts)
+      JavaScript:   `__(...)` is globally available in Client Scripts
+      Jinja:        `{{ _(...) }}` is in scope in Print Format / Notification
+
+    Don't:
+      - f-string inside the translated string (breaks extraction):
+          _(f"{n} items")                 # BAD
+          _("{0} items").format(n)        # GOOD - catalog sees "{0} items"
+      - Concatenate translated chunks (grammar orders differ across languages):
+          _("Created by ") + user.name    # BAD
+          _("Created by {0}").format(user.name)   # GOOD
+
+    When in doubt, ask: will a non-English user read this? If yes, _() it.
+  related:
+    - idiom_translation
+  verified_on: "2026-04-16"
+
+style_alfred_module_default:
+  kind: style
+  title: "New DocTypes default to the 'Alfred' module"
+  summary: >
+    Every DocType Alfred creates goes in the `Alfred` module unless the
+    user explicitly asks for a different module. Keeps customer-added
+    customisations contained and easy to audit.
+  keywords:
+    - module
+    - alfred
+    - doctype
+    - organization
+    - containment
+  applies_to:
+    - "DocType"
+  body: |
+    Default the `module` field on every new DocType to "Alfred":
+
+        {"op": "create", "doctype": "DocType", "data": {
+            "doctype": "DocType",
+            "name": "Training Session",
+            "module": "Alfred",
+            "autoname": "field:title",
+            "fields": [...]
+        }}
+
+    The "Alfred" module is installed by the alfred_client app itself, so
+    it always exists. Customisations land there rather than scattering
+    across core modules - easier to diff, easier to uninstall, easier
+    for auditors to see what Alfred added.
+
+    Only override when:
+      - user explicitly names another module ("put it in HR")
+      - customisation is scoped to a vertical app already installed
+        (e.g. an Expense Claim extension might live in "HR" if the user
+        asked for it there)
+
+    Never put Alfred-created DocTypes in core modules (Accounts, Selling,
+    etc.) by default - they're Frappe-maintained and our writes would be
+    blown away on bench update.
+  related:
+    - doctype_naming_constraints
+  verified_on: "2026-04-16"
+
+style_snake_case_fieldnames:
+  kind: style
+  title: "Fieldnames snake_case; labels Title Case"
+  summary: >
+    Python-style snake_case for every `fieldname`. Human-readable Title
+    Case for every `label`. Two separate concerns: identifier vs display.
+  keywords:
+    - snake_case
+    - title_case
+    - fieldname
+    - label
+    - naming
+    - casing
+  body: |
+    Fieldname (programmatic identifier):
+      - lowercase letters, digits, underscore only
+      - start with a letter
+      - descriptive but short (<32 chars recommended)
+      GOOD: employee_code, date_of_joining, is_active
+      BAD:  employeeCode, EmployeeCode, employee-code, Employee_Code,
+            1st_name, my field
+
+    Label (what the user sees on the form):
+      - Title Case with spaces
+      - match business terminology the user knows
+      GOOD: "Employee Code", "Date of Joining", "Is Active"
+      BAD:  "employee_code" (exposing the fieldname as a label)
+
+    DocType name is its own thing (separate rule: Title Case with
+    spaces, e.g. "Training Session" - see doctype_naming_constraints).
+  examples:
+    good: |
+      {"fieldname": "date_of_joining",
+       "label": "Date of Joining",
+       "fieldtype": "Date"}
+    bad: |
+      {"fieldname": "dateOfJoining",     # wrong: camelCase
+       "label": "date of joining",        # wrong: lowercase label
+       "fieldtype": "Date"}
+  related:
+    - doctype_naming_constraints
+  verified_on: "2026-04-16"
+
+style_changeset_json_shape:
+  kind: style
+  title: "Final Answer is a RAW JSON array, nothing else"
+  summary: >
+    When generating a changeset, the output is one JSON array of
+    {op, doctype, data} objects. No prose, no markdown fences, no
+    leading/trailing commentary. Extraction assumes clean JSON.
+  keywords:
+    - json
+    - output
+    - changeset
+    - format
+    - final_answer
+    - raw
+  body: |
+    Shape:
+
+        [
+          {"op": "create", "doctype": "<TYPE>", "data": {"doctype": "<TYPE>", "name": "...", ...}},
+          {"op": "update", "doctype": "<TYPE>", "data": {"doctype": "<TYPE>", "name": "...", ...}}
+        ]
+
+    Rules:
+      - Array at the top level. Starts with `[`, ends with `]`.
+      - No backticks / markdown code fences around the array.
+      - No prose before the `[` or after the `]`.
+      - Every `data` object includes `doctype` matching the outer `doctype`.
+      - `op` is "create" or "update". Nothing else.
+
+    Extraction uses strict json.loads after a cheap prefix trim. If the
+    first non-whitespace character isn't `[`, the extractor falls back
+    to a regex-based recovery which is error-prone and should be a rare
+    path, not the happy path.
+
+    If there's nothing to do, output `[]` - not prose explaining why
+    nothing is needed.
+  examples:
+    good: |
+      [{"op": "create", "doctype": "Custom Field", "data": {"doctype": "Custom Field", "dt": "Sales Order", "fieldname": "priority", "label": "Priority", "fieldtype": "Select", "options": "Low\nMedium\nHigh"}}]
+    bad: |
+      Here is the changeset for your request:
+      ```json
+      [ ... ]
+      ```
+      Let me know if you need anything else!
+  verified_on: "2026-04-16"
+
+style_comment_why_not_what:
+  kind: style
+  title: "Comments explain WHY; well-named identifiers explain WHAT"
+  summary: >
+    Prefer no comment to an obvious comment. When you do comment,
+    explain intent, constraints, or non-obvious behaviour - not the
+    literal code. The code already says what it does.
+  keywords:
+    - comment
+    - docstring
+    - documentation
+    - style
+    - why
+    - explain
+  body: |
+    Good comment territory:
+      - "Why is this needed": a non-obvious constraint or invariant
+      - "Why this way": a rejected alternative that looked obvious but failed
+      - Hidden coupling: "this must match the copy in hooks.py"
+      - Workarounds with context: "Frappe < v15 evaluates this lazily; do
+         not remove this touch call"
+
+    Drop territory (no comment needed):
+      - Restating the code: `# increment counter` above `counter += 1`
+      - Trivial getters / setters
+      - Describing what a well-named function already describes
+
+    One-line comments are usually fine. Multi-paragraph docstrings
+    belong on public-ish interfaces (whitelisted methods, event
+    handlers, patch execute() functions) - not on one-line helpers.
+
+    Avoid comments that reference ephemeral context ("fixed for issue
+    #123", "asked by John"). They rot fast. Put that in the commit
+    message or the PR description.
+  examples:
+    good: |
+      # Enqueue AFTER commit so the worker sees the submitted doc, not
+      # a half-saved one. Without this, the notifier races the commit
+      # and frappe.get_doc in the worker returns stale state.
+      frappe.enqueue("myapp.tasks.notify", enqueue_after_commit=True, ...)
+    bad: |
+      # increment the counter
+      counter += 1
+  verified_on: "2026-04-16"
+
+style_no_hardcoded_users_roles:
+  kind: style
+  title: "Never hardcode user emails, role names, or IDs"
+  summary: >
+    Hardcoded identities make scripts fragile and non-portable. Use
+    Link fields, role queries, or Singles to look up who/what the
+    logic targets.
+  keywords:
+    - hardcoded
+    - email
+    - user
+    - role
+    - portable
+    - configuration
+  body: |
+    Bad (from agent training memory - looks like real code but isn't):
+
+        frappe.sendmail(recipients=["manager@example.com"], ...)
+        if "Manager" in frappe.get_roles():
+            ...
+
+    Good:
+
+        # Resolve via role membership
+        managers = frappe.get_all(
+            "Has Role",
+            filters={"role": "Expense Approver"},
+            pluck="parent",
+        )
+        frappe.sendmail(recipients=managers, ...)
+
+        # Resolve via a Link-to-User field on the doc
+        approver = doc.expense_approver
+        if approver:
+            frappe.sendmail(recipients=[approver], ...)
+
+        # Resolve via a Single DocType for configurable values
+        settings = frappe.get_single("My App Settings")
+        frappe.sendmail(recipients=[settings.notify_to], ...)
+
+    If the user's request names a specific email ("email alice@x"),
+    that's legitimate - still surface it as a ToDo or settings field
+    the admin can change later, not buried in a Server Script.
+  verified_on: "2026-04-16"
+
+style_sql_injection_safe:
+  kind: style
+  title: "Parameterise every frappe.db.sql call"
+  summary: >
+    Any value derived from user input OR doc fields goes into the
+    parameter tuple, never into the query string. Prevents SQL
+    injection and NULL-related bugs.
+  keywords:
+    - sql_injection
+    - parameterise
+    - placeholder
+    - security
+    - db_sql
+  body: |
+    Always:
+
+        frappe.db.sql(
+            "SELECT name FROM `tabUser` WHERE enabled = %s AND name = %s",
+            (1, username),
+        )
+
+    Named placeholders are also fine:
+
+        frappe.db.sql(
+            "SELECT name FROM `tabUser` WHERE name = %(u)s",
+            {"u": username},
+        )
+
+    Never:
+
+        frappe.db.sql(f"SELECT name FROM `tabUser` WHERE name = '{username}'")
+        frappe.db.sql("... WHERE name = '" + username + "'")
+
+    For dynamic column names / ORDER BY, where parameterisation doesn't
+    apply: use an explicit whitelist rather than string interpolation.
+
+        allowed = {"creation", "modified", "name"}
+        sort_col = col if col in allowed else "creation"
+        frappe.db.sql(f"SELECT name FROM `tabUser` ORDER BY `{sort_col}` DESC")
+
+    Prefer frappe.get_all for filters when possible - it parameterises
+    automatically and respects permissions.
+  related:
+    - api_frappe_db_sql
+    - api_frappe_get_all
+  verified_on: "2026-04-16"

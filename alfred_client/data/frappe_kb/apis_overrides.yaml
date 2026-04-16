@@ -1,0 +1,665 @@
+# Hand-curated overrides for the auto-scraped apis.yaml.
+#
+# Entries here replace their auto-scraped counterparts verbatim when
+# scripts/build_kb_apis.py is run. Use this file to add real examples,
+# document common pitfalls, or rewrite a vague upstream docstring into
+# something an agent can act on.
+#
+# Schema matches apis.yaml (kind: api). Keep entries short - agents have
+# limited context. For each override, prioritise:
+#   - a one-sentence `summary` an agent can skim
+#   - a `body` with the handful of usage patterns agents actually need
+#   - `examples` showing good vs bad usage
+#   - `pitfalls` listing the top 1-3 gotchas
+#
+# Run `bench --site dev.alfred execute alfred_client.scripts.build_kb_apis.build`
+# after editing this file for changes to land in apis.yaml.
+
+api_frappe_get_doc:
+  kind: api
+  title: "frappe.get_doc"
+  summary: >
+    Load or construct a DocType document. Two call shapes: pass (doctype, name)
+    to load, or pass a dict to construct a new in-memory document.
+  signature: "frappe.get_doc(doctype_or_dict, name=None) -> Document"
+  keywords: [get_doc, load, fetch, document, construct, new, doc, frappe]
+  body: |
+    Primary ways to call:
+
+    1. Load an existing document:
+       doc = frappe.get_doc("Sales Order", "SO-0001")
+
+    2. Construct a new in-memory document from a dict (not yet saved):
+       doc = frappe.get_doc({
+           "doctype": "ToDo",
+           "description": "Follow up with customer",
+           "allocated_to": "alice@example.com",
+       })
+       doc.insert()   # <-- save to DB
+
+    3. Construct from kwargs (equivalent to #2 for single-DocType):
+       doc = frappe.get_doc(doctype="ToDo", description="...")
+
+    Permission checks run on load (respects user's read permission).
+    Raises DoesNotExistError if name doesn't exist. Use frappe.db.exists
+    first if the doc might not be there.
+  examples:
+    good: |
+      # Load and modify
+      so = frappe.get_doc("Sales Order", doc.sales_order)
+      so.priority = "High"
+      so.save()
+    bad: |
+      # Don't: load-then-discard - use frappe.db.get_value for single-field reads
+      email = frappe.get_doc("User", user).email   # loads the whole doc
+      # Do:
+      email = frappe.db.get_value("User", user, "email")
+  pitfalls:
+    - "Loads the FULL document - for a single field, frappe.db.get_value is 10x cheaper"
+    - "Raises DoesNotExistError on missing name; catch or check with frappe.db.exists first"
+    - "The dict form doesn't insert - you must call .insert() explicitly"
+  verified_on: "2026-04-16"
+
+api_frappe_new_doc:
+  kind: api
+  title: "frappe.new_doc"
+  summary: >
+    Shortcut to create an in-memory document of a given DocType, with
+    naming defaults applied. Must call .insert() or .save() to persist.
+  signature: "frappe.new_doc(doctype: str, parent_doc=None, parentfield=None) -> Document"
+  keywords: [new_doc, create, document, doc, frappe]
+  body: |
+    Creates an unsaved document. Equivalent to `frappe.get_doc({"doctype": X})`
+    but with auto-naming and default-setter hooks run up-front.
+
+    doc = frappe.new_doc("ToDo")
+    doc.description = "Review invoice"
+    doc.allocated_to = "alice@example.com"
+    doc.insert()
+
+    Use `parent_doc` + `parentfield` for child-table rows when building a
+    parent and its children in one flow (rare in Server Scripts).
+  examples:
+    good: |
+      todo = frappe.new_doc("ToDo")
+      todo.description = "Follow up"
+      todo.insert()
+    bad: |
+      # Don't skip insert() - the doc never hits the DB
+      todo = frappe.new_doc("ToDo")
+      todo.description = "Follow up"
+      # MISSING: todo.insert()  -> nothing happens
+  pitfalls:
+    - ".insert() is NOT automatic - forgetting it is the #1 bug with new_doc"
+    - "Use frappe.get_doc(dict) when you're building from a dict-shaped payload"
+  verified_on: "2026-04-16"
+
+api_frappe_db_get_value:
+  kind: api
+  title: "frappe.db.get_value"
+  summary: >
+    Read one or more fields from a document WITHOUT loading it. Cheap,
+    permission-respecting, returns None when the doc doesn't exist.
+  signature: "frappe.db.get_value(doctype, name_or_filters, fieldname='name', as_dict=False, ...) -> scalar | tuple | dict | None"
+  keywords: [get_value, db, read, query, field, cheap, lookup]
+  body: |
+    Three common shapes:
+
+    1. Single field, by name:
+       email = frappe.db.get_value("User", "alice@x.com", "email")
+       # -> "alice@x.com" or None
+
+    2. Multiple fields, by name:
+       name, email = frappe.db.get_value("User", "alice@x.com", ["full_name", "email"])
+       # returns a tuple in list order
+
+    3. With filters + as_dict:
+       row = frappe.db.get_value(
+           "User",
+           {"enabled": 1, "username": "alice"},
+           ["name", "email"],
+           as_dict=True,
+       )
+       # -> {"name": "alice@x.com", "email": "alice@x.com"} or None
+
+    Cheaper than frappe.get_doc when you only need a few fields.
+    Returns None (not raises) when no document matches.
+  examples:
+    good: |
+      # Guard before acting
+      if frappe.db.get_value("Customer", doc.customer, "disabled"):
+          frappe.throw("Cannot create orders for disabled customers")
+    bad: |
+      # Don't load the full doc to read one field
+      c = frappe.get_doc("Customer", doc.customer)
+      if c.disabled:
+          frappe.throw("...")
+  pitfalls:
+    - "Returns None when not found - always handle the None case"
+    - "Field defaults to 'name' - pass an explicit fieldname if you want something else"
+    - "as_dict=True is ONLY useful with a list of fieldnames; passing one fieldname returns the value directly"
+  related: [api_frappe_db_set_value, api_frappe_db_exists]
+  verified_on: "2026-04-16"
+
+api_frappe_db_set_value:
+  kind: api
+  title: "frappe.db.set_value"
+  summary: >
+    Update one or more fields on an existing document WITHOUT loading it.
+    Faster than doc.save() for single-field updates but bypasses lifecycle
+    hooks (before_save, validate, etc.). Use with care.
+  signature: "frappe.db.set_value(doctype, name_or_filters, fieldname, value=None, update_modified=True)"
+  keywords: [set_value, db, update, write, field]
+  body: |
+    Two shapes:
+
+    1. Single field:
+       frappe.db.set_value("ToDo", doc.name, "status", "Closed")
+
+    2. Multiple fields (pass a dict as fieldname):
+       frappe.db.set_value("ToDo", doc.name, {"status": "Closed", "date": today})
+
+    Skips doc lifecycle hooks. If you need validate/before_save to run,
+    load with frappe.get_doc and call .save() instead.
+  examples:
+    good: |
+      # Bulk status flip, no need for per-doc hooks
+      for name in outstanding_names:
+          frappe.db.set_value("Invoice", name, "status", "Overdue")
+    bad: |
+      # Don't use set_value if you need validation / hooks to fire
+      frappe.db.set_value("Sales Order", name, "grand_total", 0)
+      # (skips every validator on Sales Order - total could be wrong)
+  pitfalls:
+    - "Bypasses lifecycle hooks - validate/before_save do NOT run"
+    - "No permission check by default on write - trust but verify"
+  related: [api_frappe_db_get_value]
+  verified_on: "2026-04-16"
+
+api_frappe_db_exists:
+  kind: api
+  title: "frappe.db.exists"
+  summary: >
+    Check if a document exists without loading it. Returns the name string
+    if found, None otherwise. Use before get_doc to avoid DoesNotExistError.
+  signature: "frappe.db.exists(doctype, name_or_filters=None, cache=False) -> str | None"
+  keywords: [exists, db, check, has, present, lookup]
+  body: |
+    Two shapes:
+
+    1. By primary key:
+       if frappe.db.exists("Customer", "CUST-0001"):
+           ...
+
+    2. By filter dict:
+       existing = frappe.db.exists("Contact", {"email_id": "alice@x.com"})
+       # -> "contact-name" or None
+
+    Returns the document NAME (truthy string) when found, None otherwise.
+    Pattern-compatible with `if frappe.db.exists(...):`.
+  examples:
+    good: |
+      if not frappe.db.exists("Item", item_code):
+          frappe.throw(f"Item {item_code} not found")
+    bad: |
+      # Don't count for existence - use exists()
+      if frappe.db.count("Item", {"item_code": x}) > 0:
+          ...   # two extra joins compared to exists()
+  verified_on: "2026-04-16"
+
+api_frappe_db_sql:
+  kind: api
+  title: "frappe.db.sql"
+  summary: >
+    Run a raw SQL query. Use sparingly - almost every case is better served
+    by frappe.get_all / frappe.db.get_value. Parameterize user inputs.
+  signature: "frappe.db.sql(query, values=(), as_dict=False, as_list=False, ...) -> list[tuple] | list[dict]"
+  keywords: [sql, db, query, raw, select]
+  body: |
+    Two shapes:
+
+    1. Positional params (tuple):
+       rows = frappe.db.sql(
+           "SELECT name FROM `tabUser` WHERE enabled = %s",
+           (1,),
+           as_dict=True,
+       )
+
+    2. Named params (dict):
+       rows = frappe.db.sql(
+           "SELECT name FROM `tabUser` WHERE enabled = %(enabled)s",
+           {"enabled": 1},
+           as_dict=True,
+       )
+
+    ALWAYS parameterize. NEVER build SQL with f-strings or concatenation -
+    you'll get a SQL injection bug and our security audit will catch it.
+
+    Prefer frappe.get_all for simple SELECTs with filters; reach for sql()
+    only when you need JOINs, aggregations, or DB functions Frappe doesn't
+    expose directly.
+  examples:
+    good: |
+      rows = frappe.db.sql(
+          "SELECT customer, SUM(grand_total) AS total "
+          "FROM `tabSales Order` "
+          "WHERE docstatus = 1 AND transaction_date >= %s "
+          "GROUP BY customer",
+          (cutoff_date,),
+          as_dict=True,
+      )
+    bad: |
+      # NEVER - SQL injection
+      rows = frappe.db.sql(f"SELECT * FROM `tabUser` WHERE name = '{username}'")
+  pitfalls:
+    - "String interpolation = injection bug. Always pass values as the 2nd arg"
+    - "Bypasses Frappe's permission system - the query returns whatever MySQL returns"
+    - "Table names need backticks: `tabSales Order`, not `Sales Order`"
+  related: [api_frappe_db_get_value, api_frappe_get_all]
+  verified_on: "2026-04-16"
+
+api_frappe_get_all:
+  kind: api
+  title: "frappe.get_all"
+  summary: >
+    List documents matching filters. Returns a list of dicts (or plucked
+    values). Respects the caller's read permissions.
+  signature: "frappe.get_all(doctype, filters=None, fields=None, order_by=None, limit_page_length=20, pluck=None, as_list=False, ...) -> list"
+  keywords: [get_all, list, query, filter, fields, documents]
+  body: |
+    Shapes:
+
+    1. Plain names list:
+       names = frappe.get_all("User", filters={"enabled": 1}, pluck="name")
+       # -> ["alice", "bob", ...]
+
+    2. Multi-field dict list:
+       users = frappe.get_all(
+           "User",
+           filters={"enabled": 1},
+           fields=["name", "email", "full_name"],
+           order_by="creation desc",
+           limit_page_length=50,
+       )
+       # -> [{"name": "...", "email": "...", "full_name": "..."}, ...]
+
+    3. Filter operators (comparison, in, between):
+       orders = frappe.get_all(
+           "Sales Order",
+           filters={"docstatus": 1, "grand_total": [">", 10000]},
+       )
+       filters={"status": ["in", ["Draft", "Submitted"]]}
+       filters={"transaction_date": ["between", [from_date, to_date]]}
+
+    Default limit_page_length is 20 - pass 0 for unlimited (use only when
+    you know the set is bounded).
+  examples:
+    good: |
+      open_todos = frappe.get_all(
+          "ToDo",
+          filters={"status": "Open", "allocated_to": frappe.session.user},
+          fields=["name", "description", "date"],
+      )
+    bad: |
+      # Don't ask for all fields if you only need one
+      names = [r["name"] for r in frappe.get_all("User", filters={"enabled": 1})]
+      # Use pluck instead:
+      names = frappe.get_all("User", filters={"enabled": 1}, pluck="name")
+  pitfalls:
+    - "Default limit is 20 - set limit_page_length explicitly for predictable behavior"
+    - "fields=None returns only 'name' - pass fields explicitly or use pluck"
+    - "pluck=... is cheaper than extracting from dicts yourself"
+  related: [api_frappe_db_get_value, api_frappe_db_sql]
+  verified_on: "2026-04-16"
+
+api_frappe_throw:
+  kind: api
+  title: "frappe.throw"
+  summary: >
+    Raise a user-facing validation error that stops the current operation
+    and displays the message in the UI. Use in validation scripts instead
+    of raw `raise ValidationError`.
+  signature: "frappe.throw(msg, exc=ValidationError, title=None)"
+  keywords: [throw, validation, error, block, prevent, reject, stop]
+  body: |
+    Raises a ValidationError which Frappe intercepts and turns into a
+    toast/modal on the frontend. The transaction is rolled back.
+
+    For translatable messages, wrap the string with `_()`:
+       frappe.throw(_("Date of birth cannot be in the future"))
+
+    Pass a specific exc class for different handling (e.g. PermissionError):
+       frappe.throw(
+           _("You cannot edit closed invoices"),
+           exc=frappe.PermissionError,
+       )
+  examples:
+    good: |
+      if doc.grand_total < 0:
+          frappe.throw(_("Grand total cannot be negative"))
+    bad: |
+      # Don't raise bare exceptions - the user just sees "Internal error"
+      if doc.grand_total < 0:
+          raise ValueError("bad total")
+  pitfalls:
+    - "Prefer frappe.throw(_(msg)) over raise so translations work"
+    - "Don't concatenate user input into the message - use Jinja-style formatting carefully"
+  related: [api_frappe_msgprint, server_script_no_imports]
+  verified_on: "2026-04-16"
+
+api_frappe_msgprint:
+  kind: api
+  title: "frappe.msgprint"
+  summary: >
+    Show an informational message to the user (toast / dialog) without
+    raising. Unlike frappe.throw, execution continues.
+  signature: "frappe.msgprint(msg, title=None, indicator=None, alert=False, ...)"
+  keywords: [msgprint, message, notify, info, alert, toast]
+  body: |
+    Displays to the user and returns. Commonly used to confirm an async
+    action triggered, log context, or give a non-blocking warning.
+
+    Indicator colours: 'red', 'orange', 'green', 'blue'.
+    alert=True -> auto-dismissing toast. Omit for a persistent dialog.
+  examples:
+    good: |
+      frappe.msgprint(_("Reminder email queued"), alert=True, indicator="green")
+    bad: |
+      # Don't use msgprint for validation errors - use frappe.throw
+      if doc.total < 0:
+          frappe.msgprint("bad total")   # user can still save
+  pitfalls:
+    - "Does NOT stop execution - use frappe.throw for validation blocks"
+  related: [api_frappe_throw]
+  verified_on: "2026-04-16"
+
+api_frappe_has_permission:
+  kind: api
+  title: "frappe.has_permission"
+  summary: >
+    Check if the current user has permission to perform an action on a
+    DocType (or specific document). Returns True/False.
+  signature: "frappe.has_permission(doctype, ptype='read', doc=None, user=None, throw=False) -> bool"
+  keywords: [has_permission, permission, authorization, access, check]
+  body: |
+    - ptype: 'read' | 'write' | 'create' | 'delete' | 'submit' | 'cancel'
+    - doc: optional docname or Document instance for row-level checks
+    - throw=True raises PermissionError instead of returning False
+  examples:
+    good: |
+      if not frappe.has_permission("Sales Order", "write", doc.name):
+          frappe.throw(_("Not permitted to edit this order"))
+    bad: |
+      # Don't bypass - e.g. don't load with ignore_permissions=True
+      # just to skip this check unless you're an internal admin tool
+      doc = frappe.get_doc("Sales Order", name, ignore_permissions=True)
+  pitfalls:
+    - "Pass the `doc` argument for row-level perms (share / owner rules)"
+    - "throw=True is cleaner than has_permission + manual frappe.throw"
+  related: [server_script_permission_check]
+  verified_on: "2026-04-16"
+
+api_frappe_integrations_utils_make_get_request:
+  kind: api
+  title: "frappe.make_get_request"
+  summary: >
+    Outbound HTTP GET, safe to call from Server Scripts where `import requests`
+    would fail. Returns parsed JSON (dict/list) on success.
+  signature: "frappe.make_get_request(url, headers=None, auth=None, data=None, **kwargs) -> dict | list"
+  keywords: [make_get_request, http, get, request, api, outbound, requests]
+  body: |
+    The Server-Script-safe replacement for `import requests; requests.get(...)`.
+    Parses the response as JSON automatically. Raises on non-2xx unless you
+    opt out.
+
+    result = frappe.make_get_request(
+        "https://api.example.com/v1/widgets",
+        headers={"Authorization": "Bearer " + api_key},
+    )
+  examples:
+    good: |
+      data = frappe.make_get_request(f"https://rates.example/{currency}")
+      doc.fx_rate = data.get("rate")
+    bad: |
+      # NOT available - `import requests` is forbidden in Server Scripts
+      import requests
+      requests.get(...)
+  pitfalls:
+    - "Parses JSON automatically - non-JSON responses raise"
+    - "Don't hardcode API keys; use frappe.conf or a Secret DocType"
+  related: [server_script_no_imports, api_frappe_integrations_utils_make_post_request]
+  verified_on: "2026-04-16"
+
+api_frappe_integrations_utils_make_post_request:
+  kind: api
+  title: "frappe.make_post_request"
+  summary: >
+    Outbound HTTP POST, safe to call from Server Scripts. Returns parsed
+    JSON. Pass `data` (form) or `data=json.dumps(...)` with a JSON header.
+  signature: "frappe.make_post_request(url, data=None, headers=None, **kwargs) -> dict | list"
+  keywords: [make_post_request, http, post, request, api, outbound, requests]
+  body: |
+    frappe.make_post_request(
+        "https://hooks.example.com/notify",
+        data=json.dumps({"event": "created", "name": doc.name}),
+        headers={"Content-Type": "application/json"},
+    )
+
+    For form-encoded, pass `data` as a dict (not stringified).
+  examples:
+    good: |
+      frappe.make_post_request(
+          webhook_url,
+          data=json.dumps({"doc": doc.name}),
+          headers={"Content-Type": "application/json"},
+      )
+  pitfalls:
+    - "Use json.dumps(...) when posting JSON - don't pass the dict directly unless form-encoded"
+    - "No `import json` needed in Server Scripts - it's pre-bound"
+  related: [server_script_no_imports]
+  verified_on: "2026-04-16"
+
+api_frappe_log_error:
+  kind: api
+  title: "frappe.log_error"
+  summary: >
+    Persist an error entry visible under the Error Log DocType. Does NOT
+    raise - the operation continues. Use for background logging that the
+    user shouldn't see.
+  signature: "frappe.log_error(title=None, message=None, reference_doctype=None, reference_name=None)"
+  keywords: [log_error, error, log, record, track]
+  body: |
+    Writes to the "Error Log" DocType. Useful when you want to record
+    something unusual without blocking the user:
+
+    try:
+        external_call()
+    except Exception:
+        frappe.log_error(title="External API failed", message=frappe.get_traceback())
+  examples:
+    good: |
+      frappe.log_error(title="Stock sync skipped",
+                         message=f"Item {item_code} missing warehouse")
+  pitfalls:
+    - "Silently logs - user sees nothing. Pair with frappe.msgprint if they should know"
+  verified_on: "2026-04-16"
+
+api_frappe_sendmail:
+  kind: api
+  title: "frappe.sendmail"
+  summary: >
+    Queue an email. For most use cases, the Notification DocType is a
+    better fit - declarative, admin-visible, and doesn't need a Server
+    Script. Use sendmail() only when the email is purely transactional.
+  signature: "frappe.sendmail(recipients, subject='', message='', sender=None, reference_doctype=None, reference_name=None, ...)"
+  keywords: [sendmail, email, notify, send, mail]
+  body: |
+    frappe.sendmail(
+        recipients=["alice@example.com"],
+        subject="Your order shipped",
+        message="<p>Tracking: ABC123</p>",
+        reference_doctype="Sales Order",
+        reference_name=doc.name,
+    )
+
+    Queued via the email queue - not sent synchronously.
+  examples:
+    bad: |
+      # Don't re-implement Notification in a Server Script
+      # Build a Notification DocType instead (declarative, admin-visible)
+      frappe.sendmail(
+          recipients=[...],
+          subject="Order submitted",
+          message="...",
+      )
+  pitfalls:
+    - "For 'send email when X happens', prefer a Notification DocType"
+    - "Emails are QUEUED; failures surface in the Email Queue, not synchronously"
+  related: [notification_doctype_vs_server_script]
+  verified_on: "2026-04-16"
+
+api_frappe_utils_nowdate:
+  kind: api
+  title: "frappe.utils.nowdate"
+  summary: >
+    Today's date as an ISO string (YYYY-MM-DD) in the site's timezone.
+    Use instead of `datetime.date.today()` to respect the site's config.
+  signature: "frappe.utils.nowdate() -> str"
+  keywords: [nowdate, today, date, current]
+  body: |
+    today_str = frappe.utils.nowdate()   # e.g. "2026-04-16"
+
+    Returns a string, not a date object. For date math, pair with
+    frappe.utils.getdate / add_days / date_diff.
+  examples:
+    good: |
+      if frappe.utils.date_diff(frappe.utils.nowdate(), doc.dob) < 24 * 365:
+          frappe.throw("Employee must be at least 24 years old")
+    bad: |
+      # Don't use stdlib datetime in Server Scripts (no `import` allowed)
+      import datetime
+      if datetime.date.today() - doc.dob < timedelta(days=24*365):
+          ...
+  related: [api_frappe_utils_getdate, api_frappe_utils_date_diff, server_script_no_imports]
+  verified_on: "2026-04-16"
+
+api_frappe_utils_now_datetime:
+  kind: api
+  title: "frappe.utils.now_datetime"
+  summary: >
+    Current datetime (aware) in the site's timezone. Use instead of
+    datetime.datetime.now() - the site-timezone behaviour is what matters
+    for scheduled jobs and audit timestamps.
+  signature: "frappe.utils.now_datetime() -> datetime"
+  keywords: [now_datetime, now, datetime, timestamp, current]
+  body: |
+    ts = frappe.utils.now_datetime()
+    # -> datetime in site's configured timezone
+  examples:
+    good: |
+      doc.processed_at = frappe.utils.now_datetime()
+  related: [api_frappe_utils_nowdate]
+  verified_on: "2026-04-16"
+
+api_frappe_utils_getdate:
+  kind: api
+  title: "frappe.utils.getdate"
+  summary: >
+    Parse a string / datetime-like value into a date object. Handles common
+    Frappe date formats and site preferences.
+  signature: "frappe.utils.getdate(string_date=None, parse_day_first=False) -> date"
+  keywords: [getdate, parse, date, convert]
+  body: |
+    d = frappe.utils.getdate("2026-04-16")      # -> date(2026, 4, 16)
+    d = frappe.utils.getdate(doc.date_of_birth)  # -> date object
+
+    If you pass a date / datetime, it's returned unchanged. Pass None to
+    get today's date in one call.
+  verified_on: "2026-04-16"
+
+api_frappe_utils_date_diff:
+  kind: api
+  title: "frappe.utils.date_diff"
+  summary: >
+    Difference between two dates in DAYS (an int). date_diff(end, start) -
+    mind the argument order.
+  signature: "frappe.utils.date_diff(string_ed_date, string_st_date) -> int"
+  keywords: [date_diff, diff, days, age, between, difference]
+  body: |
+    days = frappe.utils.date_diff(frappe.utils.nowdate(), doc.start_date)
+    # -> e.g. 120 (positive if end > start)
+
+    Accepts strings or date objects. Returns an int (days).
+  examples:
+    good: |
+      # Minimum age check
+      age_days = frappe.utils.date_diff(frappe.utils.nowdate(), doc.dob)
+      if age_days < 18 * 365:
+          frappe.throw("Must be 18 or older")
+    bad: |
+      # Argument order matters - this gives a NEGATIVE result
+      # when the user's dob is in the past (which is always)
+      age_days = frappe.utils.date_diff(doc.dob, frappe.utils.nowdate())
+  pitfalls:
+    - "Argument order: (end, start). Swapping gives the NEGATIVE value"
+    - "Returns DAYS, not seconds - use time_diff_in_seconds for sub-day precision"
+  related: [api_frappe_utils_nowdate, api_frappe_utils_getdate]
+  verified_on: "2026-04-16"
+
+api_frappe_utils_add_days:
+  kind: api
+  title: "frappe.utils.add_days"
+  summary: >
+    Add (or subtract with negative n) N days from a date. Returns an ISO
+    date string.
+  signature: "frappe.utils.add_days(date, days) -> str"
+  keywords: [add_days, shift, offset, date, arithmetic]
+  body: |
+    due = frappe.utils.add_days(frappe.utils.nowdate(), 7)     # +1 week
+    last_week = frappe.utils.add_days(frappe.utils.nowdate(), -7)  # -1 week
+  examples:
+    good: |
+      doc.due_date = frappe.utils.add_days(doc.transaction_date, 30)
+  pitfalls:
+    - "Returns a STRING (ISO date) not a date object"
+  verified_on: "2026-04-16"
+
+api_frappe_utils_flt:
+  kind: api
+  title: "frappe.utils.flt"
+  summary: >
+    Safe float conversion. Returns 0.0 for None / empty string / unparseable
+    input instead of raising. Use whenever you're about to do arithmetic on
+    a field that might be None.
+  signature: "frappe.utils.flt(value, precision=None) -> float"
+  keywords: [flt, float, number, convert, parse, safe]
+  body: |
+    x = frappe.utils.flt(doc.discount_percent)   # None -> 0.0, "12.5" -> 12.5
+    x = frappe.utils.flt(value, precision=2)     # rounded to 2 decimals
+
+    Common pattern: defend against None-ish fields before math.
+  examples:
+    good: |
+      total = frappe.utils.flt(doc.qty) * frappe.utils.flt(doc.rate)
+    bad: |
+      # Don't - doc.qty might be None -> TypeError
+      total = doc.qty * doc.rate
+  pitfalls:
+    - "Returns 0.0 for ANYTHING unparseable - won't tell you the source was bad"
+  related: [api_frappe_utils_cint]
+  verified_on: "2026-04-16"
+
+api_frappe_utils_cint:
+  kind: api
+  title: "frappe.utils.cint"
+  summary: >
+    Safe int conversion. Returns 0 for None / empty / unparseable input.
+    Int flavour of flt() - same safety, same caveats.
+  signature: "frappe.utils.cint(value, default=0) -> int"
+  keywords: [cint, int, integer, number, convert, parse, safe]
+  body: |
+    n = frappe.utils.cint(doc.qty)      # None -> 0
+    n = frappe.utils.cint("5", 99)      # 5
+    n = frappe.utils.cint("", 99)       # 99
+  related: [api_frappe_utils_flt]
+  verified_on: "2026-04-16"

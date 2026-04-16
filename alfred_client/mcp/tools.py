@@ -190,6 +190,171 @@ def get_existing_customizations():
 	}
 
 
+# Truncation budgets. Server Scripts carry real logic so they get a bigger
+# window than Client Scripts (mostly event wiring) and Notification subjects
+# (one-liner strings). Keeping previews small keeps the injected SITE STATE
+# banner under a few KB even for heavily-customized DocTypes.
+_SITE_DETAIL_SCRIPT_PREVIEW = 600       # chars of Server Script body
+_SITE_DETAIL_CLIENT_PREVIEW = 300       # chars of Client Script body
+_SITE_DETAIL_NOTIF_SUBJECT = 120        # chars of Notification subject
+
+
+def _truncate(s: str | None, limit: int) -> str:
+	s = s or ""
+	if len(s) <= limit:
+		return s
+	return s[:limit].rstrip() + "..."
+
+
+@_safe_execute
+def get_site_customization_detail(doctype):
+	"""Deep per-DocType recon of existing site customizations.
+
+	Where `get_existing_customizations()` lists names + event types site-wide,
+	this returns the full body and structure for artefacts on ONE DocType -
+	so an agent asked to "add a validation to Employee" can see the existing
+	validation Server Script and decide whether to extend, replace, or refuse.
+
+	Returns (on success):
+	  {
+	    "doctype": str,
+	    "custom_fields":  [{fieldname, fieldtype, label, options, reqd}, ...],
+	    "server_scripts": [{name, script_type, doctype_event, script,
+	                         disabled}, ...],      # script truncated at 600
+	    "workflows":      [{name, is_active, workflow_state_field,
+	                         states:[{state, doc_status, allow_edit}, ...],
+	                         transitions:[{state, action, next_state,
+	                                       allowed}, ...]}, ...],
+	    "notifications":  [{name, event, channel, subject, enabled}, ...],
+	    "client_scripts": [{name, view, script_preview, enabled}, ...],
+	  }
+
+	Returns `{"error": "not_found", ...}` if the DocType doesn't exist on the
+	site, `{"error": "permission_denied", ...}` if the caller lacks read
+	permission. The _safe_execute wrapper handles both.
+
+	Reads respect Frappe's permission system: frappe.get_all already filters
+	by the caller's DocType-level read permission. We additionally gate the
+	call on `frappe.has_permission(doctype, "read")` to fail fast (and with a
+	clear error) for DocTypes the user can't see.
+	"""
+	if not doctype or not isinstance(doctype, str):
+		return {"error": "invalid_argument", "message": "doctype must be a non-empty string"}
+
+	# DocType existence check. frappe.db.exists returns the name (truthy) or None.
+	if not frappe.db.exists("DocType", doctype):
+		return {"error": "not_found", "message": f"DocType {doctype!r} not found"}
+
+	# Permission check on the parent DocType - same pattern the existing
+	# customization list uses, just scoped to one target here.
+	if not frappe.has_permission(doctype, "read"):
+		return {"error": "permission_denied",
+				"message": f"No read permission on {doctype!r}"}
+
+	# Custom Fields on this DocType.
+	custom_fields = frappe.get_all(
+		"Custom Field",
+		filters={"dt": doctype},
+		fields=["name", "fieldname", "fieldtype", "label", "options", "reqd"],
+		order_by="idx asc",
+		limit_page_length=100,
+	)
+
+	# Server Scripts wired to this DocType. Include the body (truncated)
+	# because that's the whole point of this tool - the agent needs to see
+	# what logic is already there.
+	server_scripts_raw = frappe.get_all(
+		"Server Script",
+		filters={"reference_doctype": doctype},
+		fields=["name", "script_type", "doctype_event", "disabled", "script"],
+		limit_page_length=50,
+	)
+	server_scripts = [
+		{
+			"name": s.get("name"),
+			"script_type": s.get("script_type"),
+			"doctype_event": s.get("doctype_event"),
+			"disabled": int(s.get("disabled") or 0),
+			"script": _truncate(s.get("script"), _SITE_DETAIL_SCRIPT_PREVIEW),
+		}
+		for s in server_scripts_raw
+	]
+
+	# Workflows. States and transitions are child tables on the Workflow doc,
+	# so we load the full doc (not frappe.get_all) to walk them.
+	workflow_names = frappe.get_all(
+		"Workflow",
+		filters={"document_type": doctype},
+		pluck="name",
+		limit_page_length=20,
+	)
+	workflows = []
+	for wf_name in workflow_names:
+		try:
+			wf = frappe.get_doc("Workflow", wf_name)
+		except Exception:
+			continue
+		workflows.append({
+			"name": wf.name,
+			"is_active": int(getattr(wf, "is_active", 0) or 0),
+			"workflow_state_field": getattr(wf, "workflow_state_field", None),
+			"states": [
+				{
+					"state": st.state,
+					"doc_status": str(st.doc_status) if st.doc_status is not None else "0",
+					"allow_edit": st.allow_edit,
+				}
+				for st in (wf.states or [])
+			],
+			"transitions": [
+				{
+					"state": tr.state,
+					"action": tr.action,
+					"next_state": tr.next_state,
+					"allowed": tr.allowed,
+				}
+				for tr in (wf.transitions or [])
+			],
+		})
+
+	# Notifications targeting this DocType.
+	notifications = frappe.get_all(
+		"Notification",
+		filters={"document_type": doctype},
+		fields=["name", "event", "channel", "subject", "enabled"],
+		limit_page_length=50,
+	)
+	for n in notifications:
+		n["subject"] = _truncate(n.get("subject"), _SITE_DETAIL_NOTIF_SUBJECT)
+		n["enabled"] = int(n.get("enabled") or 0)
+
+	# Client Scripts.
+	client_scripts_raw = frappe.get_all(
+		"Client Script",
+		filters={"dt": doctype},
+		fields=["name", "view", "enabled", "script"],
+		limit_page_length=50,
+	)
+	client_scripts = [
+		{
+			"name": c.get("name"),
+			"view": c.get("view"),
+			"enabled": int(c.get("enabled") or 0),
+			"script_preview": _truncate(c.get("script"), _SITE_DETAIL_CLIENT_PREVIEW),
+		}
+		for c in client_scripts_raw
+	]
+
+	return {
+		"doctype": doctype,
+		"custom_fields": custom_fields,
+		"server_scripts": server_scripts,
+		"workflows": workflows,
+		"notifications": notifications,
+		"client_scripts": client_scripts,
+	}
+
+
 @_safe_execute
 def get_user_context():
 	"""Get the current user's email, roles, permissions, and permitted modules."""
@@ -437,6 +602,59 @@ def lookup_pattern(query, kind="all"):
 	return {"source": "search", **search}
 
 
+@_safe_execute
+def lookup_frappe_knowledge(query, kind=None, k=3):
+	"""Retrieve Frappe platform knowledge (rules, APIs, idioms) from the FKB.
+
+	Third knowledge layer alongside framework_kg (DocType schemas) and
+	customization_patterns (recipes). Holds platform rules (e.g. "Server
+	Scripts can't use import"), Frappe API reference, and Frappe idioms
+	(hooks, lifecycle, rename flows). Call when you need to check a platform
+	constraint before writing code, or to look up how a Frappe API behaves.
+
+	The pipeline auto-injects the top matches for the user's enhanced prompt,
+	so you usually don't need to call this manually - but it's here for when
+	you want to pull additional context during Thought/Action reasoning.
+
+	Args:
+		query: Free text (e.g. "server script import", "db.get_value",
+			"workflow states"). Short keywords work well.
+		kind: Optional filter - "rule" | "api" | "idiom" | None (all).
+		k: Number of top matches to return (default 3).
+
+	Example:
+		lookup_frappe_knowledge("server script import")
+		  -> {"entries": [{id: "server_script_no_imports", title: ..., body: ..., _score: 16}, ...]}
+		lookup_frappe_knowledge("how to send an alert", kind="rule")
+		  -> {"entries": [{id: "notification_doctype_vs_server_script", ...}]}
+		lookup_frappe_knowledge("", kind="rule")  # discovery
+		  -> {"entries": [... summaries of all rule entries ...]}
+
+	Returns:
+		{"entries": [...]} - top-k matches with full body + examples, or
+		summary list if query is empty.
+		{"error": "...", "message": "..."} on invalid kind.
+	"""
+	from alfred_client.mcp import frappe_kb
+
+	if kind is not None:
+		kind_norm = (kind or "").lower()
+		if kind_norm not in {"rule", "api", "idiom", "style"}:
+			return {
+				"error": "invalid_argument",
+				"message": f"kind must be rule|api|idiom|style, got {kind!r}",
+			}
+	else:
+		kind_norm = None
+
+	if not query or not str(query).strip():
+		# Discovery mode: return summaries so the agent can pick one by id.
+		return {"entries": frappe_kb.list_entries(kind=kind_norm), "mode": "list"}
+
+	results = frappe_kb.search_keyword(str(query), kind=kind_norm, k=int(k or 3))
+	return {"entries": results, "mode": "search", "query": query}
+
+
 # ── Tool Registry ────────────────────────────────────────────────
 
 TOOL_REGISTRY = {
@@ -444,6 +662,7 @@ TOOL_REGISTRY = {
 	"get_doctypes": get_doctypes,
 	"get_doctype_schema": get_doctype_schema,  # kept for backwards-compat; prefer lookup_doctype
 	"get_existing_customizations": get_existing_customizations,
+	"get_site_customization_detail": get_site_customization_detail,
 	"get_user_context": get_user_context,
 	"check_permission": check_permission,
 	"validate_name_available": validate_name_available,
@@ -453,4 +672,6 @@ TOOL_REGISTRY = {
 	# Consolidated tools from the Framework KG (Tier 1b)
 	"lookup_doctype": lookup_doctype,
 	"lookup_pattern": lookup_pattern,
+	# Frappe Knowledge Base (platform rules, APIs, idioms)
+	"lookup_frappe_knowledge": lookup_frappe_knowledge,
 }

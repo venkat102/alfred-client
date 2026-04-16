@@ -17,9 +17,10 @@ def run_tests():
 	# Test 1: tools/list
 	# TOOL_REGISTRY grew post Phase 1 tool consolidation: dry_run_changeset
 	# (pipeline validation) and the consolidated lookup_doctype +
-	# lookup_pattern (Framework KG) joined the original 9. Keep this set in
-	# sync with TOOL_REGISTRY in alfred_client/mcp/tools.py.
-	print("Test 1: tools/list returns all 12 tools...")
+	# lookup_pattern (Framework KG) joined the original 9. FKB Phase A added
+	# lookup_frappe_knowledge. FKB Phase B.5 added get_site_customization_detail.
+	# Keep this set in sync with TOOL_REGISTRY in alfred_client/mcp/tools.py.
+	print("Test 1: tools/list returns all 14 tools...")
 	response = handle_mcp_request({
 		"jsonrpc": "2.0",
 		"method": "tools/list",
@@ -39,6 +40,10 @@ def run_tests():
 		"dry_run_changeset",
 		# Phase 1b: consolidated Framework KG tools
 		"lookup_doctype", "lookup_pattern",
+		# FKB Phase A: platform knowledge base
+		"lookup_frappe_knowledge",
+		# FKB Phase B.5: per-DocType deep recon
+		"get_site_customization_detail",
 	}
 	assert tool_names == expected_tools, f"Expected {expected_tools}, got {tool_names}"
 	# Every tool must carry a non-empty docstring so agents can decide when
@@ -371,6 +376,106 @@ def run_tests():
 	content = json.loads(response["result"]["content"][0]["text"])
 	assert content.get("error") == "invalid_argument"
 	print("  invalid kind rejected: OK")
+	print("  PASSED\n")
+
+	# Test 19: get_site_customization_detail - known DocType returns deep shape
+	# Using "ToDo" because it's a core built-in DocType present on every Frappe
+	# site and the permission system lets us read it without special setup.
+	print("Test 19: tools/call get_site_customization_detail (ToDo)...")
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "get_site_customization_detail",
+		            "arguments": {"doctype": "ToDo"}},
+		"id": 23,
+	})
+	assert "result" in response, f"Error: {response.get('error')}"
+	content = json.loads(response["result"]["content"][0]["text"])
+	# May or may not have customizations, but the shape must match regardless.
+	assert content.get("doctype") == "ToDo"
+	for key in ("custom_fields", "server_scripts", "workflows",
+	            "notifications", "client_scripts"):
+		assert key in content, f"missing key {key} in response"
+		assert isinstance(content[key], list), f"{key} must be a list"
+	print(f"  shape OK: "
+	      f"cf={len(content['custom_fields'])} "
+	      f"ss={len(content['server_scripts'])} "
+	      f"wf={len(content['workflows'])} "
+	      f"nt={len(content['notifications'])} "
+	      f"cs={len(content['client_scripts'])}")
+	print("  PASSED\n")
+
+	# Test 20: get_site_customization_detail - unknown DocType returns not_found
+	print("Test 20: tools/call get_site_customization_detail (unknown)...")
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "get_site_customization_detail",
+		            "arguments": {"doctype": "Nonexistent DocType XYZ"}},
+		"id": 24,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("error") == "not_found", f"Expected not_found, got {content}"
+	print("  unknown DocType correctly rejected")
+	print("  PASSED\n")
+
+	# Test 21: get_site_customization_detail - invalid argument rejected
+	print("Test 21: tools/call get_site_customization_detail (empty doctype)...")
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "get_site_customization_detail",
+		            "arguments": {"doctype": ""}},
+		"id": 25,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("error") == "invalid_argument", f"Expected invalid_argument, got {content}"
+	print("  empty doctype correctly rejected")
+	print("  PASSED\n")
+
+	# Test 22: get_site_customization_detail - Server Script bodies are truncated
+	# Set up a Server Script with a body longer than the truncation budget
+	# (600 chars) and assert the returned body is truncated.
+	print("Test 22: get_site_customization_detail truncates Server Script bodies...")
+	test_script_name = "Alfred Test FKB Long Script"
+	# Clean up any leftover from a prior run.
+	if frappe.db.exists("Server Script", test_script_name):
+		frappe.delete_doc("Server Script", test_script_name, force=True)
+	long_body = "# padding " * 150  # ~1500 chars
+	frappe.get_doc({
+		"doctype": "Server Script",
+		"name": test_script_name,
+		"script_type": "DocType Event",
+		"reference_doctype": "ToDo",
+		"doctype_event": "Before Save",
+		"script": long_body + "\nfrappe.msgprint('ok')",
+	}).insert(ignore_permissions=True)
+	frappe.db.commit()
+
+	try:
+		response = handle_mcp_request({
+			"jsonrpc": "2.0",
+			"method": "tools/call",
+			"params": {"name": "get_site_customization_detail",
+			            "arguments": {"doctype": "ToDo"}},
+			"id": 26,
+		})
+		content = json.loads(response["result"]["content"][0]["text"])
+		ours = [s for s in content["server_scripts"] if s["name"] == test_script_name]
+		assert ours, f"test script not found in response: {content['server_scripts']}"
+		returned_script = ours[0]["script"]
+		assert len(returned_script) < len(long_body), (
+			f"expected truncation, got {len(returned_script)} chars"
+		)
+		assert returned_script.endswith("..."), (
+			f"truncated string must end with '...' sentinel, got {returned_script[-20:]!r}"
+		)
+		print(f"  body truncated: {len(returned_script)} chars (from {len(long_body)}+)")
+	finally:
+		# Always clean up the fixture
+		if frappe.db.exists("Server Script", test_script_name):
+			frappe.delete_doc("Server Script", test_script_name, force=True)
+			frappe.db.commit()
 	print("  PASSED\n")
 
 	print("=== All MCP Server Tests PASSED ===\n")

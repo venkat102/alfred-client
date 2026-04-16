@@ -1,0 +1,919 @@
+# Frappe Knowledge Base - Idioms
+#
+# "How Frappe wants it done" facts that don't live in any single docstring.
+# These are patterns an experienced Frappe developer knows but that agents
+# regularly get wrong from training memory alone.
+#
+# Entries here describe CONVENTIONS and LIFECYCLE. They're the difference
+# between code that compiles and code that's correct for Frappe.
+#
+# Schema (shared with rules.yaml / apis.yaml):
+#   kind: idiom
+#   title / summary / keywords / body / verified_on (required)
+#   examples / related (optional)
+
+idiom_hooks_doc_events:
+  kind: idiom
+  title: "Wiring server-side logic via hooks.py doc_events"
+  summary: >
+    The app-level version of Server Script. Defined in hooks.py,
+    version-controlled, unit-testable. Runs at the same lifecycle points
+    (validate, before_save, on_submit, ...) as a Server Script with
+    doctype_event.
+  keywords:
+    - hooks
+    - doc_events
+    - lifecycle
+    - app_hook
+    - on_update
+    - before_save
+    - on_submit
+    - validate
+    - event_handler
+  body: |
+    Use when you're shipping an app (not a Server Script on a customer site).
+    Put logic in a module function and wire it from `hooks.py`:
+
+        # hooks.py
+        doc_events = {
+            "Sales Order": {
+                "validate":   "myapp.events.sales_order.validate",
+                "on_submit":  "myapp.events.sales_order.on_submit",
+                "on_cancel":  "myapp.events.sales_order.on_cancel",
+            },
+            "*": {
+                "on_update":  "myapp.events.any.on_update",  # fires for ALL doctypes
+            },
+        }
+
+    The handler receives (doc, method):
+
+        # myapp/events/sales_order.py
+        import frappe
+        from frappe import _
+
+        def validate(doc, method):
+            if doc.grand_total < 0:
+                frappe.throw(_("Grand total cannot be negative"))
+
+    Raise `frappe.ValidationError` (or use `frappe.throw`) to block the op.
+    Handler errors roll back the current transaction.
+
+    Multiple apps can register handlers for the same (DocType, event) -
+    they all run, in the order apps are installed.
+  examples:
+    good: |
+      # hooks.py
+      doc_events = {"Employee": {"validate": "hrapp.employee.check_age"}}
+
+      # hrapp/employee.py
+      def check_age(doc, method):
+          if frappe.utils.date_diff(frappe.utils.nowdate(), doc.date_of_birth) < 24*365:
+              frappe.throw(_("Employee must be at least 24 years old"))
+    bad: |
+      # Don't create a Server Script if the logic belongs in an app - you
+      # lose version control, code review, and unit tests.
+  related:
+    - server_script_no_imports
+    - idiom_submit_lifecycle
+  verified_on: "2026-04-16"
+
+idiom_submit_lifecycle:
+  kind: idiom
+  title: "Submit / Cancel lifecycle on submittable DocTypes"
+  summary: >
+    Submittable DocTypes (`is_submittable: 1`) have three docstatus states:
+    0=Draft, 1=Submitted, 2=Cancelled. Transitions are strict: Draft ->
+    Submitted -> Cancelled. Submitted docs are read-only except via
+    .amend() which creates a new Draft.
+  keywords:
+    - submit
+    - cancel
+    - amend
+    - docstatus
+    - submittable
+    - lifecycle
+    - draft
+    - on_submit
+    - on_cancel
+    - before_submit
+  body: |
+    docstatus values:
+      0 - Draft     (editable)
+      1 - Submitted (read-only, triggers downstream accounting / stock entries)
+      2 - Cancelled (read-only, reverses the submit)
+
+    Lifecycle hooks (called on each transition, both from hooks.py and from
+    Server Scripts with the matching doctype_event):
+      before_submit / on_submit      - validate / side-effect on Draft->Submitted
+      before_cancel / on_cancel      - validate / side-effect on Submitted->Cancelled
+      before_update_after_submit     - the ONLY editable moment after submit
+                                         (allow_on_submit fields only)
+
+    Amendment flow:
+      cancelled_doc.amend()          -> returns a new Draft with amended_from
+                                         pointing to the cancelled original.
+                                         Submit the new Draft to supersede.
+
+    If a field must be editable AFTER submit (e.g. "Status" that external
+    systems flip), set allow_on_submit=1 on the field and write via
+    frappe.db.set_value or the before_update_after_submit hook.
+  examples:
+    good: |
+      def on_submit(doc, method):
+          # Post-submit side effect - create a journal entry
+          je = frappe.new_doc("Journal Entry")
+          je.voucher_type = "Journal Entry"
+          je.posting_date = doc.posting_date
+          je.append("accounts", {...})
+          je.insert(ignore_permissions=True)
+          je.submit()
+    bad: |
+      # Don't mutate doc fields in on_submit - use validate/before_submit
+      def on_submit(doc, method):
+          doc.some_field = "X"   # won't persist, doc is already committed
+  related:
+    - idiom_hooks_doc_events
+    - workflow_requirements
+  verified_on: "2026-04-16"
+
+idiom_rename_flow:
+  kind: idiom
+  title: "Renaming documents: frappe.rename_doc + before/after_rename hooks"
+  summary: >
+    frappe.rename_doc updates the primary key and every foreign-key
+    reference across the DB. It's transactional. Use before_rename /
+    after_rename hooks on the DocType for side effects.
+  keywords:
+    - rename
+    - rename_doc
+    - before_rename
+    - after_rename
+    - primary_key
+    - merge
+  body: |
+    rename_doc signature:
+        frappe.rename_doc(doctype, old, new, merge=False,
+                          force=False, ignore_permissions=False)
+
+    With merge=True and `new` pointing to an existing doc, all references
+    from `old` move to `new` and `old` is deleted (like a MERGE).
+
+    Hooks fire in order:
+        before_rename(doc, method, old, new, merge)
+        <rename happens>
+        after_rename(doc, method, old, new, merge)
+
+    The rename updates `name` on the parent doc AND every Link field on
+    other doctypes pointing at it (Frappe scans the schema automatically).
+    Child-table parent references are rewritten too.
+
+    Not all autoname strategies allow renames:
+      field:<fieldname>       -> rename updates the source field too
+      naming_series / hash    -> renames are blocked unless force=True
+      Prompt / set_new_name   -> always allowed
+
+    If the DocType is `is_submittable`, submitted docs can only be renamed
+    with merge=False and force=True (and it's almost always wrong to
+    rename a submitted transaction).
+  related:
+    - doctype_naming_constraints
+  verified_on: "2026-04-16"
+
+idiom_versioning:
+  kind: idiom
+  title: "Version tracking: DocType.track_changes + Version doctype"
+  summary: >
+    Set track_changes=1 on a DocType and Frappe auto-creates a "Version"
+    record on every save capturing the diff. View history on the form sidebar.
+  keywords:
+    - version
+    - track_changes
+    - history
+    - audit
+    - diff
+    - change_log
+  body: |
+    On the DocType JSON:
+        "track_changes": 1
+
+    Frappe then writes a Version row on every save containing the diff.
+    Access programmatically:
+
+        versions = frappe.get_all(
+            "Version",
+            filters={"ref_doctype": "Sales Order", "docname": "SO-0001"},
+            fields=["name", "owner", "creation", "data"],
+            order_by="creation desc",
+        )
+
+    `data` is JSON with `changed`, `added`, `removed` sections. Parse with
+    `frappe.parse_json(v.data)`.
+
+    For custom audit needs beyond the built-in Version tracking (e.g. log
+    to an external system), use an on_update handler that writes to your
+    own audit DocType - don't try to reinvent Version.
+
+    Versioning is opt-in. Don't enable it on high-volume DocTypes (Stock
+    Ledger Entry, GL Entry) - the Version table grows unboundedly.
+  related:
+    - idiom_hooks_doc_events
+  verified_on: "2026-04-16"
+
+idiom_print_format_jinja:
+  kind: idiom
+  title: "Print Format: Jinja context is `doc`, no `frappe` module"
+  summary: >
+    Jinja templates in Print Formats receive `doc` (the record) and a
+    limited set of helpers. The full `frappe` module is NOT in scope -
+    use the whitelisted helpers instead (e.g. `frappe.utils.fmt_money`).
+  keywords:
+    - print_format
+    - jinja
+    - template
+    - print
+    - pdf
+    - doc
+    - html
+  body: |
+    Variables in scope inside a Print Format Jinja template:
+      doc              - the target document (full)
+      frappe.utils.*   - whitelisted helpers (fmt_money, format_date, ...)
+      frappe.format_value
+      frappe.get_meta  - fetch DocType metadata
+      _                - translation
+      letter_head      - the letterhead HTML (if one is picked)
+      print_settings   - Print Settings singleton
+      landscape        - orientation boolean
+
+    NOT in scope:
+      frappe.db        - no DB reads inside templates
+      frappe.get_doc   - no doc loads
+      plain Python imports
+
+    Example fragment:
+        <h2>Invoice {{ doc.name }}</h2>
+        <p>Date: {{ frappe.format_date(doc.posting_date) }}</p>
+        <table>
+          {% for item in doc.items %}
+            <tr>
+              <td>{{ item.item_name }}</td>
+              <td>{{ frappe.utils.fmt_money(item.amount, currency=doc.currency) }}</td>
+            </tr>
+          {% endfor %}
+        </table>
+
+    If you need data from a related doc inside the template, compute it
+    via a Server Script that sets a virtual field on `doc` before the
+    Print Format renders, OR use frappe.get_meta for metadata.
+  related:
+    - notification_doctype_vs_server_script
+  verified_on: "2026-04-16"
+
+idiom_assignment_rule:
+  kind: idiom
+  title: "Assignment Rule for auto-assigning ToDos on DocType events"
+  summary: >
+    Built-in DocType that assigns ToDos to users (round-robin, load-based,
+    or by rule) when records are created / updated. Declarative - no
+    Server Script needed for typical assignment workflows.
+  keywords:
+    - assignment_rule
+    - auto_assign
+    - todo
+    - assign
+    - round_robin
+    - workload
+  body: |
+    Use Assignment Rule DocType (built into Frappe) when the user wants:
+      "assign new Sales Orders to the least-loaded Sales User"
+      "round-robin support tickets across the Support team"
+      "assign purchase invoices to the Finance Manager for approval"
+
+    Configuration (Assignment Rule fields):
+      document_type       - the DocType to watch
+      rule                - Round Robin / Load Balancing / Based on Field
+      assign_condition    - Jinja-style condition ({{ doc.priority == "High" }})
+      unassign_condition  - when to remove the assignment
+      users               - child table of candidate users
+      assign_on           - which events trigger assignment
+      days                - limit to business days only
+
+    Assignment Rule creates a ToDo on the target doc assigned to the
+    chosen user. The user sees it on their dashboard.
+
+    DO NOT write a Server Script that calls frappe.assign.add(...) - the
+    Assignment Rule doctype exists for exactly this purpose, is admin-
+    visible, and handles load balancing automatically.
+  related:
+    - notification_doctype_vs_server_script
+    - minimal_change_principle
+  verified_on: "2026-04-16"
+
+idiom_background_job_enqueue:
+  kind: idiom
+  title: "Background jobs: frappe.enqueue for long-running work"
+  summary: >
+    For anything that takes more than a second - external API calls,
+    bulk updates, PDF generation, report building - use frappe.enqueue
+    to push the work onto a background worker. The HTTP request returns
+    immediately.
+  keywords:
+    - enqueue
+    - background
+    - job
+    - queue
+    - async
+    - worker
+    - long_running
+  body: |
+    Signature:
+        frappe.enqueue(
+            method,                # dotted path to a whitelisted function
+            queue="default",       # short | default | long
+            timeout=None,          # seconds; defaults per-queue
+            now=False,             # run inline for tests
+            enqueue_after_commit=False,   # wait for current txn to commit
+            job_name=None,         # dedupe/display name
+            **kwargs               # passed to the function
+        )
+
+    Queue choices and when to use them:
+      short   - <30s, dashboard updates, invalidations
+      default - <5min, typical batch work
+      long    - multi-minute work, reports, exports
+
+    Example:
+        frappe.enqueue(
+            "myapp.tasks.rebuild_customer_index",
+            queue="long",
+            customer=doc.name,
+            enqueue_after_commit=True,
+        )
+
+    enqueue_after_commit is important for doc lifecycle hooks: wait until
+    the triggering transaction commits before starting the job, so the
+    job sees the final state.
+
+    The target method must be whitelisted (@frappe.whitelist()) OR be in
+    an internal module path. Anonymous lambdas / nested functions don't
+    work.
+
+    For schedules (e.g. "every day at 2am"), use hooks.py:scheduler_events
+    instead of enqueue.
+  examples:
+    good: |
+      def on_submit(doc, method):
+          frappe.enqueue(
+              "myapp.notifications.broadcast",
+              queue="short",
+              enqueue_after_commit=True,
+              order_name=doc.name,
+          )
+    bad: |
+      def on_submit(doc, method):
+          # Don't do the work inline - the user waits for the HTTP response
+          for customer in frappe.get_all("Customer"):
+              send_notification(customer)
+  related:
+    - idiom_scheduler_events
+    - server_script_no_imports
+  verified_on: "2026-04-16"
+
+idiom_scheduler_events:
+  kind: idiom
+  title: "Scheduled jobs via hooks.py scheduler_events"
+  summary: >
+    Register periodic tasks (hourly / daily / weekly / cron) in hooks.py.
+    Runs on the scheduler worker; respects site settings and timezone.
+  keywords:
+    - scheduler
+    - cron
+    - periodic
+    - scheduler_events
+    - schedule
+    - daily
+    - hourly
+    - weekly
+  body: |
+    hooks.py example:
+
+        scheduler_events = {
+            "hourly": [
+                "myapp.tasks.refresh_fx_rates",
+            ],
+            "daily": [
+                "myapp.tasks.send_daily_summary",
+            ],
+            "cron": {
+                "0 */4 * * *": [
+                    "myapp.tasks.every_four_hours",
+                ],
+                "30 9 * * MON": [
+                    "myapp.tasks.monday_morning_report",
+                ],
+            },
+        }
+
+    Buckets: hourly / daily / weekly / monthly / cron. Pick the most
+    specific bucket that fits - "cron" is a last resort when fixed
+    intervals don't fit your cadence.
+
+    The task functions should be idempotent - the scheduler can retry on
+    failure. If a task depends on "not having run in the last hour",
+    store a last-run timestamp in Singles and check it.
+
+    Run locally (without waiting): `bench trigger-scheduler-event hourly`.
+  related:
+    - idiom_background_job_enqueue
+  verified_on: "2026-04-16"
+
+idiom_cache_singles:
+  kind: idiom
+  title: "Caching with frappe.cache() and frappe.get_single"
+  summary: >
+    Two levels of caching. Redis-backed frappe.cache() for hot transient
+    data (rate limits, tokens, computed summaries). Single DocTypes for
+    config + cached values that survive restarts.
+  keywords:
+    - cache
+    - redis
+    - singles
+    - frappe.cache
+    - get_single
+    - config
+    - settings
+  body: |
+    Redis cache (ephemeral, cluster-wide):
+
+        cache = frappe.cache()
+        cache.set_value("fx:USD:EUR", "0.92", expires_in_sec=3600)
+        rate = cache.get_value("fx:USD:EUR")  # -> "0.92" or None
+
+        # Delete / invalidate
+        cache.delete_value("fx:USD:EUR")
+        cache.delete_keys("fx:*")
+
+    Single DocTypes (persistent config):
+
+        settings = frappe.get_single("My App Settings")
+        max_retries = frappe.utils.cint(settings.max_retries)
+        # writes:
+        settings.max_retries = 5
+        settings.save()
+
+        # or shortcut read:
+        max_retries = frappe.db.get_single_value("My App Settings", "max_retries")
+
+    Rule of thumb:
+      - Value survives restart / is edited by admins -> Single DocType
+      - Value is transient / recomputable / hot-path -> frappe.cache()
+  related:
+    - api_frappe_db_get_value
+  verified_on: "2026-04-16"
+
+idiom_fixtures:
+  kind: idiom
+  title: "Shipping default data with fixtures (export_fixtures + fixtures hook)"
+  summary: >
+    Fixtures are JSON snapshots of DocType records that ship with an app
+    and install on bench update. Use for default roles, report configs,
+    workflow definitions, anything you want every installation to have.
+  keywords:
+    - fixtures
+    - export_fixtures
+    - seed
+    - default_data
+    - install
+    - migrate
+  body: |
+    In hooks.py:
+
+        fixtures = [
+            # Export everything of a doctype
+            "Custom Field",
+
+            # Filtered export (only rows matching the filter)
+            {"dt": "Workflow",
+             "filters": [["name", "in", ("Expense Claim Approval",
+                                            "Leave Approval")]]},
+        ]
+
+    To export the current site's fixtures into the app directory:
+        bench --site dev.alfred export-fixtures --app myapp
+
+    Fixtures install on `bench migrate`. Existing records are overwritten -
+    so fixtures are AUTHORITATIVE for their DocType+name. Don't fixture
+    things the customer is meant to edit (Customer records, Item, etc).
+
+    Good fixture candidates:
+      Workflow, Workflow State, Workflow Action, Role, Role Profile,
+      Custom Field, Custom DocPerm, Notification, Assignment Rule,
+      Auto Repeat template, Print Format.
+
+    Bad fixture candidates:
+      transactional DocTypes (Sales Order, Journal Entry, ...),
+      anything with autogenerated naming,
+      anything that holds customer-specific state.
+  verified_on: "2026-04-16"
+
+idiom_client_script_call_method:
+  kind: idiom
+  title: "Client Script -> server method via frappe.call"
+  summary: >
+    Client Scripts (JS) can't run server logic directly. Use frappe.call
+    to invoke a whitelisted Python function on the server, with a callback
+    that receives the response.
+  keywords:
+    - frappe.call
+    - client_script
+    - ajax
+    - callback
+    - whitelisted
+    - server_method
+  body: |
+    Server side (Python, usually in your app's api.py):
+
+        import frappe
+
+        @frappe.whitelist()
+        def send_reminder(name):
+            # ... business logic ...
+            return {"status": "queued", "at": frappe.utils.now()}
+
+    Client side (JS inside a Client Script or the form events block):
+
+        frappe.ui.form.on("Sales Order", {
+            refresh(frm) {
+                if (frm.doc.docstatus === 1) {
+                    frm.add_custom_button(__("Send Reminder"), () => {
+                        frappe.call({
+                            method: "myapp.api.send_reminder",
+                            args: {name: frm.doc.name},
+                            callback(r) {
+                                if (!r.exc) {
+                                    frappe.show_alert({
+                                        message: __("Reminder queued"),
+                                        indicator: "green",
+                                    });
+                                }
+                            },
+                        });
+                    });
+                }
+            },
+        });
+
+    The target Python method MUST be @frappe.whitelist(). Non-whitelisted
+    methods return PermissionError to the browser.
+
+    For simple field reads, skip frappe.call and use frappe.db.get_value
+    (the client shim works identically to the server function).
+  examples:
+    good: |
+      frappe.call({
+          method: "myapp.api.get_customer_credit",
+          args: {customer: frm.doc.customer},
+          callback: (r) => { frm.set_value("credit_limit", r.message.limit); },
+      });
+    bad: |
+      // Don't - missing @frappe.whitelist() makes this call 403
+      frappe.call({method: "myapp.internal.do_thing"});
+  related:
+    - client_script_sandbox_model
+  verified_on: "2026-04-16"
+
+idiom_permission_query_conditions:
+  kind: idiom
+  title: "Row-level access via permission_query_conditions and has_permission hook"
+  summary: >
+    To restrict WHICH rows of a DocType a user can see (beyond role-level
+    read perms), register a permission_query_conditions hook that returns
+    a SQL WHERE fragment. For per-doc access decisions, use has_permission.
+  keywords:
+    - permission_query_conditions
+    - has_permission
+    - row_level
+    - access
+    - filter
+    - owner
+    - share
+  body: |
+    hooks.py:
+
+        permission_query_conditions = {
+            "Sales Order": "myapp.permissions.sales_order_query",
+        }
+
+        has_permission = {
+            "Sales Order": "myapp.permissions.sales_order_has_permission",
+        }
+
+    permission_query_conditions: returns a SQL WHERE fragment that Frappe
+    appends when the user queries via frappe.get_all / list views.
+
+        # myapp/permissions.py
+        import frappe
+
+        def sales_order_query(user):
+            if not user:
+                user = frappe.session.user
+            if "System Manager" in frappe.get_roles(user):
+                return ""   # no filter
+            # Restrict to the user's own orders
+            return f"(`tabSales Order`.owner = {frappe.db.escape(user)})"
+
+    has_permission: returns True/False for a specific document access.
+
+        def sales_order_has_permission(doc, user, permission_type):
+            if doc.owner == user:
+                return True
+            return "System Manager" in frappe.get_roles(user)
+
+    Frappe calls both: query conditions for list views, has_permission
+    for individual form loads and ORM access. They should agree - a user
+    who can't list a doc shouldn't be able to load it either.
+  related:
+    - api_frappe_has_permission
+    - server_script_permission_check
+  verified_on: "2026-04-16"
+
+idiom_custom_dashboard_chart:
+  kind: idiom
+  title: "Dashboard Chart DocType - user-configurable data viz"
+  summary: >
+    For simple charts on the user's dashboard, create a Dashboard Chart
+    DocType (type: Count / Sum / Group By / Report) instead of writing a
+    custom page or script. Declarative, admin-configurable.
+  keywords:
+    - dashboard
+    - chart
+    - dashboard_chart
+    - report
+    - visualization
+    - kpi
+  body: |
+    Fields:
+      document_type      - source DocType
+      chart_type         - Count / Sum / Group By / Average / Report
+      based_on           - x-axis field (typically a Date or Datetime)
+      value_based_on     - y-axis field (for Sum / Average)
+      group_by_based_on  - field for Group By charts
+      timespan           - Last Year / Last Month / Last Week / ...
+      filters_json       - JSON filter list applied to the query
+
+    Example: "sales per week for the last quarter"
+        chart_type: Sum
+        document_type: Sales Order
+        based_on: transaction_date
+        value_based_on: grand_total
+        time_interval: Weekly
+        timespan: Last 3 Months
+        filters_json: '[["docstatus", "=", 1]]'
+
+    For charts that need SQL beyond what Group By can express, create a
+    Report DocType (Query Report or Script Report) and point the
+    Dashboard Chart at it with chart_type=Report.
+  related:
+    - idiom_fixtures
+  verified_on: "2026-04-16"
+
+idiom_naming_series:
+  kind: idiom
+  title: "Auto-naming: naming_series, autoname, and per-doctype patterns"
+  summary: >
+    How Frappe generates primary keys. naming_series for user-pickable
+    patterns (INV-.####); autoname for fixed rules (field:<fieldname>,
+    hash, format:..., Prompt).
+  keywords:
+    - naming_series
+    - autoname
+    - primary_key
+    - name
+    - prefix
+    - counter
+  body: |
+    Set on the DocType definition:
+      autoname = "<strategy>"
+      naming_rule = "By fieldname" | "Expression" | "Prompt" | "Random" | ...
+
+    Strategies (autoname value):
+      field:<fieldname>        -> use the value of that field as the primary key
+      format:INV-.YYYY.-.####  -> templated: .YYYY = year, .#### = zero-padded counter
+      hash                      -> random 10-char hash (non-human-friendly)
+      Prompt                    -> user types the name on create
+      autoincrement             -> MySQL auto-increment int
+
+    naming_series is a special field on the DocType that lets the user
+    pick from a list of patterns. Combined with autoname="naming_series:"
+    (colon at the end):
+
+        # On the DocType:
+        autoname = "naming_series:"
+        # Add a naming_series field of type Select with options like:
+        #   "SO-.YYYY.-.####"
+        #   "SO-.MM.YY.-.####"
+
+    For series counters stored in `tabSeries`, use
+        frappe.model.naming.make_autoname("SO-.####")
+    in code to pre-generate a name without going through frappe.new_doc.
+
+    Changing the naming strategy AFTER records exist requires a migration
+    script - old records keep their names, new ones follow the new rule.
+  related:
+    - doctype_naming_constraints
+  verified_on: "2026-04-16"
+
+idiom_bulk_update:
+  kind: idiom
+  title: "Bulk updates: frappe.db.set_value in a loop vs update_query"
+  summary: >
+    For large updates, frappe.db.set_value in a loop is correct but slow
+    (one UPDATE per row). For thousands of rows, use a single parameterised
+    UPDATE via frappe.db.sql - skips document hooks but is 10x+ faster.
+  keywords:
+    - bulk
+    - batch
+    - update
+    - mass_update
+    - loop
+    - performance
+  body: |
+    Small batches (<100 rows, need validate/hooks to run):
+
+        for doc in frappe.get_all("Item",
+                                   filters={"disabled": 0},
+                                   limit_page_length=100,
+                                   pluck="name"):
+            frappe.db.set_value("Item", doc, "needs_reorder", 1)
+        frappe.db.commit()
+
+    Large batches (1000s of rows, ok to skip hooks):
+
+        frappe.db.sql("""
+            UPDATE `tabItem`
+            SET needs_reorder = 1
+            WHERE disabled = 0
+              AND stock_qty < reorder_level
+        """)
+        frappe.db.commit()
+
+    Always frappe.db.commit() explicitly in background jobs (long-running
+    scripts) so partial progress is saved if the worker crashes.
+
+    Never: f-string interpolate user input into SQL. Parameterise with
+    %s placeholders or use the ORM for dynamic filters.
+  related:
+    - api_frappe_db_set_value
+    - api_frappe_db_sql
+  verified_on: "2026-04-16"
+
+idiom_patches:
+  kind: idiom
+  title: "Data migrations via patches.txt"
+  summary: >
+    One-shot scripts that run on bench migrate. Use for data migrations,
+    schema corrections, backfills. Recorded in "Patch Log" so each patch
+    runs exactly once per site.
+  keywords:
+    - patch
+    - patches
+    - migrate
+    - migration
+    - bench_migrate
+    - backfill
+    - schema_fix
+  body: |
+    File: myapp/patches.txt (one module path per line)
+        myapp.patches.v2_0.backfill_customer_segment
+        myapp.patches.v2_1.fix_duplicate_names
+
+    Each patch is a Python module with an execute() function:
+
+        # myapp/patches/v2_0/backfill_customer_segment.py
+        import frappe
+
+        def execute():
+            for name in frappe.get_all("Customer", pluck="name"):
+                doc = frappe.get_doc("Customer", name)
+                if not doc.customer_segment:
+                    doc.customer_segment = derive_segment(doc)
+                    doc.db_update()
+            frappe.db.commit()
+
+    Rules:
+      - execute() takes NO arguments.
+      - Keep it idempotent when possible - a patch that fails mid-way
+        gets retried; re-running must be safe.
+      - Use doc.db_update() (direct SQL) over doc.save() for speed when
+        you don't need hooks.
+      - Run via `bench --site <site> migrate` - patches.txt is consulted
+        and unexecuted entries run in order.
+
+    Alternatives: for one-off "touch this one site" scripts, use
+    `bench --site X execute myapp.scripts.fix_thing.run` - not recorded
+    in Patch Log, can be re-run deliberately.
+  verified_on: "2026-04-16"
+
+idiom_translation:
+  kind: idiom
+  title: "Translation: wrap user-facing strings with _()"
+  summary: >
+    Every string a user reads (errors, messages, labels, button text)
+    should be wrapped with `_()` (from `frappe import _`). Frappe extracts
+    these to translation catalogs for localisation.
+  keywords:
+    - translation
+    - _
+    - localisation
+    - i18n
+    - translate
+    - language
+  body: |
+    # Python
+        from frappe import _
+
+        frappe.throw(_("Employee must be at least 24 years old"))
+        frappe.msgprint(_("Reminder queued"))
+
+    # Jinja (templates)
+        <p>{{ _("Thank you for your order") }}</p>
+
+    # JavaScript (Client Scripts)
+        frappe.throw(__("Quantity must be positive"));
+        frappe.show_alert({message: __("Saved"), indicator: "green"});
+
+    Translation extraction runs on `bench update-translations` and writes
+    to apps/<app>/<app>/translations/<lang>.csv.
+
+    Don't f-string-interpolate into translated strings - split the
+    variable out so the translation catalog sees a stable template:
+
+        # GOOD
+        frappe.throw(_("{0} orders found for {1}").format(count, customer))
+
+        # BAD
+        frappe.throw(_(f"{count} orders found for {customer}"))
+        # -> untranslatable: every count/customer combination is a new string
+  related:
+    - api_frappe_throw
+    - api_frappe_msgprint
+  verified_on: "2026-04-16"
+
+idiom_redis_pubsub_realtime:
+  kind: idiom
+  title: "Realtime UI updates: frappe.publish_realtime"
+  summary: >
+    Push an event to connected browser clients over WebSocket. Use for
+    progress bars, live chat, async job completion notifications.
+  keywords:
+    - publish_realtime
+    - realtime
+    - websocket
+    - pubsub
+    - push
+    - live_update
+  body: |
+    frappe.publish_realtime(
+        event,                   # string name: "msg_update", "job_done", etc.
+        message=None,            # payload (dict/list/str)
+        user=None,               # target one user
+        doctype=None, docname=None,   # target all subscribers of a doc
+        after_commit=False,      # wait for current txn to commit
+    )
+
+    Client side (JS):
+
+        frappe.realtime.on("job_done", (data) => {
+            frappe.show_alert(data.message);
+        });
+
+    # Unsubscribe in form events
+        frappe.realtime.off("job_done");
+
+    Typical pattern for a long-running task:
+
+        @frappe.whitelist()
+        def start_import():
+            frappe.enqueue(
+                "myapp.tasks.run_import",
+                user=frappe.session.user,
+                enqueue_after_commit=True,
+            )
+            return {"started": True}
+
+        def run_import(user=None):
+            for i, row in enumerate(rows):
+                process(row)
+                if i % 50 == 0:
+                    frappe.publish_realtime(
+                        "import_progress",
+                        message={"done": i, "total": len(rows)},
+                        user=user,
+                    )
+
+    Don't publish_realtime in a tight loop - batch updates every few
+    dozen iterations or throttle to <1/s to avoid saturating the socket.
+  related:
+    - idiom_background_job_enqueue
+  verified_on: "2026-04-16"

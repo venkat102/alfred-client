@@ -1,0 +1,464 @@
+# Frappe Knowledge Base - Platform Rules
+#
+# Sandbox constraints, operational rules, and non-negotiable platform behaviours.
+# Agents retrieve entries here via `lookup_frappe_knowledge(query)`; the pipeline's
+# auto-inject phase prepends matching entries to the Developer task based on
+# keyword scan of the enhanced prompt.
+#
+# Schema (validated by alfred_client/mcp/frappe_kb.py):
+#   id:                       (implicit, the YAML key)
+#   kind:       required      "rule"
+#   title:      required      one-line human-readable title
+#   summary:    required      2-3 sentence summary
+#   keywords:   required      list of terms used for keyword retrieval
+#   applies_to: optional      list of DocType names this rule targets
+#   body:       required      multi-line markdown body (the actual rule content)
+#   examples:   optional      {good: "...", bad: "..."} or list of strings
+#   enforced_by: optional     where the rule is enforced in code
+#   related:    optional      list of other FKB entry ids
+#   verified_on: required     ISO date when last sanity-checked
+
+server_script_no_imports:
+  kind: rule
+  title: "Server Scripts cannot use `import` (any form)"
+  summary: >
+    Frappe runs Server Scripts through RestrictedPython in a sandbox with no
+    __import__. `import X` and `from X import Y` fail at runtime. Use pre-bound
+    names (json, datetime, frappe.*, frappe.utils.*) directly - no import line.
+  keywords:
+    - server_script
+    - server script
+    - import
+    - restrictedpython
+    - sandbox
+    - validate
+    - validation
+    - throw
+    - restrict
+    - reject
+    - forbid
+    - enforce
+    - constraint
+    - rule
+    - doctype_event
+    - before_save
+    - after_insert
+  applies_to:
+    - "Server Script"
+  body: |
+    - `import` (any form) is forbidden in a Server Script body. The sandbox has
+      no `__import__`, so the script fails at runtime when the event fires.
+    - Dry-run catches this before deploy (AST walker rejects Import/ImportFrom
+      nodes). The user sees a "Server Script uses `import` (not allowed)" error.
+    - Pre-bound names you can use directly - NO import needed:
+        json        -> json.loads(s) / json.dumps(obj)
+        datetime    -> datetime.datetime / datetime.date / datetime.timedelta
+        dates       -> frappe.utils.nowdate() / frappe.utils.now_datetime() /
+                       frappe.utils.getdate(x) / frappe.utils.add_days(d, n) /
+                       frappe.utils.date_diff(a, b)
+        numbers     -> frappe.utils.flt(x) / frappe.utils.cint(x) / frappe.utils.floor(x)
+        strings     -> frappe.utils.cstr(x)
+        HTTP        -> frappe.make_get_request(url) /
+                       frappe.make_post_request(url, data=...)
+                       (do NOT use `requests`)
+        errors      -> frappe.throw(msg) (validation) / frappe.msgprint(msg) (info)
+        DB reads    -> frappe.db.get_value / frappe.db.exists / frappe.db.count
+        DocTypes    -> frappe.get_doc / frappe.new_doc / frappe.get_all
+        logging     -> frappe.log_error(title, message)
+        translation -> _("string to translate")
+    - The triggering doc is in scope as `doc`. The event name is `method`
+      (e.g. 'validate', 'on_update').
+    - Common remaps:
+        `import datetime; datetime.date.today()` -> `frappe.utils.nowdate()`
+        `import requests; requests.get(url)` -> `frappe.make_get_request(url)`
+        `import math; math.floor(x)` -> `frappe.utils.floor(x)` or `frappe.utils.cint(x)`
+        `from frappe.utils import flt` -> just `frappe.utils.flt(x)` (already bound)
+  examples:
+    good: |
+      if frappe.utils.date_diff(frappe.utils.nowdate(), doc.date_of_birth) < 24 * 365:
+          frappe.throw("Employee must be at least 24 years old")
+    bad: |
+      import datetime
+      if (datetime.date.today() - doc.date_of_birth).days < 24 * 365:
+          frappe.throw("Employee must be at least 24 years old")
+  enforced_by: "alfred_client/api/deploy.py _check_runtime_errors (AST walker)"
+  related:
+    - validation_server_script
+  verified_on: "2026-04-16"
+
+server_script_permission_check:
+  kind: rule
+  title: "Server Scripts must include an explicit permission check"
+  summary: >
+    Server Scripts run under the calling user's session. Without an explicit
+    frappe.has_permission() check, a low-privilege user can cause the script
+    to touch documents they shouldn't access.
+  keywords:
+    - server_script
+    - permission
+    - has_permission
+    - authorization
+    - security
+    - owner
+  applies_to:
+    - "Server Script"
+  body: |
+    - Every Server Script that reads or writes documents should first call
+      frappe.has_permission(doctype, action, doc_name) and either throw or
+      exit when the check fails.
+    - The sandbox does NOT auto-filter by user permissions - the script is
+      responsible for enforcing them.
+    - frappe.get_doc() / frappe.db.get_value() respect permissions only when
+      ignore_permissions=False (the default), but querying data the user
+      can't see is still a side channel worth avoiding.
+  examples:
+    good: |
+      if not frappe.has_permission("Sales Order", "read", doc.name):
+          frappe.throw("Not permitted to access this document.")
+      if doc.grand_total > 10000:
+          frappe.throw("Amount exceeds limit")
+    bad: |
+      # no permission check - any role that can save the parent doc can
+      # cause this script to run and peek at related records.
+      related = frappe.db.get_value("Customer", doc.customer, "credit_limit")
+      if doc.grand_total > related:
+          frappe.throw("Over credit limit")
+  related:
+    - server_script_no_imports
+    - validation_server_script
+  verified_on: "2026-04-16"
+
+client_script_sandbox_model:
+  kind: rule
+  title: "Client Scripts run in the browser against cur_frm / frappe.ui"
+  summary: >
+    Client Scripts are JavaScript executed by the Frappe form engine when a
+    form is rendered, refreshed, or about to be saved. They have no access
+    to Python, no access to the database directly, and must use frappe.call
+    or frappe.db.get_value (client shim) for server interaction.
+  keywords:
+    - client_script
+    - client script
+    - javascript
+    - cur_frm
+    - frm
+    - frappe.call
+    - form
+    - ui
+    - browser
+  applies_to:
+    - "Client Script"
+  body: |
+    - Client Scripts are JS, not Python. A common mistake is to paste server
+      logic into a Client Script body - it won't parse.
+    - The ambient object is `frm` (the form). Use frm.doc.<field>, frm.set_value,
+      frm.refresh_field, frm.trigger(event_name).
+    - Event handlers are attached via frappe.ui.form.on("DocType", {...}).
+      Events: refresh, validate, setup, before_save, after_save, onload,
+      <fieldname> (fires on change of that field).
+    - Server-side reads: `frappe.db.get_value("DocType", name, "field", callback)`
+      or `frappe.call({method, args, callback})`. Never write SQL.
+    - Async code uses callbacks; `await` / Promise-chains work in modern builds.
+    - Throw validation errors with `frappe.throw(__("message"))`; use __("...")
+      so the string is translatable.
+  examples:
+    good: |
+      frappe.ui.form.on("Sales Order", {
+          refresh(frm) {
+              if (frm.doc.docstatus === 1) {
+                  frm.add_custom_button(__("Send Reminder"), () => {
+                      frappe.call({
+                          method: "myapp.api.send_reminder",
+                          args: {name: frm.doc.name},
+                      });
+                  });
+              }
+          },
+      });
+    bad: |
+      // Python-shaped - won't parse as JavaScript.
+      frappe.ui.form.on("Sales Order", {
+          refresh: lambda frm: frm.add_custom_button("X", callback)
+      })
+  related:
+    - server_script_no_imports
+  verified_on: "2026-04-16"
+
+notification_doctype_vs_server_script:
+  kind: rule
+  title: "Use Notification DocType for emails/alerts, not a Server Script"
+  summary: >
+    When the user wants "email X when Y happens" or "alert admins on save",
+    the right primitive is the built-in Notification DocType - NOT a Server
+    Script calling frappe.sendmail. Notifications are declarative, have
+    admin-visible logs, and respect recipient resolution rules.
+  keywords:
+    - notification
+    - email
+    - alert
+    - sendmail
+    - notify
+    - message
+    - mail
+  applies_to:
+    - "Notification"
+  body: |
+    - Notification DocType fields: document_type (target), event (New / Save /
+      Submit / Cancel / Days Before / Days After / Value Change / Method),
+      condition (Jinja expression), channel (Email / System Notification /
+      SMS / Slack), recipients (child table with receiver_by_role or
+      receiver_by_document_field), subject (Jinja template), message
+      (Jinja template).
+    - Jinja context in subject/message/condition: `doc` (the target doc),
+      `frappe` (limited helpers), `user` (session user), `_` (translate).
+    - condition expressions return truthy/falsy. Example:
+      `doc.status == "Approved" and doc.grand_total > 10000`.
+    - Recipients shapes:
+        - {"receiver_by_role": "Sales Manager"} - all users with that role
+        - {"receiver_by_document_field": "<link_field>"} - resolve the user
+          from a Link-to-User field on the doc (e.g. "owner", "modified_by",
+          or a custom field)
+    - Never create a Server Script for "send email when X" - that's what
+      Notification DocType was built for.
+  examples:
+    good: |
+      {"op": "create", "doctype": "Notification", "data": {
+        "doctype": "Notification",
+        "name": "Notify Manager on Submit",
+        "document_type": "Expense Claim",
+        "event": "Submit",
+        "channel": "Email",
+        "recipients": [{"receiver_by_document_field": "expense_approver"}],
+        "subject": "Expense claim {{ doc.name }} submitted",
+        "message": "{{ doc.employee_name }} submitted an expense claim for {{ doc.total_claimed_amount }}.",
+        "enabled": 1
+      }}
+    bad: |
+      # Server Script that sendmails - re-implements what Notification does,
+      # without admin visibility or recipient resolution rules.
+      frappe.sendmail(recipients=["manager@x"], subject="...", message="...")
+  related:
+    - approval_notification
+    - post_approval_notification
+  verified_on: "2026-04-16"
+
+custom_field_vs_new_doctype:
+  kind: rule
+  title: "Extend with Custom Field; don't clone a DocType for one new field"
+  summary: >
+    When the user asks to "add a priority field to Sales Order" or "add a
+    reason column", the right primitive is a Custom Field on the existing
+    DocType - NOT a new DocType that wraps or mirrors the original.
+  keywords:
+    - custom_field
+    - add field
+    - extend
+    - column
+    - attribute
+    - property
+    - new field
+  applies_to:
+    - "Custom Field"
+  body: |
+    - Custom Field minimum fields: dt (target DocType), fieldname (snake_case),
+      label (Title Case), fieldtype (Data / Select / Link / Int / Float /
+      Date / Check / Small Text / Text / Long Text / Currency / ...).
+    - Custom Fields persist across app updates and are the standard extension
+      mechanism. They show up in list views and forms without any further wiring.
+    - Pick the right fieldtype:
+        Select: fixed list of values, set `options` as newline-separated string
+        Link: reference to another DocType, set `options` to the target DocType name
+        Check: 0/1 boolean, default "0" (string, not int)
+        Date / Datetime: ISO dates
+        Currency: respects the company's currency rounding rules
+    - A new DocType is only warranted when the user needs a whole new ENTITY
+      (e.g. "Training Session", "Equipment Loan"). Adding a field is NOT a
+      new entity.
+  examples:
+    good: |
+      {"op": "create", "doctype": "Custom Field", "data": {
+        "doctype": "Custom Field",
+        "dt": "Sales Order",
+        "fieldname": "priority",
+        "label": "Priority",
+        "fieldtype": "Select",
+        "options": "Low\nMedium\nHigh"
+      }}
+    bad: |
+      # Don't do this - the user asked for ONE field, not a new DocType.
+      {"op": "create", "doctype": "DocType", "data": {
+        "name": "Sales Order Priority", ...
+      }}
+  related:
+    - custom_field_on_existing_doctype
+  verified_on: "2026-04-16"
+
+workflow_requirements:
+  kind: rule
+  title: "Workflows need >=2 states, a transition, and no conflicts"
+  summary: >
+    A Workflow ties states to transitions on a target DocType. Frappe allows
+    only ONE active workflow per DocType - adding a second silently breaks
+    the existing one.
+  keywords:
+    - workflow
+    - approval
+    - states
+    - transition
+    - multi-step
+    - states
+    - review
+  applies_to:
+    - "Workflow"
+    - "Workflow State"
+    - "Workflow Action"
+  body: |
+    - Workflow fields: document_type (the target DocType), is_active (1 to
+      activate), workflow_state_field (fieldname on the doc to store the
+      current state; usually "workflow_state"), states (child table of
+      Workflow Document State), transitions (child table of Workflow
+      Transition).
+    - Workflow Document State per row: state (the state name), doc_status
+      ("0" = Draft, "1" = Submitted, "2" = Cancelled), allow_edit
+      (role that can edit in that state).
+    - Workflow Transition per row: state (from-state), action (button label),
+      next_state (to-state), allowed (role that can perform the transition).
+    - Constraints enforced at runtime:
+        - minimum 2 states
+        - minimum 1 transition
+        - only ONE active workflow per DocType (check via has_active_workflow
+          before proposing a new one)
+        - the workflow_state_field must exist on the target DocType; create
+          a Custom Field for it if absent
+    - For existing submittable DocTypes, the workflow's docstatus transitions
+      must align with the DocType's own submit/cancel lifecycle.
+  examples:
+    good: |
+      {"op": "create", "doctype": "Workflow", "data": {
+        "doctype": "Workflow",
+        "workflow_name": "Expense Claim Approval",
+        "document_type": "Expense Claim",
+        "workflow_state_field": "workflow_state",
+        "is_active": 1,
+        "states": [
+          {"state": "Draft", "doc_status": "0", "allow_edit": "Employee"},
+          {"state": "Approved", "doc_status": "1", "allow_edit": "Expense Approver"}
+        ],
+        "transitions": [
+          {"state": "Draft", "action": "Approve", "next_state": "Approved", "allowed": "Expense Approver"}
+        ]
+      }}
+  verified_on: "2026-04-16"
+
+doctype_naming_constraints:
+  kind: rule
+  title: "DocType naming, fieldname casing, and the Alfred module"
+  summary: >
+    DocTypes use Title Case names. Fieldnames are snake_case and must not
+    collide with Frappe's reserved fields. Every DocType Alfred creates lives
+    in the 'Alfred' module unless the user specifies otherwise.
+  keywords:
+    - doctype
+    - naming
+    - snake_case
+    - reserved
+    - module
+    - alfred
+    - fieldname
+  body: |
+    - DocType name: Title Case, spaces allowed (e.g. "Training Session",
+      NOT "TrainingSession" or "training_session"). Name is the primary key.
+    - Fieldname: lowercase snake_case, letters + numbers + underscore only.
+    - Label: Title Case, human-readable (what users see on the form).
+    - Reserved fieldnames (do NOT use as a custom fieldname):
+        name, owner, creation, modified, modified_by, docstatus, idx,
+        parent, parenttype, parentfield, doctype, amended_from,
+        _user_tags, _comments, _assign, _liked_by, _seen.
+    - Default module for DocTypes Alfred creates: "Alfred". This is what
+      the Alfred app installs; every generated DocType goes there unless
+      the user explicitly asks for a different module.
+    - Autoname options: "field:<fieldname>" (use a field value), "naming_series:"
+      (prompt for a series pattern), "Prompt" (user types the name), "hash"
+      (random), "format:XYZ-.####" (templated). Set `autoname` on the DocType.
+  examples:
+    good: |
+      {"op": "create", "doctype": "DocType", "data": {
+        "doctype": "DocType",
+        "name": "Training Session",
+        "module": "Alfred",
+        "autoname": "field:title",
+        "fields": [
+          {"fieldname": "title", "label": "Title", "fieldtype": "Data", "reqd": 1},
+          {"fieldname": "start_date", "label": "Start Date", "fieldtype": "Date"}
+        ]
+      }}
+    bad: |
+      {"name": "trainingSession",         # wrong: not Title Case with spaces
+       "module": "Custom",                 # wrong: should be "Alfred"
+       "fields": [
+         {"fieldname": "Title"},           # wrong: not snake_case
+         {"fieldname": "modified"}         # wrong: reserved
+       ]}
+  verified_on: "2026-04-16"
+
+minimal_change_principle:
+  kind: rule
+  title: "Pick the smallest Frappe primitive that satisfies the request"
+  summary: >
+    Frappe has purpose-built primitives for the common customization shapes.
+    Default to the smallest one. Creating a new DocType, a workflow, or a
+    Server Script when a Custom Field or a Notification would do is waste
+    and hard to undo.
+  keywords:
+    - minimal
+    - primitive
+    - approach
+    - choice
+    - mapping
+    - which
+  body: |
+    Decision tree (apply in order):
+
+    1. User wants a validation / rule / "throw if / must / cannot unless"
+       on an existing DocType
+       -> Server Script, script_type="DocType Event", reference_doctype=<target>,
+          doctype_event="before_save" | "before_insert" | "validate",
+          body calls frappe.throw(msg) when the rule fails.
+       -> NEVER a new DocType. NEVER a Notification.
+
+    2. User wants email / alert / notification on a document event
+       -> Notification DocType (event + channel + recipients + subject + message).
+       -> NEVER a Server Script calling frappe.sendmail.
+
+    3. User wants a new data column on an existing DocType
+       -> Custom Field.
+       -> NEVER a new DocType that mirrors the target.
+
+    4. User wants a multi-step approval / state machine
+       -> Workflow (check has_active_workflow first - only one active per DocType).
+       -> Often needs a Custom Field for workflow_state_field.
+
+    5. User wants to trigger logic from a button on the form
+       -> Client Script with frm.add_custom_button + frappe.call to a
+          server-side whitelisted method (or the Server Script event).
+
+    6. User genuinely needs a new ENTITY (not on any existing DocType)
+       -> New DocType in module "Alfred".
+
+    7. User wants a pre-built report
+       -> Check if a standard report already covers it (lookup_doctype on the
+          target to see its ships-with reports). Only create a new Report if no
+          standard one fits.
+  examples:
+    good: |
+      "validate employee age >= 24"            -> Server Script
+      "email manager on expense claim submit"  -> Notification
+      "add priority field to Sales Order"      -> Custom Field
+      "approve/reject flow on Material Request"-> Workflow
+      "button on Sales Order to send reminder" -> Client Script + whitelisted method
+      "track training sessions for employees"  -> New DocType
+    bad: |
+      "validate age" as Notification -> the user asked for a block, not an email
+      "add field" as new DocType     -> the user asked for one column on the parent
+      "send email" as Server Script  -> declarative Notification exists for this
+  verified_on: "2026-04-16"
