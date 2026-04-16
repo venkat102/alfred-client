@@ -108,6 +108,30 @@ User prompt
 │             │   Answers are persisted into memory.
 └──────┬──────┘
        ▼
+┌─────────────┐   Auto-inject relevant Frappe KB entries + live site
+│  inject_kb  │   state into the enhanced prompt before the crew runs.
+│             │   Two retrievals, one combined banner:
+│             │     (a) Hybrid keyword + semantic search over the Frappe
+│             │         Knowledge Base (rules / APIs / idioms / style).
+│             │         Processing-local - reads the YAML source-of-
+│             │         truth directly, no MCP round-trip. Semantic
+│             │         falls back to keyword-only if sentence-
+│             │         transformers isn't available.
+│             │     (b) Site reconnaissance: extract target DocType(s)
+│             │         from the prompt via _DOCTYPE_NAME_RE, call the
+│             │         get_site_customization_detail MCP tool, render
+│             │         existing workflows / server scripts / custom
+│             │         fields / notifications into a SITE STATE block.
+│             │   Both render into one banner with a clear USER REQUEST
+│             │   marker separating reference from ask. Fails open:
+│             │   FKB failure doesn't block site recon, site recon
+│             │   failure doesn't block FKB. Dev mode only.
+│             │   ctx.injected_kb + ctx.injected_site_state logged to
+│             │   the tracer so "the agent still got it wrong" can be
+│             │   triaged as "rule wasn't injected" vs. "rule was
+│             │   injected but ignored".
+└──────┬──────┘
+       ▼
 ┌─────────────┐   Resolve full vs lite pipeline mode:
 │resolve_mode │     plan override > site config > default "full"
 └──────┬──────┘
@@ -233,47 +257,74 @@ for ~5x lower LLM cost and ~5x faster completion. The pre-preview dry-run +
 approve-time safety net still catch insert-time errors, so broken changesets
 are blocked regardless of mode.
 
-## Framework Knowledge Graph
+## Knowledge Architecture (three layers)
 
-Alfred ships with a two-layer model of Frappe framework facts:
+Alfred's retrievable knowledge is split across three layers. Each is authoritative
+for one kind of fact; none of them duplicate each other, and platform rules never
+get pasted into agent backstories any more.
 
 ```
-┌─────────────────────────────────────────────┐
-│  Framework layer                             │
-│  alfred_client/data/framework_kg.json        │
-│  (gitignored, rebuilt on bench migrate)      │
-│                                              │
-│  Extracted by walking every installed bench  │
-│  app's doctype/*/*.json at install time.     │
-│  Stores: name, module, fields (with         │
-│  options/reqd), permissions, is_submittable. │
-└─────────────────────────────────────────────┘
-                    │
-                    │ merge on lookup_doctype("X", layer="both")
-                    │
-                    ▼
-┌─────────────────────────────────────────────┐
-│  Site layer                                  │
-│  Live frappe.get_meta() + row-level          │
-│  permissions for the current session user   │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  Layer 1 - Framework KG (auto-extracted schemas)                 │
+│  alfred_client/data/framework_kg.json (gitignored, regenerated   │
+│  at bench migrate against whatever apps are installed)           │
+│                                                                  │
+│  "What does the User DocType ship with?" "What fields does a     │
+│  Sales Order have?" Extracted by walking every bench app's       │
+│  doctype/*/*.json. Merged with live frappe.get_meta() via        │
+│  lookup_doctype(name, layer="framework|site|both").              │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  Layer 2 - Pattern library (curated recipes)                     │
+│  alfred_client/data/customization_patterns.yaml (hand-written,   │
+│  committed to the repo)                                          │
+│                                                                  │
+│  "What does a validation Server Script look like?" Curated       │
+│  templates for common customization idioms with when_to_use,     │
+│  when_not_to_use, event_reasoning, template, anti_patterns.      │
+│  Retrieved via lookup_pattern(query, kind).                      │
+│  Starter set: approval_notification, post_approval_notification, │
+│  validation_server_script, custom_field_on_existing_doctype,     │
+│  audit_log_server_script.                                        │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  Layer 3 - Frappe Knowledge Base (FKB)                           │
+│  alfred_client/data/frappe_kb/*.yaml                             │
+│                                                                  │
+│  "Can Server Scripts use import?" "What does frappe.db.get_value │
+│  return on miss?" "How do you wire a hooks.py doc_event?"        │
+│  Four kinds, each in its own file:                               │
+│    rules.yaml   - sandbox constraints (8 entries)                │
+│    apis.yaml    - Frappe API reference (141 entries, auto-       │
+│                   scraped + 22 hand-overrides)                   │
+│    idioms.yaml  - how Frappe wants it done (18 entries)          │
+│    style.yaml   - Alfred code-gen preferences (10 entries)       │
+│  177 entries total at the time of writing.                       │
+│                                                                  │
+│  Retrieved via lookup_frappe_knowledge(query, kind).             │
+│  Hybrid retrieval (keyword + semantic embeddings) lives in       │
+│  alfred_processing/alfred/knowledge/fkb.py so ML deps stay out   │
+│  of the bench venv.                                              │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-Plus a **curated pattern library** at `alfred_client/data/customization_patterns.yaml`
-with 5 starter idioms:
-
-- `approval_notification` - alert the approver BEFORE they act (event: New)
-- `post_approval_notification` - alert requester AFTER approval (event: Submit)
-- `validation_server_script` - validation with permission check
-- `custom_field_on_existing_doctype` - Custom Field pattern
-- `audit_log_server_script` - audit log pattern
-
-Each pattern has a `when_to_use` / `when_not_to_use` / `template` / `anti_patterns`
-section. Agents retrieve them via `lookup_pattern(query, kind)`.
+The inject_kb pipeline phase (see the state-machine section) auto-pulls the
+most relevant FKB entries + site customizations for the target DocType and
+prepends them to the Developer task - agents don't have to know to call the
+retrieval tools, although they can call them directly for depth.
 
 The goal: keep hardcoded rules out of agent backstories. Rules drift and ship
-with version numbers; data in the KG can be regenerated at `bench migrate`
-against whatever apps are installed on the specific site.
+with version numbers; data in the KGs is either regenerated against the
+current site or curated by humans in YAML that's easier to review than prompt
+text split across five files.
+
+Adjacent MCP tool: `get_site_customization_detail(doctype)` returns the deep
+per-DocType footprint (full workflow graphs, Server Script bodies truncated to
+600 chars, custom fields, notifications) - the thing inject_kb reads for the
+SITE STATE block. Peer to the shallower `get_existing_customizations` which
+returns a site-wide summary.
 
 ## Conversation Memory
 

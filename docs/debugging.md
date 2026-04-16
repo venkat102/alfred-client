@@ -252,6 +252,14 @@ Span names:
 - `pipeline.orchestrate` - three-mode chat orchestrator (Phase A). Decides dev/plan/insights/chat.
 - `pipeline.enhance` - prompt enhancer LLM call (skipped when mode != dev)
 - `pipeline.clarify` - clarification gate (skipped when mode != dev)
+- `pipeline.inject_kb` - hybrid FKB retrieval + site reconnaissance. Attrs:
+    `injected_kb`         list of FKB entry ids prepended to the Developer task
+    `injected_count`      count of FKB hits (`len(injected_kb)`)
+    `injected_site_doctypes`  list of DocTypes whose site state was injected
+    `injected_site_count` total artefact count across all injected DocTypes
+    `banner_chars`        size of the prepended banner in characters
+    `skipped`             "not-dev-mode" | "stop-signal" | "empty-prompt" (if gated)
+    `fkb_error` / `error` error class if FKB retrieval or response shape failed
 - `pipeline.resolve_mode` - full vs lite selection (skipped when mode != dev)
 - `pipeline.build_crew` - crew + MCP tool setup (skipped when mode != dev)
 - `pipeline.run_crew` - CrewAI kickoff, usually the longest (skipped when mode != dev)
@@ -279,6 +287,68 @@ jq 'select(.conversation_id == "conv-abc123")' alfred_trace.jsonl
 Tracing is zero-cost when disabled (the context manager yields a no-op Span).
 Enable only when you need the data - a long-running production system
 accumulates a lot of JSONL.
+
+## Triaging "the agent still got it wrong"
+
+When a generated changeset violates a rule you think should have been
+enforced, the question is: **was the rule injected into the turn and
+ignored, or never injected in the first place?** The `inject_kb` span
+answers both.
+
+```bash
+# Pull inject_kb spans for a conversation and see what landed
+jq 'select(.name == "pipeline.inject_kb" and
+           .conversation_id == "conv-abc123") | .attrs' alfred_trace.jsonl
+```
+
+Expected shape on a working turn:
+
+```json
+{
+  "injected_kb": ["server_script_no_imports", "minimal_change_principle"],
+  "injected_count": 2,
+  "injected_site_doctypes": ["Employee"],
+  "injected_site_count": 3,
+  "banner_chars": 1840
+}
+```
+
+Decision matrix:
+
+- **`injected_kb` contains the rule** but the agent violated it anyway
+  -> prompt adherence problem. Check the agent's Final Answer in the
+  run_crew span and the raw crew log. Adjust the rule body to be more
+  emphatic, or add a style.yaml entry reinforcing the point, or raise the
+  rule's keyword weights.
+- **`injected_kb` doesn't contain the rule** -> retrieval miss. Look at
+  the user's prompt + the rule's `keywords` list. If the prompt doesn't
+  contain any of the listed keywords, either add synonyms to the rule's
+  `keywords` field or lean on semantic retrieval (lower
+  `semantic_min_similarity`).
+- **`injected_site_doctypes` is empty for a prompt that named a DocType**
+  -> target extraction miss. Walk through `_extract_target_doctypes` on the
+  prompt text; likely the DocType got filtered by `_NON_DOCTYPE_CAPITALIZED`
+  or the single-word 6-char threshold. Rename the constant list or adjust
+  the threshold.
+- **`skipped` is set** -> the phase didn't run. The value tells you why
+  (non-dev mode, stop signal already set, empty prompt, no MCP client for
+  the site-recon half).
+
+The same data is logged at INFO level:
+
+```
+alfred.pipeline INFO: inject_kb: FKB=['server_script_no_imports',
+  'minimal_change_principle'] site=['Employee'] for conversation=conv-abc123
+```
+
+To force a specific entry to inject for debugging, call the retrieval tool
+directly on the processing app Python REPL:
+
+```python
+from alfred.knowledge import fkb
+fkb.search_hybrid("validate employee age with import", k=3)
+# -> [{"id": "server_script_no_imports", "_mode": "keyword", "_score": 42, ...}, ...]
+```
 
 ## Orchestrator decisions (Phase A three-mode chat)
 

@@ -99,7 +99,17 @@ don't need on a first pass.
 (Frappe + processing app + Redis + LLM). This tells you what's being
 installed when you hit the quick-start commands.
 
-### 6. [how-alfred-works.md, section 3 "Chat modes and the orchestrator"](how-alfred-works.md#chat-modes-and-the-orchestrator) - 5 minutes
+### 6. [how-alfred-works.md, section 3 "Three kinds of knowledge"](how-alfred-works.md#three-kinds-of-knowledge) - 5 minutes
+
+How Alfred retrieves Frappe facts. Three layers: the framework KG (DocType
+schemas, auto-extracted), the pattern library (hand-curated recipes), and
+the Frappe Knowledge Base (platform rules, API reference, idioms, house
+style). A pipeline phase auto-injects the most relevant entries into the
+Developer task so agents don't have to know to ask for them. Read this
+before the pipeline walkthrough so the "FRAPPE KB CONTEXT" banner in the
+Developer task makes sense.
+
+### 7. [how-alfred-works.md, section 4 "Chat modes and the orchestrator"](how-alfred-works.md#chat-modes-and-the-orchestrator) - 5 minutes
 
 The three-mode chat section. Not every message is a build request - some
 are conversational ("hi", "thanks"), some are read-only queries ("what
@@ -108,7 +118,7 @@ orchestrator classifies each prompt and routes it to Dev / Plan /
 Insights / Chat mode. Read this before the full-pipeline walkthrough so
 you understand which mode the example is demonstrating.
 
-### 7. [how-alfred-works.md, section 4](how-alfred-works.md#example-prompt-end-to-end) - 5 minutes
+### 8. [how-alfred-works.md, section 5](how-alfred-works.md#example-prompt-end-to-end) - 5 minutes
 
 The "Example prompt, end to end" section. It walks through a concrete
 user flow (sending a prompt about expense claim notifications) and

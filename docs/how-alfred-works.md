@@ -95,7 +95,7 @@ Three processes, three trust boundaries.
 │  - Persistence: Alfred         │
 │    Conversation / Message /    │
 │    Changeset / Audit Log       │
-│  - MCP server (12 tools) that  │
+│  - MCP server (14 tools) that  │
 │    reads the live site        │
 │  - Deployment engine           │
 │  - Connection manager:         │
@@ -116,7 +116,7 @@ Three processes, three trust boundaries.
 │                                │
 │  - FastAPI WebSocket server    │
 │  - AgentPipeline state machine │
-│    (10 phases, tracer spans)   │
+│    (11 phases, tracer spans)   │
 │  - CrewAI crew orchestrator    │
 │    (full: 6 agents / lite: 1)  │
 │  - MCP client that dispatches  │
@@ -158,6 +158,93 @@ lifecycle:
 Each boundary authenticates separately. Losing one credential doesn't
 compromise the others. See [SECURITY.md](SECURITY.md#trust-boundaries) for
 the full model.
+
+---
+
+## Three kinds of knowledge
+
+Alfred keeps three separate knowledge stores, each authoritative for a
+different kind of fact. None of them duplicate content, and none of them
+live in agent backstories any more.
+
+**Framework KG** (`alfred_client/data/framework_kg.json`) answers *what does
+this DocType look like*. Auto-extracted from every installed bench app's
+DocType JSONs at `bench migrate` - field list, permissions, naming rules.
+Agents query via `lookup_doctype(name, layer="framework|site|both")`.
+
+**Pattern library** (`alfred_client/data/customization_patterns.yaml`) answers
+*what does a canonical <idiom> look like*. Hand-written recipes for common
+customization shapes: approval_notification, validation_server_script,
+custom_field_on_existing_doctype. Each has when_to_use / when_not_to_use /
+template / anti_patterns. Agents query via `lookup_pattern(name, kind)`.
+
+**Frappe Knowledge Base (FKB)** (`alfred_client/data/frappe_kb/*.yaml`) answers
+*what are the rules that constrain what I generate*. Four kinds:
+
+- `rules.yaml` - platform sandbox constraints. "Server Scripts cannot use
+  `import`", "Workflow requires at least 2 states and a transition", "DocType
+  names are Title Case, fieldnames are snake_case".
+- `apis.yaml` - Frappe API reference. Auto-scraped signatures + docstrings
+  for the `frappe.utils` whitelist, `frappe.db.*`, and the top-level
+  `frappe.*` helpers agents actually reach for. Hand-overrides for the
+  top 20 with real examples and pitfalls.
+- `idioms.yaml` - "how Frappe wants it done". `hooks.py doc_events` wiring,
+  submit/cancel lifecycle, rename flows, `frappe.enqueue`, assignment rules.
+- `style.yaml` - Alfred's own code-gen preferences. Tabs, permission-check-
+  first, `frappe.throw(_())` instead of raise, `"Alfred"` module default.
+
+The FKB is retrieved via hybrid search (weighted keyword first, embedding-
+based semantic as a rescue for phrasings keyword misses). Retrieval lives
+in `alfred_processing/alfred/knowledge/fkb.py` so the sentence-transformers
+dependency stays out of the bench venv.
+
+**Auto-injection** is what ties it together. A pipeline phase called
+`inject_kb` runs between `clarify` and `resolve_mode` on every Dev-mode
+turn. It:
+
+1. Runs hybrid search over the FKB on the clarified prompt and picks the
+   top 3 entries.
+2. Extracts the target DocType(s) from the prompt (up to 2) and calls
+   `get_site_customization_detail(doctype)` to fetch the live site's
+   existing customizations for each target - workflows, server scripts,
+   custom fields, notifications.
+3. Renders both into a banner prepended to the Developer task:
+
+```
+=== FRAPPE KB CONTEXT (auto-injected, reference only) ===
+[top platform rules / APIs / idioms / style entries relevant to the request]
+==========================================================
+
+=== SITE STATE FOR "Employee" (already on this site) ===
+Workflow: Employee Approval (active)
+  states: Draft -> Submitted -> Approved
+Server Script: Validate Join Date (Before Save, enabled)
+  body preview:
+    if not doc.date_of_joining:
+        frappe.throw(_("Required"))
+Custom Fields:
+  - employee_code (Data, required)
+=========================================================
+
+--- USER REQUEST (interpret this verbatim) ---
+[enhanced + clarified user request]
+```
+
+The agent doesn't have to know to call the retrieval tools - the context is
+already in front of it. It still can call `lookup_frappe_knowledge(query)`
+or `get_site_customization_detail(doctype)` for additional depth on
+something specific.
+
+Why this design instead of pasting the rules into agent prompts: we did
+that for a while, and every new rule meant editing five files (both crew
+task descriptions, all four agent backstories, the prompt enhancer) and
+keeping them in sync forever. Now each rule lives in one YAML entry and
+gets auto-injected when relevant.
+
+`ctx.injected_kb` (list of entry IDs) and `ctx.injected_site_state` (dict
+keyed by DocType) are logged to the tracer on every turn, so when a
+generated changeset still gets a rule wrong, you can tell whether the rule
+was injected and ignored or never injected in the first place.
 
 ---
 

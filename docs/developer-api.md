@@ -149,7 +149,7 @@ thread executor would lose the thread-local and run calls as Administrator.
 
 ---
 
-## MCP Tools Reference (12 tools)
+## MCP Tools Reference (14 tools)
 
 All tools callable via JSON-RPC 2.0 over WebSocket. Tool count + descriptions
 must stay in sync with `alfred_client/mcp/tools.py::TOOL_REGISTRY` - adding or
@@ -174,7 +174,8 @@ Response: {"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "t
 | `get_site_info` | 1 | none | frappe_version, installed_apps, company, country |
 | `get_doctypes` | 1 | module? | [{name, module}] |
 | `get_doctype_schema` | 2 | doctype | fields, permissions, naming_rule (kept for backwards-compat; prefer `lookup_doctype`) |
-| `get_existing_customizations` | 2 | none | custom_fields, server_scripts, client_scripts, workflows |
+| `get_existing_customizations` | 2 | none | custom_fields, server_scripts, client_scripts, workflows (site-wide summary) |
+| `get_site_customization_detail` | 2 | doctype | deep per-DocType recon: workflows (full graphs), server_scripts (bodies truncated to 600 chars), custom_fields, notifications, client_scripts |
 | `get_user_context` | 2 | none | user, roles, permitted_modules |
 | `check_permission` | 3 | doctype, action | {permitted: bool} |
 | `validate_name_available` | 3 | doctype, name | {available: bool} |
@@ -183,6 +184,7 @@ Response: {"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "t
 | `dry_run_changeset` | 3 | changes (list or JSON string) | {valid: bool, issues: [...], validated: [...]} |
 | `lookup_doctype` | 1b | name, layer | Merged framework/site view of a doctype |
 | `lookup_pattern` | 1b | query, kind | Curated customization pattern(s) |
+| `lookup_frappe_knowledge` | 1c | query, kind?, k? | Frappe KB entries (rules / APIs / idioms / style) matching the query. Keyword search; the processing side adds semantic. |
 
 ### `lookup_doctype` details
 
@@ -403,11 +405,115 @@ Returns:
 the pipeline's pre-preview dry-run and by `approve_changeset` as a second
 safety-net check.
 
+**Server Script import check.** `_check_runtime_errors` AST-walks every Server
+Script body. `Import` / `ImportFrom` nodes trigger a critical issue with a
+message that names the offending line and lists the pre-bound alternatives
+(`json`, `datetime`, `frappe.*`, `frappe.utils.*`, `frappe.make_get_request`).
+Runs before any savepoint insert, so imports are rejected at dry-run rather
+than at runtime. `frappe.utils.safe_exec` exposes no `__import__`, so a plain
+`compile()` wouldn't catch this.
+
+### `lookup_frappe_knowledge` details
+
+Third retrievable knowledge layer alongside `lookup_doctype` (schemas) and
+`lookup_pattern` (recipes). Holds **platform rules**, **Frappe API
+reference**, **idioms**, and **house style**. Source-of-truth YAMLs live at
+`alfred_client/data/frappe_kb/`; loader + keyword search at
+`alfred_client/mcp/frappe_kb.py`. The processing app layers semantic
+retrieval on top via `alfred_processing/alfred/knowledge/fkb.py`.
+
+```json
+Args:
+  query: str          required  free text, e.g. "server script import"
+  kind:  str|None     optional  "rule" | "api" | "idiom" | "style" | None
+  k:     int          optional  top-k hits, default 3
+
+Returns:
+  {"entries": [
+     {"id": "server_script_no_imports", "kind": "rule",
+      "title": "...", "summary": "...", "body": "...",
+      "keywords": [...], "examples": {...},
+      "_score": 18, "_mode": "search"}
+  ], "mode": "search", "query": "..."}
+
+Empty query -> discovery mode:
+  {"entries": [{"id": "...", "title": "...", "summary": "..."}, ...],
+   "mode": "list"}
+
+Invalid kind -> {"error": "invalid_argument", "message": "..."}
+```
+
+Typical use: the pipeline's `inject_kb` phase auto-injects the top matches
+into the Developer task, so agents don't need to call this manually. Agents
+still can call it for depth on a specific topic. For semantic / hybrid
+retrieval, use the processing-side `alfred.knowledge.fkb.search_hybrid`
+directly - the MCP tool is keyword-only because the bench venv can't host
+`sentence-transformers`.
+
+### `get_site_customization_detail` details
+
+Deep per-DocType recon. Where `get_existing_customizations` returns a
+site-wide summary (names + event types), this returns full workflow graphs,
+Server Script bodies, Custom Field details, Notifications, and Client
+Scripts for ONE DocType.
+
+```json
+Args:
+  doctype: str   required  target DocType name
+
+Returns:
+  {"doctype": "Employee",
+   "custom_fields":  [{fieldname, fieldtype, label, options, reqd}, ...],
+   "server_scripts": [{name, script_type, doctype_event, script,
+                        disabled}, ...],                         # body <= 600 chars
+   "workflows": [{name, is_active, workflow_state_field,
+                   states:[{state, doc_status, allow_edit}, ...],
+                   transitions:[{state, action, next_state, allowed}, ...]}],
+   "notifications":  [{name, event, channel, subject, enabled}, ...],
+   "client_scripts": [{name, view, script_preview, enabled}, ...]}   # preview <= 300
+
+Errors:
+  {"error": "not_found",    "message": "..."}  # DocType doesn't exist
+  {"error": "permission_denied", "message": "..."}  # caller can't read it
+  {"error": "invalid_argument",  "message": "..."}  # empty arg
+```
+
+Read-permission-gated on the parent DocType. Used by the pipeline's
+`inject_kb` phase to render the SITE STATE banner that prevents agents from
+proposing customizations that conflict with what's already installed.
+Script bodies are truncated - for full bodies, agents load the named
+Server Script doc directly.
+
+### Rehydrate endpoint (Frappe REST)
+
+`alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_conversation_state`
+returns the live state of a conversation for UI rehydration after a refresh
+mid-run. Without this the chat UI resets when the pipeline is still running
+in the background.
+
+```json
+POST /api/method/.../get_conversation_state
+Args:
+  conversation: str  Alfred Conversation name
+
+Returns:
+  {"is_processing":     bool,        # true if status in {In Progress, Awaiting Input}
+   "status":            str,         # conversation status string
+   "active_agent":      str | null,  # e.g. "Developer"
+   "active_phase":      str | null,  # e.g. "development" (derived from active_agent)
+   "completed_phases":  [str],       # phases earlier than active in AGENT_PHASE_MAP
+   "pending_changeset": dict | null} # latest Pending Alfred Changeset, if any
+```
+
+The chat UI calls this right after `get_messages` on `openConversation`.
+Restores the preview panel, the active phase pill, and the processing flag
+so a mid-run refresh doesn't drop to an idle screen.
+
 ---
 
 ## Pipeline State Machine
 
-`alfred/api/pipeline.py::AgentPipeline` runs the pipeline as 9 named phases
+`alfred/api/pipeline.py::AgentPipeline` runs the pipeline as 11 named phases
 over a shared `PipelineContext`:
 
 ```python
@@ -415,8 +521,11 @@ PHASES = [
     "sanitize",       # prompt defense - blocks injection-shaped prompts
     "load_state",     # Redis + conversation memory
     "plan_check",     # admin portal check_plan (optional)
+    "orchestrate",    # three-mode chat: dev / plan / insights / chat
     "enhance",        # prompt enhancer LLM call
     "clarify",        # clarification gate (up to 3 questions)
+    "inject_kb",      # hybrid FKB retrieval + site reconnaissance ->
+                      # prepend banner to enhanced_prompt
     "resolve_mode",   # full vs lite pipeline selection
     "build_crew",     # build CrewAI crew + per-run MCP tracking state
     "run_crew",       # kickoff the crew
