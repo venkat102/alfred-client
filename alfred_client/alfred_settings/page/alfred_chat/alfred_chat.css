@@ -39,8 +39,34 @@
 .alfred-phase-active .alfred-phase-step { background: var(--blue-500, #2490ef); color: white; }
 .alfred-phase-done { background: var(--green-100, #d4edda); color: var(--green-600, #28a745); }
 .alfred-phase-done .alfred-phase-step { background: var(--green-500, #28a745); color: white; }
-.alfred-phase-done .alfred-phase-step::after { content: "✓"; font-size: 9px; }
 .alfred-phase-arrow { color: var(--text-muted, #ccc); font-size: 14px; }
+
+/* Active-phase enrichment: the numbered step badge is swapped for a
+   small pulsing dot, and the phase label expands to show the live
+   agent name plus a short "what is it doing" phrase (e.g.
+   "Developer - generating code"). Gives the pipeline a live,
+   breathing feel without changing the row height. */
+.alfred-phase-pulse {
+	display: inline-block;
+	width: 6px; height: 6px; border-radius: 50%;
+	background: white;
+	animation: alfred-phase-dot-pulse 1.2s ease-in-out infinite;
+}
+@keyframes alfred-phase-dot-pulse {
+	0%, 100% { opacity: 1; transform: scale(1); }
+	50%      { opacity: 0.45; transform: scale(0.6); }
+}
+.alfred-phase-active .alfred-phase-label {
+	max-width: 280px;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.alfred-phase-agent { font-weight: 600; }
+.alfred-phase-activity {
+	font-weight: 400;
+	color: var(--blue-700, #1d4ed8);
+	opacity: 0.85;
+	margin-left: 3px;
+}
 
 /* ── Panels ────────────────────────────────────────────────────── */
 .alfred-panels { display: flex; flex: 1; overflow: hidden; }
@@ -48,7 +74,7 @@
 	width: 40%; min-width: 320px; display: flex; flex-direction: column;
 	border-right: 1px solid var(--border-color, #e2e2e2);
 }
-.alfred-right-panel { width: 60%; overflow-y: auto; }
+.alfred-right-panel { width: 45%; min-width: 360px; max-width: 560px; overflow-y: auto; }
 
 /* ── Onboarding (UX-01) ──────────────────────────────────────── */
 .alfred-onboarding {
@@ -104,33 +130,139 @@
 /* ── Chat Area ─────────────────────────────────────────────────── */
 .alfred-chat-area { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
 
-/* Toolbar: navigation | title | mode switcher | divider | actions.
-   Uses a flex row with a gap; the title grows to fill.
-   The right padding is deliberately larger than the left so the
-   destructive Delete button doesn't sit flush against the preview
-   panel edge - gives the user a clear buffer zone. */
+/* Toolbar: three-zone layout (left | center | right).
+   Left zone:  back + title (shrinkable, truncates with ellipsis)
+   Center zone: mode switcher (auto-width, the identity of the turn)
+   Right zone: "+ New" primary pill + a single "⋯" overflow menu
+   The overflow menu collapses Health / Share / Delete into one button
+   so the bar never overflows — there is no wrapping, no clipping,
+   and no Delete-vs-preview-panel collision possible. */
 .alfred-chat-toolbar {
-	display: flex; align-items: center; gap: 8px;
-	padding: 8px 20px 8px 12px;
+	display: flex; align-items: center; gap: 12px;
+	padding: 10px 16px 10px 10px;
 	border-bottom: 1px solid var(--border-color, #e2e2e2);
-	background: var(--subtle-fg, #f8f8f8); flex-shrink: 0;
-	min-height: 48px;
+	background: linear-gradient(
+		180deg,
+		var(--bg-color, #ffffff) 0%,
+		var(--subtle-fg, #fafbfc) 100%
+	);
+	flex-shrink: 0;
+	min-height: 52px;
+}
+.alfred-toolbar-left {
+	display: flex; align-items: center; gap: 8px;
+	flex: 1 1 0; min-width: 0;
+}
+.alfred-toolbar-center {
+	display: flex; align-items: center;
+	flex-shrink: 0;
+}
+.alfred-toolbar-right {
+	display: flex; align-items: center; gap: 6px;
+	flex-shrink: 0;
 }
 .alfred-chat-title {
-	flex: 1; min-width: 0;
-	margin: 0 4px 0 8px;
+	min-width: 0;
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 	font-size: 13px;
+	font-weight: 500;
+	color: var(--text-color, #374151);
 }
 
-/* Vertical divider separating the mode-selector region from the
-   action region. Thin, muted, and aligned to the toolbar height. */
+/* Legacy vertical divider - still used by callers that need it,
+   but the three-zone toolbar no longer needs visible dividers. */
 .alfred-toolbar-divider {
 	display: inline-block;
 	width: 1px; height: 22px;
 	background: var(--border-color, #e2e2e2);
 	margin: 0 4px;
 	flex-shrink: 0;
+}
+
+/* ── Overflow menu (kebab dropdown) ─────────────────────────────
+   Anchors the dropdown to the right edge of the toolbar so it opens
+   downward-left, never clipping against the preview panel boundary.
+   The `pressed` state gives the kebab button a clear open-indicator
+   look while the menu is visible. */
+.alfred-menu-wrapper {
+	position: relative;
+	display: inline-flex;
+}
+.alfred-icon-btn-pressed,
+.alfred-icon-btn-pressed:hover {
+	color: var(--text-color, #111827);
+	background: var(--bg-tertiary, #eef0f3);
+	border-color: var(--border-color, #e2e2e2);
+}
+.alfred-menu-dropdown {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	min-width: 240px;
+	padding: 6px;
+	background: var(--bg-color, #ffffff);
+	border: 1px solid var(--border-color, #e5e7eb);
+	border-radius: 10px;
+	box-shadow:
+		0 10px 24px -8px rgba(0, 0, 0, 0.18),
+		0 3px 6px -2px rgba(0, 0, 0, 0.08);
+	z-index: 50;
+	animation: alfred-menu-in 0.12s ease-out;
+}
+@keyframes alfred-menu-in {
+	from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+	to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.alfred-menu-item {
+	display: flex; align-items: center; gap: 10px;
+	width: 100%;
+	padding: 7px 10px;
+	font-size: 12.5px;
+	color: var(--text-color, #1f2937);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	cursor: pointer;
+	text-align: left;
+	transition: background 0.1s ease, color 0.1s ease;
+}
+.alfred-menu-item:hover {
+	background: var(--bg-tertiary, #f3f4f6);
+}
+.alfred-menu-item:active { transform: translateY(1px); }
+.alfred-menu-item-icon {
+	display: inline-flex;
+	align-items: center; justify-content: center;
+	width: 22px; height: 22px;
+	border-radius: 5px;
+	background: var(--bg-tertiary, #f3f4f6);
+	color: var(--text-muted, #6b7280);
+	font-size: 12px;
+	flex-shrink: 0;
+}
+.alfred-menu-item-label { flex: 1; font-weight: 500; }
+.alfred-menu-item-hint {
+	font-size: 11px;
+	color: var(--text-muted, #9ca3af);
+	font-weight: 400;
+}
+.alfred-menu-separator {
+	height: 1px;
+	margin: 4px 2px;
+	background: var(--border-color, #eef0f3);
+}
+.alfred-menu-item-danger { color: var(--red-600, #dc2626); }
+.alfred-menu-item-danger .alfred-menu-item-icon {
+	background: var(--red-50, #fef2f2);
+	color: var(--red-500, #ef4444);
+}
+.alfred-menu-item-danger:hover {
+	background: var(--red-50, #fef2f2);
+	color: var(--red-700, #b91c1c);
+}
+.alfred-menu-item-danger:hover .alfred-menu-item-icon {
+	background: var(--red-100, #fee2e2);
+	color: var(--red-600, #dc2626);
 }
 
 /* Primary action pill: dark background, white text, icon + label.
@@ -177,14 +309,67 @@
 .alfred-icon-btn:active { transform: translateY(1px); }
 .alfred-icon-btn i { font-size: 14px; line-height: 1; }
 
-/* Danger variant: Delete button. Subtle red accent instead of a
-   solid red fill - less visually dominant than the old btn-danger
-   but still signals destructive intent on hover. */
+/* Unicode glyph inside a toolbar button. Sized to look like an icon
+   regardless of which system font is used. */
+.alfred-btn-glyph {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 16px;
+	line-height: 1;
+	font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.alfred-primary-btn .alfred-btn-glyph {
+	font-size: 13px;
+	font-weight: 600;
+}
+
+/* Inline SVG icon inside a toolbar button. Uses currentColor so
+   variants (e.g. alfred-icon-btn-danger) propagate automatically. */
+.alfred-btn-svg {
+	width: 14px;
+	height: 14px;
+	stroke: currentColor;
+	flex-shrink: 0;
+}
+
+/* Danger variant for icon-only buttons (kept for potential reuse).
+   Subtle red accent instead of a solid red fill. */
 .alfred-icon-btn-danger { color: var(--red-500, #ef4444); }
 .alfred-icon-btn-danger:hover {
 	color: var(--red-700, #b91c1c);
 	background: var(--red-50, #fef2f2);
 	border-color: var(--red-200, #fecaca);
+}
+
+/* Destructive pill button with text label (Delete).
+   Text + icon form is used instead of icon-only so the button is
+   unambiguously visible regardless of icon-font availability. The
+   styling is a subtle red outline rather than a solid red fill so it
+   doesn't fight for attention against the primary "+ New" pill, but
+   it's still clearly marked as destructive. */
+.alfred-danger-btn {
+	display: inline-flex; align-items: center; gap: 6px;
+	padding: 6px 12px;
+	font-size: 12px; font-weight: 500;
+	color: var(--red-600, #dc2626);
+	background: var(--bg-color, #ffffff);
+	border: 1px solid var(--red-200, #fecaca);
+	border-radius: 6px;
+	cursor: pointer;
+	transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, transform 0.05s ease;
+	flex-shrink: 0;
+}
+.alfred-danger-btn:hover {
+	color: var(--bg-color, #ffffff);
+	background: var(--red-600, #dc2626);
+	border-color: var(--red-600, #dc2626);
+}
+.alfred-danger-btn:active { transform: translateY(1px); }
+.alfred-danger-btn .alfred-btn-glyph {
+	font-size: 11px;
+	font-weight: 700;
 }
 .alfred-messages {
 	flex: 1; overflow-y: auto; padding: 16px;

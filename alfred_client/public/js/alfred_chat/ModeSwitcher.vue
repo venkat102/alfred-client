@@ -13,7 +13,25 @@
 			:aria-pressed="modelValue === opt.value"
 			@click="$emit('update:modelValue', opt.value)"
 		>
-			<i :class="['fa', opt.icon, 'alfred-mode-icon']" aria-hidden="true"></i>
+			<!-- Inline SVG icon per mode. Uses currentColor so the per-mode
+			     active-state colors propagate automatically. SVG is used
+			     instead of Font Awesome because the fa-* font may not be
+			     loaded on this page bundle, which made earlier icon-only
+			     buttons render as empty boxes. -->
+			<svg
+				class="alfred-mode-icon"
+				xmlns="http://www.w3.org/2000/svg"
+				width="12"
+				height="12"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+				v-html="opt.svg"
+			/>
 			<span class="alfred-mode-label">{{ opt.label }}</span>
 		</button>
 	</div>
@@ -30,37 +48,45 @@ defineProps({
 
 defineEmits(["update:modelValue"]);
 
-// Each mode has an icon, a label, a tooltip, and a color family.
-// The icon + color combination gives the four modes distinct visual
-// identities without relying on label text alone - useful because the
-// modes map to very different pipeline behaviours:
-//   - Auto     (green, magic wand)  : orchestrator decides
+// Each mode has an icon (inline SVG path data), a label, a tooltip,
+// and a color family. The icon + color combination gives the four
+// modes distinct visual identities without relying on label text
+// alone - useful because the modes map to very different pipeline
+// behaviours:
+//   - Auto     (green, sparkles)    : orchestrator decides
 //   - Dev      (blue, wrench)       : build + deploy via the crew
-//   - Plan     (indigo, sitemap)    : produce a reviewable plan doc
-//   - Insights (cyan, search)       : read-only Q&A about the site
+//   - Plan     (indigo, clipboard)  : produce a reviewable plan doc
+//   - Insights (cyan, magnifier)    : read-only Q&A about the site
+//
+// SVG path data is kept tight (single-path where possible) because
+// Vue has to parse and re-render it on every mode change.
 const options = [
 	{
 		value: "auto",
 		label: "Auto",
-		icon: "fa-magic",
+		// Sparkles / magic - small 4-point stars
+		svg: '<path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="M19 14l0.75 2.25L22 17l-2.25 0.75L19 20l-0.75-2.25L16 17l2.25-0.75z"/><path d="M5 16l0.5 1.5L7 18l-1.5 0.5L5 20l-0.5-1.5L3 18l1.5-0.5z"/>',
 		tooltip: "Auto - Alfred picks the right mode based on your prompt",
 	},
 	{
 		value: "dev",
 		label: "Dev",
-		icon: "fa-wrench",
+		// Code brackets: </>
+		svg: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
 		tooltip: "Dev - Build and deploy via the full SDLC crew",
 	},
 	{
 		value: "plan",
 		label: "Plan",
-		icon: "fa-sitemap",
+		// Clipboard with checklist
+		svg: '<rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/>',
 		tooltip: "Plan - Describe the approach without building anything",
 	},
 	{
 		value: "insights",
 		label: "Insights",
-		icon: "fa-search",
+		// Magnifying glass
+		svg: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
 		tooltip: "Insights - Read-only questions about your site state",
 	},
 ];
@@ -104,8 +130,9 @@ const options = [
 }
 
 .alfred-mode-icon {
-	font-size: 11px;
-	line-height: 1;
+	width: 12px;
+	height: 12px;
+	flex-shrink: 0;
 	opacity: 0.75;
 	transition: opacity 0.14s ease, transform 0.14s ease;
 }

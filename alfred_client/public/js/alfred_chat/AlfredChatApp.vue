@@ -10,7 +10,12 @@
 					{{ __("Basic") }}
 				</span>
 			</div>
-			<PhasePipeline v-if="pipelineMode !== 'lite'" :current-phase="currentPhase" :completed-phases="completedPhases" />
+			<PhasePipeline
+				v-if="pipelineMode !== 'lite'"
+				:current-phase="currentPhase"
+				:completed-phases="completedPhases"
+				:active-agent="activeAgent"
+			/>
 		</div>
 
 		<div class="alfred-panels">
@@ -29,78 +34,98 @@
 
 				<!-- Chat Area -->
 				<div v-else class="alfred-chat-area">
-					<!-- Chat Toolbar -->
+					<!-- Chat Toolbar: three-zone layout.
+					     Zone 1 (left):  back + conversation title
+					     Zone 2 (mid):   mode switcher (the identity of the current turn)
+					     Zone 3 (right): primary "+ New" pill + single overflow menu
+					     Secondary actions (Health, Share, Delete) live inside the
+					     overflow menu so the bar never overflows regardless of how
+					     narrow the chat area gets. This replaces the old row of
+					     four side-by-side buttons that got clipped by the preview
+					     panel. -->
 					<div class="alfred-chat-toolbar">
-						<!-- Navigation: icon-only back button, ghost style -->
-						<button
-							type="button"
-							class="alfred-icon-btn"
-							@click="goBack"
-							:aria-label="__('Back to conversations')"
-							:title="__('Back to conversations')"
-						>
-							<i class="fa fa-arrow-left"></i>
-						</button>
+						<div class="alfred-toolbar-left">
+							<button
+								type="button"
+								class="alfred-icon-btn"
+								@click="goBack"
+								:aria-label="__('Back to conversations')"
+								:title="__('Back to conversations')"
+							>
+								<span class="alfred-btn-glyph" aria-hidden="true">&#8592;</span>
+							</button>
+						</div>
 
-						<!-- Title fills the gap between nav and mode switcher -->
-						<span class="alfred-chat-title text-muted text-sm">{{ conversationSummary }}</span>
+						<div class="alfred-toolbar-center">
+							<ModeSwitcher v-model="currentMode" />
+						</div>
 
-						<!-- Mode switcher - the centrepiece of the toolbar -->
-						<ModeSwitcher v-model="currentMode" />
+						<div class="alfred-toolbar-right">
+							<button
+								type="button"
+								class="alfred-primary-btn"
+								@click="newConversationFromChat"
+								:aria-label="__('Start a new conversation')"
+								:title="__('Start a new conversation')"
+							>
+								<span class="alfred-btn-glyph" aria-hidden="true">+</span>
+								<span>{{ __("New") }}</span>
+							</button>
 
-						<!-- Divider between mode-selector region and action region -->
-						<span class="alfred-toolbar-divider" aria-hidden="true"></span>
-
-						<!-- Primary action: start a new conversation -->
-						<button
-							type="button"
-							class="alfred-primary-btn"
-							@click="newConversationFromChat"
-							:aria-label="__('Start a new conversation')"
-							:title="__('Start a new conversation')"
-						>
-							<i class="fa fa-plus"></i>
-							<span>{{ __("New") }}</span>
-						</button>
-
-						<!-- Secondary actions: icon-only ghost buttons -->
-						<button
-							type="button"
-							class="alfred-icon-btn"
-							@click="checkHealth"
-							:aria-label="__('Check pipeline health')"
-							:title="__('Check pipeline health (Redis queue, background job, Processing App)')"
-						>
-							<i class="fa fa-heartbeat"></i>
-						</button>
-						<button
-							v-if="isCurrentConvOwner"
-							type="button"
-							class="alfred-icon-btn"
-							@click="shareConversation(currentConversation)"
-							:aria-label="__('Share this conversation')"
-							:title="__('Share this conversation')"
-						>
-							<i class="fa fa-share-alt"></i>
-						</button>
-
-						<!-- Divider isolating the destructive action from the safe
-						     actions. Plus the toolbar's right padding keeps the
-						     Delete button away from the preview panel edge so a
-						     user reaching for Approve in the preview panel can't
-						     accidentally drag into Delete. -->
-						<span class="alfred-toolbar-divider" aria-hidden="true"></span>
-
-						<button
-							v-if="isCurrentConvOwner"
-							type="button"
-							class="alfred-icon-btn alfred-icon-btn-danger"
-							@click="deleteConversation"
-							:aria-label="__('Delete this conversation')"
-							:title="__('Delete this conversation')"
-						>
-							<i class="fa fa-trash-o"></i>
-						</button>
+							<!-- Overflow menu: single kebab button gates the three
+							     less-frequent actions. Click toggles menuOpen; a
+							     document-level listener (see onMounted) closes on
+							     outside click. The menu is absolutely positioned
+							     and right-aligned so it never clips against the
+							     preview panel edge. -->
+							<div class="alfred-menu-wrapper" ref="menuWrapperEl">
+								<button
+									type="button"
+									class="alfred-icon-btn"
+									:class="{ 'alfred-icon-btn-pressed': menuOpen }"
+									@click.stop="menuOpen = !menuOpen"
+									:aria-label="__('More actions')"
+									:title="__('More actions')"
+									:aria-expanded="menuOpen"
+									aria-haspopup="menu"
+								>
+									<span class="alfred-btn-glyph" aria-hidden="true">&#8942;</span>
+								</button>
+								<div v-if="menuOpen" class="alfred-menu-dropdown" role="menu">
+									<button
+										type="button"
+										class="alfred-menu-item"
+										role="menuitem"
+										@click="menuAction(checkHealth)"
+									>
+										<span class="alfred-menu-item-icon" aria-hidden="true">&#9829;</span>
+										<span class="alfred-menu-item-label">{{ __("Check health") }}</span>
+										<span class="alfred-menu-item-hint">{{ __("Redis, worker, app") }}</span>
+									</button>
+									<button
+										v-if="isCurrentConvOwner"
+										type="button"
+										class="alfred-menu-item"
+										role="menuitem"
+										@click="menuAction(() => shareConversation(currentConversation))"
+									>
+										<span class="alfred-menu-item-icon" aria-hidden="true">&#8599;</span>
+										<span class="alfred-menu-item-label">{{ __("Share conversation") }}</span>
+									</button>
+									<div v-if="isCurrentConvOwner" class="alfred-menu-separator" role="separator"></div>
+									<button
+										v-if="isCurrentConvOwner"
+										type="button"
+										class="alfred-menu-item alfred-menu-item-danger"
+										role="menuitem"
+										@click="menuAction(deleteConversation)"
+									>
+										<span class="alfred-menu-item-icon" aria-hidden="true">&#10005;</span>
+										<span class="alfred-menu-item-label">{{ __("Delete conversation") }}</span>
+									</button>
+								</div>
+							</div>
+						</div>
 					</div>
 					<div ref="messagesContainer" class="alfred-messages">
 						<MessageBubble
@@ -205,6 +230,12 @@ const statusText = ref(__("Ready"));
 const statusState = ref("disconnected");
 const currentPhase = ref(null);
 const completedPhases = ref([]);
+// Name of the agent currently running the active phase (e.g.
+// "Developer"). Populated from agent_status events, cleared when
+// the phase completes or a new prompt starts. The PhasePipeline
+// renders this inside the active pill so the header reads
+// "[pulse] Developer - generating code" instead of a static label.
+const activeAgent = ref(null);
 const changeset = ref(null);
 const deploySteps = ref([]);
 const isDeployed = ref(false);
@@ -236,6 +267,13 @@ const pipelineModeSource = ref("site_config");
 
 const messagesContainer = ref(null);
 const inputField = ref(null);
+
+// Overflow menu ("⋯" in the toolbar) - holds Health / Share / Delete.
+// Collapsing these into a single dropdown is what keeps the toolbar
+// from overflowing into the preview panel on narrow chat areas, so
+// the menuOpen/close plumbing is load-bearing UI, not a nicety.
+const menuOpen = ref(false);
+const menuWrapperEl = ref(null);
 
 let timerInterval = null;
 let timerStart = null;
@@ -307,9 +345,26 @@ function syncRoute() {
 }
 
 // ── Lifecycle ──────────────────────────────────────────────────
+function handleDocumentClick(e) {
+	if (!menuOpen.value) return;
+	const wrapper = menuWrapperEl.value;
+	if (wrapper && !wrapper.contains(e.target)) menuOpen.value = false;
+}
+
+function handleDocumentKey(e) {
+	if (e.key === "Escape" && menuOpen.value) menuOpen.value = false;
+}
+
+function menuAction(fn) {
+	menuOpen.value = false;
+	fn();
+}
+
 onMounted(() => {
 	loadConversations();
 	setupRealtime();
+	document.addEventListener("click", handleDocumentClick);
+	document.addEventListener("keydown", handleDocumentKey);
 	// Restore conversation from URL on page load / refresh
 	const convId = getConversationFromRoute();
 	if (convId) {
@@ -320,6 +375,8 @@ onMounted(() => {
 onUnmounted(() => {
 	stopTimer();
 	stopPolling();
+	document.removeEventListener("click", handleDocumentClick);
+	document.removeEventListener("keydown", handleDocumentKey);
 	// Listeners persist on frappe.realtime - they're global and idempotent
 });
 
@@ -369,6 +426,7 @@ function openConversation(name) {
 	isDeployed.value = false;
 	currentPhase.value = null;
 	completedPhases.value = [];
+	activeAgent.value = null;
 	activityLog.value = [];
 	connectionState.value = "disconnected";
 	statusText.value = __("Ready");
@@ -392,6 +450,44 @@ function openConversation(name) {
 		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_messages",
 		args: { conversation: name },
 		callback: (r) => { if (r.message) messages.value = r.message; },
+	});
+
+	// Rehydrate live state: pending changeset, active phase, processing flag.
+	// Without this the UI forgets everything on a mid-run refresh even though
+	// the pipeline is still running in the background.
+	rehydrateConversationState(name);
+}
+
+function rehydrateConversationState(name) {
+	frappe.call({
+		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_conversation_state",
+		args: { conversation: name },
+		callback: (r) => {
+			const state = r && r.message;
+			if (!state || currentConversation.value !== name) return;
+
+			if (state.pending_changeset) {
+				changeset.value = state.pending_changeset;
+			}
+
+			if (state.is_processing) {
+				isProcessing.value = true;
+				inputDisabled.value = true;
+				statusState.value = "processing";
+				statusText.value = state.active_agent
+					? __("{0} is working...", [state.active_agent])
+					: __("Pipeline running...");
+				if (state.active_phase) currentPhase.value = state.active_phase;
+				if (state.active_agent) activeAgent.value = state.active_agent;
+				if (Array.isArray(state.completed_phases)) {
+					completedPhases.value = state.completed_phases.slice();
+				}
+				// Kick the timer and polling fallback so the resumed run stays
+				// observable even if no fresh realtime events have landed yet.
+				startTimer();
+				startPolling();
+			}
+		},
 	});
 }
 
@@ -1021,6 +1117,7 @@ function updateAgentStatus(data) {
 		statusText.value = step ? `Step ${Math.ceil(step)}/6 - ${data.agent} is working...` : `${data.agent} is working...`;
 		statusState.value = "processing";
 		if (phase) currentPhase.value = phase;
+		activeAgent.value = data.agent || null;
 		startTimer();
 	} else if (data.status === "completed") {
 		statusText.value = `${data.agent} completed`;
@@ -1029,6 +1126,7 @@ function updateAgentStatus(data) {
 			completedPhases.value.push(phase);
 		}
 		currentPhase.value = null;
+		activeAgent.value = null;
 	}
 }
 

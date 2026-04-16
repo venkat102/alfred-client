@@ -483,3 +483,100 @@ def get_latest_changeset(conversation):
 		# changesets from previous prompts in the same conversation.
 		"creation": str(cs.creation) if cs.creation else None,
 	}
+
+
+# Canonical phase order, mirroring the frontend's AGENT_PHASE_MAP.
+# Used to derive "completed phases" from the conversation's recorded
+# current_agent on reload: anything earlier than the active agent is
+# treated as done. Keep in sync with AlfredChatApp.vue's AGENT_PHASE_MAP.
+_AGENT_TO_PHASE = [
+	("Requirement Analyst", "requirement"),
+	("Feasibility Assessor", "assessment"),
+	("Solution Architect", "architecture"),
+	("Developer", "development"),
+	("QA Validator", "testing"),
+	("Deployment Specialist", "deployment"),
+]
+_PROCESSING_STATUSES = {"In Progress", "Awaiting Input"}
+
+
+@frappe.whitelist()
+def get_conversation_state(conversation):
+	"""Return the live state of a conversation for UI rehydration on reload.
+
+	The chat UI resets its in-memory state (preview panel, active phase,
+	processing flag) on every openConversation, then listens for future
+	realtime events. That works great for normal navigation but loses
+	context on a mid-run refresh - the pipeline is still running on the
+	processing app, and a pending changeset may already be in the DB, but
+	the UI has no handle to either. This endpoint gives the UI a snapshot
+	so it can re-attach to "where we were" before subscribing to new events.
+
+	Returns:
+	  {
+	    "is_processing": bool,          # true if pipeline is mid-run
+	    "status": str,                  # conversation status string
+	    "active_agent": str | None,     # e.g. "Developer"
+	    "active_phase": str | None,     # e.g. "development"
+	    "completed_phases": list[str],  # phases derived as done on reload
+	    "pending_changeset": dict|None, # latest Pending changeset if any
+	  }
+	"""
+	from alfred_client.api.permissions import validate_alfred_access
+
+	validate_alfred_access()
+	frappe.has_permission("Alfred Conversation", doc=conversation, throw=True)
+
+	conv = frappe.get_doc("Alfred Conversation", conversation)
+	status = conv.status or "Open"
+	is_processing = status in _PROCESSING_STATUSES
+
+	active_agent = conv.current_agent or None
+	active_phase = None
+	completed_phases = []
+	if active_agent:
+		for agent, phase in _AGENT_TO_PHASE:
+			if agent == active_agent:
+				active_phase = phase
+				break
+			completed_phases.append(phase)
+
+	# Latest Pending changeset (approval still needed) - rehydrated into
+	# the preview panel. Anything already Approved/Rejected/Deployed is
+	# terminal and doesn't need to be restored as a live preview.
+	pending_changeset = None
+	cs_name = frappe.db.get_value(
+		"Alfred Changeset",
+		{"conversation": conversation, "status": "Pending"},
+		"name",
+		order_by="creation desc",
+	)
+	if cs_name:
+		cs = frappe.get_doc("Alfred Changeset", cs_name)
+		try:
+			changes = json.loads(cs.changes) if cs.changes else []
+		except json.JSONDecodeError:
+			changes = []
+		try:
+			dry_run_issues = json.loads(cs.dry_run_issues) if cs.dry_run_issues else []
+		except json.JSONDecodeError:
+			dry_run_issues = []
+		pending_changeset = {
+			"name": cs.name,
+			"status": cs.status,
+			"conversation": cs.conversation,
+			"changes": changes,
+			"deployment_log": cs.deployment_log,
+			"dry_run_valid": int(cs.dry_run_valid or 0),
+			"dry_run_issues": dry_run_issues,
+			"creation": str(cs.creation) if cs.creation else None,
+		}
+
+	return {
+		"is_processing": is_processing,
+		"status": status,
+		"active_agent": active_agent,
+		"active_phase": active_phase,
+		"completed_phases": completed_phases,
+		"pending_changeset": pending_changeset,
+	}
