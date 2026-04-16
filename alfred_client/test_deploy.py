@@ -190,6 +190,60 @@ def run_tests():
 	print(f"  Caught {len(python_errors)} Python syntax issue(s)")
 	print("  PASSED\n")
 
+	# Test 10a: RestrictedPython - import statements in Server Scripts are rejected.
+	# Frappe runs every Server Script through RestrictedPython which bans `import`
+	# at compile time, so dry-run MUST catch this before deployment - otherwise the
+	# agent's `import json` silently ships and only fails when the trigger fires.
+	print("Test 10a: dry_run_changeset rejects `import` in Server Scripts...")
+	for bad_script in [
+		"import json\nfrappe.throw('nope')",
+		"from datetime import date\nfrappe.throw('nope')",
+		"import requests\nresp = requests.get('http://x')",
+	]:
+		result = dry_run_changeset([{
+			"op": "create",
+			"doctype": "Server Script",
+			"data": {
+				"name": f"Alfred Test Import Reject {hash(bad_script) & 0xffff}",
+				"script_type": "DocType Event",
+				"reference_doctype": "User",
+				"doctype_event": "Before Save",
+				"script": bad_script,
+			},
+		}])
+		assert not result["valid"], f"Expected invalid for import, got: {result}"
+		import_issues = [i for i in result["issues"] if "import" in i["issue"].lower()]
+		assert len(import_issues) > 0, (
+			f"Expected an import-specific issue, got: {result['issues']}"
+		)
+	print("  PASSED (3 variants rejected)\n")
+
+	# Test 10b: RestrictedPython - scripts that use pre-bound names directly
+	# pass compile validation. This guards against a regression where we
+	# over-restrict and reject legitimate uses of json / datetime / frappe.utils.
+	print("Test 10b: dry_run_changeset accepts pre-bound frappe/json/datetime usage...")
+	result = dry_run_changeset([{
+		"op": "create",
+		"doctype": "Server Script",
+		"data": {
+			"name": "Alfred Test Prebound OK",
+			"script_type": "DocType Event",
+			"reference_doctype": "User",
+			"doctype_event": "Before Save",
+			"script": (
+				"payload = json.dumps({'ts': frappe.utils.now_datetime().isoformat()})\n"
+				"age_days = frappe.utils.date_diff(frappe.utils.nowdate(), '2000-01-01')\n"
+				"if age_days < 0:\n"
+				"    frappe.throw('bad date')\n"
+			),
+		},
+	}])
+	compile_issues = [i for i in result["issues"] if "import" in i["issue"].lower() or "syntax" in i["issue"].lower()]
+	assert len(compile_issues) == 0, (
+		f"Pre-bound usage should pass compile check, got: {compile_issues}"
+	)
+	print("  PASSED\n")
+
 	# Test 11: Runtime error checks - Jinja syntax in Notifications
 	print("Test 11: dry_run_changeset catches Jinja syntax errors in Notifications...")
 	result = dry_run_changeset([{

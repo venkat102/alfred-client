@@ -11,9 +11,51 @@ Called via: POST /api/method/alfred_client.api.deploy.apply_changeset
 """
 
 import json
+from contextlib import contextmanager
 
 import frappe
 from frappe import _
+
+
+# ── Safe context-switch helper ───────────────────────────────────
+#
+# frappe.set_user() is destructive: frappe/__init__.py:366 sets
+# local.session.sid = username, local.session.data = _dict(), and resets a
+# handful of caches. In an interactive HTTP request that means the caller's
+# real session id (a UUID) gets overwritten with a username string, and the
+# CSRF token inside session.data is wiped. When the response goes back to
+# the browser the cookie sid still matches on the client but the server-side
+# session record has been clobbered - the next AJAX call fails CSRF /
+# authentication and the client is bounced to login.
+#
+# This context manager preserves the full triple (user, sid, data) across
+# the set_user window so the browser session survives the deploy. We also
+# clear the same caches set_user touches so permission checks re-run against
+# the restored identity cleanly.
+@contextmanager
+def _acting_as(target_user: str):
+	snapshot_user = frappe.session.user
+	snapshot_sid = getattr(frappe.local.session, "sid", None)
+	snapshot_data = getattr(frappe.local.session, "data", None)
+
+	frappe.set_user(target_user)
+	try:
+		yield
+	finally:
+		frappe.local.session.user = snapshot_user
+		if snapshot_sid is not None:
+			frappe.local.session.sid = snapshot_sid
+		if snapshot_data is not None:
+			frappe.local.session.data = snapshot_data
+		# The caches set_user() resets must be cleared here too so that any
+		# code after the context sees role/perms keyed to snapshot_user, not
+		# target_user's stale entries.
+		frappe.local.cache = {}
+		frappe.local.form_dict = frappe._dict()
+		frappe.local.jenv = None
+		frappe.local.role_permissions = {}
+		frappe.local.new_doc_templates = {}
+		frappe.local.user_perms = None
 
 
 # ── Frappe default fields to exclude from verification comparisons
@@ -76,13 +118,8 @@ def apply_changeset(changeset_name):
 	conversation = frappe.get_doc("Alfred Conversation", changeset.conversation)
 	requesting_user = conversation.user
 
-	# Switch to the requesting user's context - ALL operations run as this user
-	original_user = frappe.session.user
-	frappe.set_user(requesting_user)
-
 	changes = json.loads(changeset.changes) if isinstance(changeset.changes, str) else changeset.changes
 	if not changes:
-		frappe.set_user(original_user)
 		return {"status": "success", "message": "No changes to deploy", "steps": []}
 
 	execution_log = []
@@ -90,115 +127,122 @@ def apply_changeset(changeset_name):
 	failed = False
 	error_msg = ""
 
-	try:
-		for i, change in enumerate(changes):
-			step = i + 1
-			operation = change.get("op", change.get("operation", "create"))
-			doctype = change.get("doctype", "")
-			data = change.get("data", {})
-			doc_name = data.get("name", "")
+	# Run every write under the requesting user's identity. The context
+	# manager snapshots and restores session.sid / session.data so the
+	# caller's browser session survives the context switch - without this,
+	# frappe.set_user() wipes the CSRF token and bounces the user to login
+	# on the next AJAX call.
+	verification = None
+	with _acting_as(requesting_user):
+		try:
+			for i, change in enumerate(changes):
+				step = i + 1
+				operation = change.get("op", change.get("operation", "create"))
+				doctype = change.get("doctype", "")
+				data = change.get("data", {})
+				doc_name = data.get("name", "")
 
-			# Server-side permission re-verification before EACH operation
-			perm_action = "create" if operation == "create" else "write"
-			if not frappe.has_permission(doctype, perm_action):
-				raise frappe.PermissionError(
-					_("User '{0}' does not have '{1}' permission on '{2}'").format(
-						requesting_user, perm_action, doctype
+				# Server-side permission re-verification before EACH operation
+				perm_action = "create" if operation == "create" else "write"
+				if not frappe.has_permission(doctype, perm_action):
+					raise frappe.PermissionError(
+						_("User '{0}' does not have '{1}' permission on '{2}'").format(
+							requesting_user, perm_action, doctype
+						)
 					)
+
+				# Publish progress
+				frappe.publish_realtime(
+					"alfred_deploy_progress",
+					{
+						"changeset": changeset_name,
+						"step": step,
+						"total": len(changes),
+						"operation": operation,
+						"doctype": doctype,
+						"name": doc_name,
+						"status": "in_progress",
+					},
+					user=requesting_user,
 				)
 
-			# Publish progress
-			frappe.publish_realtime(
-				"alfred_deploy_progress",
-				{
-					"changeset": changeset_name,
+				# Write audit log BEFORE execution (write-ahead)
+				_write_audit_log(
+					changeset.conversation, doctype, doc_name, operation,
+					before_state=_get_document_state(doctype, doc_name) if operation == "update" else None,
+				)
+
+				if operation == "create":
+					result = _create_document(doctype, data)
+					rollback_data.append({
+						"operation": "delete",
+						"doctype": doctype,
+						"name": result.get("name", doc_name),
+					})
+				elif operation == "update":
+					before_state = _get_document_state(doctype, doc_name)
+					result = _update_document(doctype, data)
+					rollback_data.append({
+						"operation": "restore",
+						"doctype": doctype,
+						"name": doc_name,
+						"before_state": before_state,
+					})
+				else:
+					raise ValueError(f"Unknown operation: {operation}")
+
+				execution_log.append({
 					"step": step,
-					"total": len(changes),
 					"operation": operation,
 					"doctype": doctype,
-					"name": doc_name,
-					"status": "in_progress",
-				},
-				user=requesting_user,
-			)
-
-			# Write audit log BEFORE execution (write-ahead)
-			_write_audit_log(
-				changeset.conversation, doctype, doc_name, operation,
-				before_state=_get_document_state(doctype, doc_name) if operation == "update" else None,
-			)
-
-			if operation == "create":
-				result = _create_document(doctype, data)
-				rollback_data.append({
-					"operation": "delete",
-					"doctype": doctype,
 					"name": result.get("name", doc_name),
+					"status": "success",
 				})
-			elif operation == "update":
-				before_state = _get_document_state(doctype, doc_name)
-				result = _update_document(doctype, data)
-				rollback_data.append({
-					"operation": "restore",
-					"doctype": doctype,
-					"name": doc_name,
-					"before_state": before_state,
-				})
-			else:
-				raise ValueError(f"Unknown operation: {operation}")
 
+				frappe.publish_realtime(
+					"alfred_deploy_progress",
+					{"changeset": changeset_name, "step": step, "total": len(changes), "status": "success", "name": doc_name},
+					user=requesting_user,
+				)
+
+		except Exception as e:
+			failed = True
+			error_msg = str(e)
 			execution_log.append({
-				"step": step,
-				"operation": operation,
-				"doctype": doctype,
-				"name": result.get("name", doc_name),
-				"status": "success",
+				"step": len(execution_log) + 1,
+				"operation": change.get("op", change.get("operation", "")),
+				"doctype": change.get("doctype", ""),
+				"name": change.get("data", {}).get("name", ""),
+				"status": "failed",
+				"error": error_msg,
 			})
 
+			# Database-level rollback - undoes ALL uncommitted operations in this transaction.
+			# This is safer than manual rollback because it's atomic.
+			frappe.db.rollback()
+
 			frappe.publish_realtime(
-				"alfred_deploy_progress",
-				{"changeset": changeset_name, "step": step, "total": len(changes), "status": "success", "name": doc_name},
+				"alfred_deploy_failed",
+				{"changeset": changeset_name, "step": len(execution_log), "error": error_msg, "rollback_initiated": True},
 				user=requesting_user,
 			)
 
-	except Exception as e:
-		failed = True
-		error_msg = str(e)
-		execution_log.append({
-			"step": len(execution_log) + 1,
-			"operation": change.get("op", change.get("operation", "")),
-			"doctype": change.get("doctype", ""),
-			"name": change.get("data", {}).get("name", ""),
-			"status": "failed",
-			"error": error_msg,
-		})
+		# Post-deployment: verification or commit (inside the acting-as
+		# context so verification reads run under the requesting user).
+		if failed:
+			changeset.status = "Rolled Back"
+			changeset.deployment_log = json.dumps(execution_log, indent=2)
+		else:
+			# Commit the entire deployment as a single transaction
+			frappe.db.commit()
+			# Verify deployment AFTER commit
+			verification = verify_deployment(changes, changeset.conversation)
+			changeset.status = "Deployed"
+			changeset.deployment_log = json.dumps(execution_log, indent=2)
 
-		# Database-level rollback - undoes ALL uncommitted operations in this transaction.
-		# This is safer than manual rollback because it's atomic.
-		frappe.db.rollback()
-
-		frappe.publish_realtime(
-			"alfred_deploy_failed",
-			{"changeset": changeset_name, "step": len(execution_log), "error": error_msg, "rollback_initiated": True},
-			user=requesting_user,
-		)
-
-	# Post-deployment: verification or commit
-	verification = None
-	if failed:
-		changeset.status = "Rolled Back"
-		changeset.deployment_log = json.dumps(execution_log, indent=2)
-	else:
-		# Commit the entire deployment as a single transaction
-		frappe.db.commit()
-		# Verify deployment AFTER commit
-		verification = verify_deployment(changes, changeset.conversation)
-		changeset.status = "Deployed"
-		changeset.deployment_log = json.dumps(execution_log, indent=2)
-
+	# Context exited - session is restored to the caller. Save the status
+	# update as the original (caller) user with ignore_permissions=True.
 	changeset.rollback_data = json.dumps(rollback_data)
-	# Save changeset with admin permissions (status update is an internal operation)
-	frappe.set_user(original_user)
 	changeset.save(ignore_permissions=True)
 	frappe.db.commit()
 
@@ -363,16 +407,51 @@ def _check_runtime_errors(doctype, data):
 	"""
 	problems = []
 
-	# --- Server Script: compile Python ---
+	# --- Server Script: validate syntax + reject `import` ---
+	# Frappe runs Server Scripts via frappe.utils.safe_exec.safe_exec, which
+	# uses RestrictedPython + a `safe_globals` that has no `__import__`. That
+	# means `import json` compiles fine at dry-run but blows up at runtime
+	# with "name '__import__' is not defined" when the event fires.
+	#
+	# We catch this at dry-run via two complementary checks:
+	#   1. ast.parse() for standard Python syntax errors
+	#   2. ast.walk() looking for Import / ImportFrom nodes - deterministic
+	#      and aligned with Frappe's "no imports in Server Scripts" contract
 	if doctype == "Server Script":
 		script = data.get("script", "")
 		if script:
+			import ast
 			try:
-				compile(script, "<alfred_dryrun>", "exec")
+				tree = ast.parse(script, filename="<alfred_dryrun>")
 			except SyntaxError as e:
 				problems.append(f"Server Script Python syntax error: {e.msg} at line {e.lineno}")
+				tree = None
 			except Exception as e:
 				problems.append(f"Server Script compile failed: {e}")
+				tree = None
+
+			if tree is not None:
+				import_lines = []
+				for node in ast.walk(tree):
+					if isinstance(node, (ast.Import, ast.ImportFrom)):
+						# Render the offending line for a precise error message.
+						if isinstance(node, ast.Import):
+							names = ", ".join(alias.name for alias in node.names)
+							rendered = f"import {names}"
+						else:
+							mod = node.module or ""
+							names = ", ".join(alias.name for alias in node.names)
+							rendered = f"from {mod} import {names}"
+						import_lines.append(f"line {node.lineno}: `{rendered}`")
+				if import_lines:
+					problems.append(
+						"Server Script uses `import` (not allowed in Frappe Server Scripts): "
+						+ "; ".join(import_lines)
+						+ ". Frappe runs Server Scripts in a restricted environment with no "
+						"`__import__`. Use pre-bound names directly: `json.loads/dumps`, "
+						"`datetime`, `frappe.*`, `frappe.utils.*`, `frappe.db.*`, and "
+						"`frappe.make_get_request(url)` instead of `requests`."
+					)
 
 	# --- Notification: render Jinja templates with a stub doc ---
 	if doctype == "Notification":
