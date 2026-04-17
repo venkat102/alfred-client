@@ -22,6 +22,14 @@
 		"llm_max_tokens",
 		"llm_temperature",
 		"llm_num_ctx",
+		"multi_model_section",
+		"llm_model_triage",
+		"llm_model_triage_num_ctx",
+		"column_break_multi_model",
+		"llm_model_reasoning",
+		"llm_model_reasoning_num_ctx",
+		"llm_model_agent",
+		"llm_model_agent_num_ctx",
 		"access_control_tab",
 		"access_control_section",
 		"allowed_roles",
@@ -149,6 +157,57 @@
 			"label": "Context Window Size",
 			"depends_on": "eval:doc.llm_provider == 'ollama'",
 			"description": "Ollama context window (num_ctx). Limits memory usage for large models. Default 8192 is sufficient for agent tasks. Set 0 to use model default (may cause OOM on large models like 70B)."
+		},
+		{
+			"collapsible": 1,
+			"fieldname": "multi_model_section",
+			"fieldtype": "Section Break",
+			"label": "Per-Stage Model Overrides",
+			"depends_on": "eval:doc.llm_provider == 'ollama'",
+			"description": "Optional. Assign different Ollama models to different pipeline stages. Leave blank to use the default model above for everything."
+		},
+		{
+			"fieldname": "llm_model_triage",
+			"fieldtype": "Data",
+			"label": "Triage Model",
+			"description": "For classifier, chat, and reflection (lightweight tasks). e.g., gemma4:26b"
+		},
+		{
+			"default": "0",
+			"fieldname": "llm_model_triage_num_ctx",
+			"fieldtype": "Int",
+			"label": "Triage Context Window",
+			"description": "Context window for triage model. 0 = use default."
+		},
+		{
+			"fieldname": "column_break_multi_model",
+			"fieldtype": "Column Break"
+		},
+		{
+			"fieldname": "llm_model_reasoning",
+			"fieldtype": "Data",
+			"label": "Reasoning Model",
+			"description": "For prompt enhancement, clarification, and rescue (mid-weight tasks). e.g., qwen3.5:latest"
+		},
+		{
+			"default": "0",
+			"fieldname": "llm_model_reasoning_num_ctx",
+			"fieldtype": "Int",
+			"label": "Reasoning Context Window",
+			"description": "Context window for reasoning model. 0 = use default."
+		},
+		{
+			"fieldname": "llm_model_agent",
+			"fieldtype": "Data",
+			"label": "Agent Model",
+			"description": "For CrewAI agent pipelines (Dev/Plan/Insights). Needs strong tool-calling and code generation. e.g., qwen2.5-coder:32b"
+		},
+		{
+			"default": "0",
+			"fieldname": "llm_model_agent_num_ctx",
+			"fieldtype": "Int",
+			"label": "Agent Context Window",
+			"description": "Context window for agent model. 0 = use default."
 		},
 		{
 			"fieldname": "access_control_tab",

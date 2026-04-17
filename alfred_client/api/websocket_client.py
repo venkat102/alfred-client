@@ -74,6 +74,13 @@ def _get_site_config():
 		"llm_max_tokens": settings.llm_max_tokens,
 		"llm_temperature": settings.llm_temperature,
 		"llm_num_ctx": settings.llm_num_ctx,
+		# Per-tier model overrides (empty = use default model)
+		"llm_model_triage": settings.llm_model_triage or "",
+		"llm_model_triage_num_ctx": settings.llm_model_triage_num_ctx or 0,
+		"llm_model_reasoning": settings.llm_model_reasoning or "",
+		"llm_model_reasoning_num_ctx": settings.llm_model_reasoning_num_ctx or 0,
+		"llm_model_agent": settings.llm_model_agent or "",
+		"llm_model_agent_num_ctx": settings.llm_model_agent_num_ctx or 0,
 		"pipeline_mode": getattr(settings, "pipeline_mode", None) or "full",
 		"max_retries_per_agent": settings.max_retries_per_agent,
 		"max_tasks_per_user_per_hour": settings.max_tasks_per_user_per_hour,

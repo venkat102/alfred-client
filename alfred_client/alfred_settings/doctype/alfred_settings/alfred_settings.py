@@ -25,6 +25,12 @@ class AlfredSettings(Document):
 		llm_base_url: DF.Data | None
 		llm_max_tokens: DF.Int
 		llm_model: DF.Data | None
+		llm_model_agent: DF.Data | None
+		llm_model_agent_num_ctx: DF.Int
+		llm_model_reasoning: DF.Data | None
+		llm_model_reasoning_num_ctx: DF.Int
+		llm_model_triage: DF.Data | None
+		llm_model_triage_num_ctx: DF.Int
 		llm_num_ctx: DF.Int
 		llm_provider: DF.Literal["", "ollama", "anthropic", "openai", "gemini", "bedrock"]
 		llm_temperature: DF.Float
@@ -42,6 +48,7 @@ class AlfredSettings(Document):
 	def validate(self):
 		self.validate_limits()
 		self.normalize_llm_model()
+		self.normalize_multi_model_names()
 
 	def validate_limits(self):
 		if self.llm_max_tokens and self.llm_max_tokens < 0:
@@ -76,8 +83,18 @@ class AlfredSettings(Document):
 		if "/" in model:
 			return
 
-		# Auto-prefix: codegemma:7b → ollama/codegemma:7b
+		# Auto-prefix: codegemma:7b -> ollama/codegemma:7b
 		self.llm_model = f"{provider}/{model}"
+
+	def normalize_multi_model_names(self):
+		"""Auto-prefix per-tier model names with provider, same as normalize_llm_model."""
+		if not self.llm_provider:
+			return
+		provider = self.llm_provider.strip()
+		for field in ("llm_model_triage", "llm_model_reasoning", "llm_model_agent"):
+			val = (getattr(self, field, None) or "").strip()
+			if val and "/" not in val:
+				setattr(self, field, f"{provider}/{val}")
 
 
 @frappe.whitelist()
