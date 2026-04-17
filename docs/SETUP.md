@@ -115,7 +115,7 @@ Your Browser
 │  Processing App                  │
 │  FastAPI + CrewAI agents         │
 │  AgentPipeline state machine     │
-│  (10 phases, tracer spans)       │
+│  (12 phases, tracer spans)       │
 │  (native dev / Docker prod)      │
 │  ┌────────┐  ┌────────┐          │
 │  │ Redis  │  │  LLM   │          │

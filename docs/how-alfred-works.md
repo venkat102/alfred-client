@@ -116,7 +116,7 @@ Three processes, three trust boundaries.
 │                                │
 │  - FastAPI WebSocket server    │
 │  - AgentPipeline state machine │
-│    (11 phases, tracer spans)   │
+│    (12 phases, tracer spans)   │
 │  - CrewAI crew orchestrator    │
 │    (full: 6 agents / lite: 1)  │
 │  - MCP client that dispatches  │

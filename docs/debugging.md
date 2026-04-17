@@ -248,6 +248,8 @@ Span names:
 
 - `pipeline.sanitize` - prompt defense
 - `pipeline.load_state` - Redis + conversation memory load
+- `pipeline.warmup` - pre-warm Ollama models when multi-tier is configured.
+    No-op with a single model. Attrs: `warmed_models` (list of model names loaded).
 - `pipeline.plan_check` - admin portal plan query
 - `pipeline.orchestrate` - three-mode chat orchestrator (Phase A). Decides dev/plan/insights/chat.
 - `pipeline.enhance` - prompt enhancer LLM call (skipped when mode != dev)

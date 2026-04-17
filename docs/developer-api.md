@@ -520,6 +520,7 @@ over a shared `PipelineContext`:
 PHASES = [
     "sanitize",       # prompt defense - blocks injection-shaped prompts
     "load_state",     # Redis + conversation memory
+    "warmup",         # pre-warm Ollama models when multi-tier is configured
     "plan_check",     # admin portal check_plan (optional)
     "orchestrate",    # three-mode chat: dev / plan / insights / chat
     "enhance",        # prompt enhancer LLM call

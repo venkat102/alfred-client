@@ -24,7 +24,7 @@
 │  └──────────────────────────┬────────────────────────────────────┘  │
 │  ┌──────────┐  ┌────────────┴───────────────┐  ┌────────────────┐  │
 │  │ Pipeline │→ │  AgentPipeline state       │←→│  MCP Client    │  │
-│  │ Context  │  │  machine (10 phases)        │  │  (tools/call    │  │
+│  │ Context  │  │  machine (12 phases)        │  │  (tools/call    │  │
 │  │          │  │                             │  │   over same WS) │  │
 │  └──────────┘  └────────────┬───────────────┘  └────────────────┘  │
 │                             │                                       │
@@ -70,6 +70,13 @@ User prompt
 │ load_state  │   is per-conversation, stores items/clarifications/
 │             │   recent prompts so "now add X to that DocType"
 │             │   resolves.
+└──────┬──────┘
+       ▼
+┌─────────────┐   Pre-warm Ollama models when multiple tiers are
+│   warmup    │   configured (triage/reasoning/agent). Fires parallel
+│             │   1-token generate calls with keep_alive=10m so all
+│             │   models are loaded by the time each stage runs.
+│             │   No-op with a single model. Never fails the pipeline.
 └──────┬──────┘
        ▼
 ┌─────────────┐   Admin-portal plan check. Returns allowed, remaining
@@ -158,7 +165,7 @@ User prompt
 │             │          │
 │             │          ▼ empty?
 │             │     _rescue_regenerate_changeset (one focused
-│             │        litellm call from the original prompt)
+│             │        LLM call from the original prompt)
 │             │          │
 │             │          ▼
 │             │     reflect_minimality (Phase 3 #13, feature-flagged
@@ -179,6 +186,26 @@ Phases abort early by calling `ctx.stop(error, code)`; the orchestrator emits
 the error after the phase loop exits. Exception boundaries are centralised in
 `AgentPipeline.run()`: `asyncio.TimeoutError` -> `PIPELINE_TIMEOUT`, any other
 exception -> `PIPELINE_ERROR`. Every phase is unit-testable in isolation.
+
+## Multi-Model Tiers
+
+Standalone LLM calls (outside CrewAI) and CrewAI agents can use different
+models, configured per-tier in Alfred Settings > LLM Configuration >
+"Per-Stage Model Overrides":
+
+| Tier | Call sites | Purpose |
+|------|-----------|---------|
+| **Triage** | Classifier, Chat, Reflection | Short structured JSON, fast |
+| **Reasoning** | Enhancer, Clarifier, Rescue | Domain reasoning, mid-weight |
+| **Agent** | Dev/Plan/Insights/Lite crews | Tool use + code generation |
+
+Empty tier fields fall back to the default model. Resolution lives in
+`alfred/llm_client.py:_resolve_ollama_config_for_tier` (standalone calls)
+and `alfred/agents/definitions.py:_resolve_llm_for_tier` (CrewAI agents).
+
+Standalone calls use `alfred/llm_client.py` (urllib-based, not litellm)
+because litellm's httpcore/anyio transport hangs when called from a thread
+executor inside an asyncio event loop. CrewAI still uses litellm internally.
 
 ## Crew Modes
 
