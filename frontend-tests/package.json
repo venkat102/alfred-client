@@ -1,0 +1,16 @@
+{
+	"name": "alfred-frontend-tests",
+	"private": true,
+	"version": "0.1.0",
+	"description": "Playwright smoke tests for the Alfred chat UI (Frappe page at /app/alfred).",
+	"scripts": {
+		"test": "playwright test",
+		"test:headed": "playwright test --headed",
+		"test:debug": "playwright test --debug",
+		"codegen": "playwright codegen http://localhost:8000/app/alfred"
+	},
+	"devDependencies": {
+		"@playwright/test": "^1.47.0",
+		"typescript": "^5.5.0"
+	}
+}
