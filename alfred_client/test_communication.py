@@ -40,7 +40,24 @@ def run_tests():
 	assert "site_id" in config
 	assert "llm_provider" in config
 	assert "llm_max_tokens" in config
+	# Per-tier model fields must be present so the processing app can
+	# resolve the right model for each pipeline stage.
+	for tier in ("triage", "reasoning", "agent"):
+		key = f"llm_model_{tier}"
+		ctx_key = f"llm_model_{tier}_num_ctx"
+		assert key in config, f"_get_site_config() missing {key}"
+		assert ctx_key in config, f"_get_site_config() missing {ctx_key}"
+		# Empty tier field must serialize as "" (not None) so the
+		# processing app's fallback-to-default resolver can treat it
+		# as "unset" via truthiness.
+		assert config[key] == "" or isinstance(config[key], str), (
+			f"{key} should be a string, got {type(config[key]).__name__}"
+		)
+		assert isinstance(config[ctx_key], int), (
+			f"{ctx_key} should be int, got {type(config[ctx_key]).__name__}"
+		)
 	print(f"  Config keys: {list(config.keys())}")
+	print("  Per-tier model fields verified")
 	print("  PASSED\n")
 
 	# Test 3: Message routing (mocked)

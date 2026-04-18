@@ -133,7 +133,7 @@ Environment variables (set in `.env` or Docker):
 | `ALFRED_TRACE_STDOUT` | off | Also emit a human-readable summary line to stderr per span. Useful during live debugging. |
 | `ALFRED_PHASE1_DISABLED` | off | Set to `1` to opt out of the per-run MCP tracking state (budget cap, dedup cache, failure counter). Use only for A/B benchmark comparisons against a pre-hardening baseline. Leave unset in production. |
 
-> **Terminology note**: The codebase uses two orthogonal phase taxonomies. *Phase 1 / Phase 2 / Phase 3* refer to the architecture-improvement work tracked in `CHANGELOG.md` (tool hardening, handoff condenser, state machine, reflection, tracer). *Phase A / Phase B / Phase C / Phase D* refer to the three-mode chat rollout (chat handler + sanitizer fix → insights mode → plan mode + cross-mode handoff → UI mode switcher). All four phases are now shipped. The env var names above don't encode either — they describe what the flag does, not when it shipped.
+> **Terminology note**: The codebase uses two orthogonal phase taxonomies. *Phase 1 / Phase 2 / Phase 3* refer to the architecture-improvement work (tool hardening, handoff condenser, state machine, reflection, tracer). *Phase A / Phase B / Phase C / Phase D* refer to the three-mode chat rollout (chat handler + sanitizer fix -> insights mode -> plan mode + cross-mode handoff -> UI mode switcher). All four phases are now shipped. The env var names above don't encode either - they describe what the flag does, not when it shipped.
 
 ---
 

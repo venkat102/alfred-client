@@ -205,12 +205,13 @@ line.
 ### 9. [developer-api.md](developer-api.md) - 25 minutes
 
 The canonical API reference. Covers the REST API, WebSocket protocol,
-12 MCP tools, pipeline state machine internals, reflection, tracing,
+14 MCP tools, pipeline state machine internals, reflection, tracing,
 conversation memory, admin portal API, Alfred Plan fields.
 
 **What to focus on**:
-- **MCP Tools Reference** - the 12-tool table + the detailed sections
-  on `dry_run_changeset`, `lookup_doctype`, `lookup_pattern`
+- **MCP Tools Reference** - the 14-tool table + the detailed sections
+  on `dry_run_changeset`, `lookup_doctype`, `lookup_pattern`,
+  `lookup_frappe_knowledge`
 - **Pipeline State Machine** - the `PipelineContext` field reference
   and the `PHASES` list
 - **Handoff Condenser** - how the `Task.callback` trick works
@@ -368,25 +369,7 @@ skim it for the Docker-specific notes.
 
 **Skip if**: you're not self-hosting.
 
-### 18. [CHANGELOG.md](../../../../alfred_processing/CHANGELOG.md) - 20 minutes
-
-The phase-by-phase history. Read this last because it requires the
-most context - you need to understand what Phase 1 / Phase 2 / Phase 3
-*did* to appreciate the changelog entries.
-
-**What to focus on**:
-- The three phase sections (Phase 1 / Phase 2 / Phase 3) - each one
-  covers a specific optimization theme.
-- The **Fixed** and **Security** sections under Unreleased - these are
-  the bugs the security audit caught and the DDL dry-run fix.
-- The **Pre-Phase-1 foundation** summary at the bottom to understand
-  what was already in place before the phased work started.
-
-**Why this is valuable**: it tells you what has been *tried* and what
-worked. A lot of the "why" in the codebase makes sense only after you
-know the history.
-
-### 19. [BENCH_CUSTOMIZATIONS.md](BENCH_CUSTOMIZATIONS.md) - 2 minutes
+### 18. [BENCH_CUSTOMIZATIONS.md](BENCH_CUSTOMIZATIONS.md) - 2 minutes
 
 Two-line reference doc for the Procfile `worker_long` entry. Read it
 once, then forget about it unless you ever set up a new bench.
@@ -417,8 +400,7 @@ For reference, the full order in one list:
 15. `SECURITY.md` (15 min)
 16. `benchmarking.md` (15 min) - optional
 17. `self-hosted-guide.md` (5 min) - optional
-18. `CHANGELOG.md` (20 min)
-19. `BENCH_CUSTOMIZATIONS.md` (2 min)
+18. `BENCH_CUSTOMIZATIONS.md` (2 min)
 
 Total: ~4.5 hours including the optional items.
 
@@ -459,7 +441,7 @@ you can't solve.
 3. `developer-api.md` - the "Adding New ..." recipes at the bottom
 4. `data-model.md` - if your change touches DocTypes
 5. `benchmarking.md` - to gate your change against regressions
-6. `CHANGELOG.md` - to see what's been tried before
+6. `git log` - to see what's been tried before
 
 **Time**: 2-3 hours. Worth every minute.
 
@@ -468,8 +450,7 @@ you can't solve.
 1. `SECURITY.md` - the full threat model
 2. `how-alfred-works.md` section 9 ("How the safety layers stack up")
 3. `architecture.md` Permission Model section
-4. `CHANGELOG.md` Unreleased Security section - for the recent audit
-   fixes
+4. `git log --grep=security` - for the recent audit fixes
 5. `operations.md` key rotation sections
 
 **Time**: 1 hour.
@@ -490,8 +471,7 @@ decision.
    Developer agent section + dry-run)
 2. `architecture.md` - Pipeline State Machine + Crew Modes
 3. `benchmarking.md` - full read
-4. `CHANGELOG.md` Phase 1 + Phase 2 + Phase 3 - every phase was an
-   optimization, read them to see what's been tried
+4. `git log --oneline` - to see what's been tried before
 5. `debugging.md` Pipeline Tracing section
 
 **Time**: 2 hours.

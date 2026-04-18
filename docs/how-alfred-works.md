@@ -1151,8 +1151,7 @@ inside a savepoint + rollback is completely safe. Alice sees a green
 worked and was then rolled back cleanly.
 
 See [architecture.md dry-run section](architecture.md#dry-run-validation)
-for the full decision tree and [CHANGELOG.md](../../../alfred_processing/CHANGELOG.md)
-for the day-we-caught-the-workflow-leak incident that motivated this.
+for the full decision tree.
 
 ---
 
@@ -1775,8 +1774,6 @@ depending on what you're working on:
 
 - [benchmarking.md](benchmarking.md) - running the benchmark harness,
   reading the JSON output, gate thresholds
-- [CHANGELOG.md](../../../alfred_processing/CHANGELOG.md) - every
-  optimization that has been tried, with before/after numbers
 
 **If you're a user who just wants to use it:**
 

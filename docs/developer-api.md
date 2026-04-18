@@ -513,7 +513,7 @@ so a mid-run refresh doesn't drop to an idle screen.
 
 ## Pipeline State Machine
 
-`alfred/api/pipeline.py::AgentPipeline` runs the pipeline as 11 named phases
+`alfred/api/pipeline.py::AgentPipeline` runs the pipeline as 12 named phases
 over a shared `PipelineContext`:
 
 ```python
