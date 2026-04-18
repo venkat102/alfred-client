@@ -235,6 +235,16 @@ HOST=0.0.0.0
 PORT=8001
 WORKERS=2
 DEBUG=false
+
+# CrewAI outbound telemetry - OFF by default. CrewAI ships a built-in
+# exporter that POSTs agent run metadata to its own SaaS. These three
+# flags disable it (all three set to cover older + newer CrewAI
+# versions, and they also short-circuit the embedded OTel SDK init,
+# trimming cold-start). Leave them on unless you specifically want to
+# send agent run metadata off-site.
+CREWAI_DISABLE_TELEMETRY=true
+CREWAI_DISABLE_TRACKING=true
+OTEL_SDK_DISABLED=true
 ```
 
 > **Port conflict with Frappe**: Frappe's bench runs on port **8000** by default. Since the processing app also defaults to 8000, you **must** change one of them when both run on the same machine. We recommend setting the processing app to `PORT=8001` in `.env`. All examples in this guide use port 8001. Adjust if you chose a different port.

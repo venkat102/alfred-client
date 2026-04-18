@@ -484,6 +484,28 @@ Layer 6: Deploy-time re-check apply_changeset loops over each item and calls
                               permissions.
 ```
 
+### Deploy concurrency invariant
+
+`apply_changeset` guards against two processes trying to deploy the
+same changeset with a real CAS:
+
+```sql
+UPDATE `tabAlfred Changeset`
+   SET status = 'Deploying'
+ WHERE name = ? AND status = 'Approved'
+```
+
+The subtle bit: just reloading the row after the UPDATE and checking
+`status == 'Deploying'` is NOT enough to know we won the lock - under
+a true race, process B's UPDATE matches zero rows (A already flipped
+the state) but B still reads `Deploying` on reload. The real winner
+check is `frappe.db._cursor.rowcount == 1` right after the UPDATE and
+before the commit. Only that process proceeds; everyone else raises
+"Changeset cannot be deployed - another process may have already
+started this deployment."
+
+Regression test: `alfred_client/test_cas_race.py`.
+
 Admin-portal endpoints are on a separate trust boundary:
 
 - **`check_plan` / `report_usage` / `register_site`**: `allow_guest=True` but

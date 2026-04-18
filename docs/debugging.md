@@ -136,6 +136,31 @@ curl http://localhost:8001/health
 # Expected: {"status": "ok", "version": "0.1.0", "redis": "connected"}
 ```
 
+### Metrics scrape
+
+```bash
+curl -s http://localhost:8001/metrics | grep alfred_
+```
+
+See `operations.md` for the six Prometheus metrics and alerting
+suggestions. Useful for diagnosing "which phase is slow" - filter
+for `alfred_pipeline_phase_duration_seconds_bucket{phase="..."}`.
+
+### FKB retrieval benchmark
+
+When debugging bad FKB hits (the agent reads the wrong rule / idiom /
+API), run the benchmark to see how keyword vs semantic retrieval
+scores against a fixed query set:
+
+```bash
+cd alfred_processing
+.venv/bin/python tools/fkb_benchmark.py
+```
+
+Output shows MRR, hit@1/3/5, and per-query latency for keyword,
+semantic, and hybrid paths. If you see a new regression, a KB edit
+likely changed embeddings or keyword weights.
+
 ### Logs (native dev)
 
 When running via `./dev.sh`, logs stream to the terminal. Key markers to grep for:

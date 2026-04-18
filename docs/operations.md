@@ -451,6 +451,42 @@ A simple Prometheus-friendly health endpoint on the processing app
 returns `{"status": "ok", "redis": "connected"}` - you can alert on
 anything other than that shape. No additional exporter needed.
 
+### Prometheus `/metrics` endpoint
+
+The processing app also exposes a scrape endpoint at `/metrics` in
+Prometheus exposition format. Six metrics cover the operational surface:
+
+| Metric | Type | Labels | What it tells you |
+|---|---|---|---|
+| `alfred_pipeline_phase_duration_seconds` | histogram | `phase` | Per-phase latency. Catches regressions like "warmup suddenly 30s" or "run_crew p95 climbing". Buckets: 0.05, 0.25, 1, 2.5, 5, 10, 30, 60, 180, 600. |
+| `alfred_mcp_calls_total` | counter | `tool`, `outcome` | MCP tool invocations sliced by outcome: `success`, `error`, `timeout`, `cached`, `budget_exceeded`. Spot tool-call loops and failure spikes. |
+| `alfred_orchestrator_decisions_total` | counter | `source`, `mode` | How the mode was picked: `override` / `fast_path` / `classifier` / `fallback`. Confirms the classifier LLM is actually running in prod vs always falling back. |
+| `alfred_llm_errors_total` | counter | `tier`, `error_type` | Standalone LLM errors, sliced by tier and type (`http_error`, `network_error`, `timeout`, `non_json`, ...). Feeds alerting when Ollama wobbles. |
+| `alfred_crew_drift_total` | counter | `reason` | Developer agent pivoted out of the task structure (training-data dump, prose-only, foreign doctype). Measures CrewAI quirk tax. |
+| `alfred_crew_rescue_total` | counter | `outcome` | Direct-LLM regeneration path ran. `outcome=produced` means it recovered; `empty` means it didn't. Climbing `empty` = rescue is not rescuing. |
+
+Scrape example:
+
+```
+scrape_configs:
+  - job_name: alfred_processing
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["processing:8001"]
+```
+
+Alerting suggestions:
+
+- `rate(alfred_llm_errors_total{error_type="timeout"}[5m]) > 0.5` → Ollama wedged
+- `rate(alfred_crew_rescue_total{outcome="empty"}[15m]) > rate(alfred_crew_rescue_total[15m]) * 0.5` → rescue is failing half the time; the agent prompts or the model have regressed
+- `histogram_quantile(0.95, rate(alfred_pipeline_phase_duration_seconds_bucket{phase="run_crew"}[5m])) > 600` → crew p95 > 10 min, something is stuck
+
+Quick one-shot scrape:
+
+```bash
+curl -s http://localhost:8001/metrics | grep alfred_
+```
+
 ---
 
 ## Common log filters
