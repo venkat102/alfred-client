@@ -223,7 +223,10 @@ API_SECRET_KEY=your-generated-secret-key-here
 REDIS_URL=redis://redis:6379/0
 
 # LLM Configuration (Ollama = free, local, no API key needed)
-FALLBACK_LLM_MODEL=ollama/llama3.1
+# Default is a coder-tuned model - the Developer agent drifts into
+# prose with generic chat models. See admin-guide.md > "Recommended
+# Ollama models" for tier picks and VRAM sizing.
+FALLBACK_LLM_MODEL=ollama/qwen2.5-coder:7b
 FALLBACK_LLM_BASE_URL=http://ollama:11434
 
 # CORS - set to your Frappe site URL in production
@@ -317,17 +320,28 @@ docker compose up -d --build
 
 Skip this step if using remote Ollama - the model is already on the remote server.
 
-This downloads the AI model (~4.7 GB for llama3.1). Only needed once.
+This downloads the AI model (~4.5 GB for `qwen2.5-coder:7b`, Q4_K_M).
+Only needed once.
 
 ```bash
-docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull llama3.1
+docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull qwen2.5-coder:7b
 ```
 
-**For machines with less RAM** (< 12 GB), use a smaller model:
+**For more horsepower**, pull the larger coder and set tier overrides
+in Alfred Settings (see `admin-guide.md` > "Recommended Ollama models"):
+
 ```bash
-docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull llama3.2:3b
+docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull qwen2.5-coder:14b
+docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull qwen2.5:7b     # Triage + Reasoning
 ```
-Then set `FALLBACK_LLM_MODEL=ollama/llama3.2:3b` in `.env` and restart.
+
+**For machines with less RAM** (< 8 GB), use a smaller coder:
+```bash
+docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull qwen2.5-coder:3b
+```
+Then set `FALLBACK_LLM_MODEL=ollama/qwen2.5-coder:3b` in `.env` and restart.
+Expect more rescue events at this size (watch `alfred_crew_drift_total`
+on `/metrics`).
 
 ### 5. Verify the Processing App
 
@@ -363,7 +377,7 @@ Fill in these fields:
 | Field | Value | Notes |
 |-------|-------|-------|
 | LLM Provider | `ollama` | Works for both local and remote Ollama |
-| LLM Model | `codegemma:7b` or `llama3.1` | Auto-prefixed to `ollama/codegemma:7b` on save |
+| LLM Model | `qwen2.5-coder:7b` (or `:14b` / `:32b` if you have the VRAM) | Must be a coder-tuned model. Auto-prefixed to `ollama/qwen2.5-coder:7b` on save. See [admin-guide.md > Recommended Ollama models](admin-guide.md#recommended-ollama-models) for tier-based setup. |
 | LLM API Key | *(leave empty)* | Only needed if your Ollama endpoint requires auth |
 | LLM Base URL | `http://localhost:11434` | For remote Ollama: `http://your-server-ip:11434` |
 | Max Tokens | `4096` | |
@@ -772,15 +786,19 @@ Ollama runs open-source models. It works identically whether running locally on 
 | Field | Value |
 |-------|-------|
 | LLM Provider | `ollama` |
-| LLM Model | `llama3.1` (auto-prefixed to `ollama/llama3.1`) |
+| LLM Model | `qwen2.5-coder:7b` (auto-prefixed to `ollama/qwen2.5-coder:7b`) |
 | LLM API Key | *(leave empty)* |
 | LLM Base URL | `http://localhost:11434` |
 
 Processing app `.env`:
 ```env
-FALLBACK_LLM_MODEL=ollama/llama3.1
+FALLBACK_LLM_MODEL=ollama/qwen2.5-coder:7b
 FALLBACK_LLM_BASE_URL=http://localhost:11434
 ```
+
+For GPU servers with >16 GB VRAM, upgrade to `qwen2.5-coder:14b` or
+`:32b` and configure per-tier overrides in Alfred Settings. Full
+sizing guide: [admin-guide.md > Recommended Ollama models](admin-guide.md#recommended-ollama-models).
 
 #### Remote Ollama (separate server, accessed via network)
 
@@ -789,7 +807,7 @@ If Ollama runs on a different machine (e.g., a GPU server), point the Base URL t
 | Field | Value |
 |-------|-------|
 | LLM Provider | `ollama` |
-| LLM Model | `codegemma:7b` (auto-prefixed to `ollama/codegemma:7b`) |
+| LLM Model | `qwen2.5-coder:14b` (auto-prefixed to `ollama/qwen2.5-coder:14b`) |
 | LLM API Key | *(leave empty, unless your proxy requires auth)* |
 | LLM Base URL | `http://135.13.20.57:11434` (your server's IP and port) |
 

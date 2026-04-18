@@ -28,11 +28,91 @@ it's set locally, the tooltip says *"configured in Alfred Settings."*
 | Field | Description | Default |
 |-------|-------------|---------|
 | LLM Provider | ollama, anthropic, openai, gemini, bedrock | - |
-| LLM Model | Model name (e.g., `codegemma:7b`, `llama3.1`). Auto-prefixed with provider. | - |
+| LLM Model | Default model. Name only (e.g., `qwen2.5-coder:14b`); auto-prefixed with provider on save. Used for tiers that don't have an override. | - |
 | LLM API Key | Provider API key. Optional for Ollama (needed if proxy requires auth). | - |
 | LLM Base URL | Endpoint URL. Local Ollama: `http://localhost:11434`. Remote: `http://server-ip:11434`. Empty for cloud. | - |
 | Max Tokens | Max tokens per LLM response | 4096 |
 | Temperature | Generation randomness (0.0-2.0) | 0.1 |
+| **Per-Stage Model Overrides** (optional, Ollama only) | | |
+| LLM Model (Triage) | Small fast model for classifier / chat / reflection. Empty = use default. | - |
+| LLM Model (Reasoning) | Medium model for enhancer / clarifier / rescue. Empty = use default. | - |
+| LLM Model (Agent) | Strongest coder model for the SDLC crew + Plan + Insights. Empty = use default. | - |
+
+See [Recommended Ollama models](#recommended-ollama-models) below for concrete picks per tier + VRAM sizing.
+
+### Recommended Ollama models
+
+Alfred routes LLM calls to three tiers. Set a model per tier in **LLM
+Configuration > Per-Stage Model Overrides** to trade off latency vs
+quality per stage. Empty tier fields fall back to the default `LLM Model`
+(single-model deployments keep working unchanged).
+
+**What each tier does:**
+
+- **Triage** runs the orchestrator classifier, chat handler, and
+  reflection. Short structured JSON, <256 tokens, temperature 0. Hot
+  path - speed matters more than smarts. Does NOT need a coder model.
+- **Reasoning** runs prompt enhancement, clarification questions, and
+  the rescue-regenerate path. 512-2048 tokens, domain reasoning about
+  Frappe schemas. Instruction-following matters here.
+- **Agent** runs the full SDLC crew (6 agents) + Plan crew + Insights
+  + Lite. Tool use + JSON/code generation, up to 4096 tokens per agent
+  turn, longest runs. **Must be a coder-tuned model** or the Developer
+  agent drifts into prose.
+
+**Preset: Budget (~8 GB VRAM total if loaded together)**
+
+| Tier | Model | VRAM (Q4) | Notes |
+|---|---|---|---|
+| Triage | `ollama/llama3.2:3b` or `ollama/qwen2.5:3b` | ~2 GB | Sub-second classifier. Cheapest viable. |
+| Reasoning | `ollama/qwen2.5:7b` | ~5 GB | Decent instruction-following. |
+| Agent | `ollama/qwen2.5-coder:7b` | ~5 GB | Will drift more than 14B. Expect a few rescue events per 10 builds. |
+
+**Preset: Balanced (~24 GB VRAM recommended)**
+
+| Tier | Model | VRAM (Q4) | Notes |
+|---|---|---|---|
+| Triage | `ollama/gemma2:9b` or `ollama/qwen2.5:7b` | ~5-6 GB | Fast + accurate JSON. |
+| Reasoning | `ollama/qwen2.5:14b` | ~9 GB | Sweet spot for Frappe domain reasoning. |
+| Agent | `ollama/qwen2.5-coder:14b` | ~9 GB | Solid SDLC. Occasional rescue. |
+
+**Preset: Premium (~48 GB VRAM recommended, or remote/cloud)**
+
+| Tier | Model | VRAM (Q4) | Notes |
+|---|---|---|---|
+| Triage | `ollama/qwen2.5:14b` | ~9 GB | Still fast, cleanest JSON. |
+| Reasoning | `ollama/qwen2.5:32b` or `ollama/mistral-small:22b` | ~14-20 GB | Best enhancement quality. |
+| Agent | `ollama/qwen2.5-coder:32b` | ~20 GB | Current top-end open coder. Baseline for "production" deployments. |
+
+**Pulling the models:**
+
+```bash
+# Balanced preset, one-liner
+ollama pull qwen2.5:7b \
+  && ollama pull qwen2.5:14b \
+  && ollama pull qwen2.5-coder:14b
+```
+
+**Notes that actually matter:**
+
+- The Agent tier **must be coder-tuned**. `llama3.1:8b` or `gemma2:27b`
+  in the Agent slot will work but drift significantly more, driving up
+  `alfred_crew_drift_total` and `alfred_crew_rescue_total`. Watch those
+  metrics after a model change.
+- VRAM estimates are for Q4_K_M (Ollama's default). Q8 roughly doubles,
+  fp16 roughly quadruples.
+- Ollama loads models on first request and holds them for 5 min by
+  default. Alfred's `warmup` pipeline phase pre-pulls tier models with
+  `keep_alive=10m` - but only when >1 distinct model is configured. If
+  you set the same model in all three tier slots, warmup is a no-op and
+  the first turn of a cold session pays the load cost.
+- For cloud providers (Anthropic / OpenAI / Gemini / Bedrock), set
+  `llm_model` to the provider-prefixed id (e.g. `anthropic/claude-sonnet-4-20250514`)
+  and leave the per-tier overrides empty. Per-tier routing is an
+  Ollama-only feature today.
+- After a model change, flush the `warmup` metrics by running one Dev
+  prompt and watching the `/metrics` output - drift/rescue counters
+  tell you within a day whether the new models are holding up.
 
 ### Access Control Tab
 
