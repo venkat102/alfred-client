@@ -369,7 +369,17 @@ skim it for the Docker-specific notes.
 
 **Skip if**: you're not self-hosting.
 
-### 18. [BENCH_CUSTOMIZATIONS.md](BENCH_CUSTOMIZATIONS.md) - 2 minutes
+### 18. [frontend-tests/README.md](../frontend-tests/README.md) - 5 minutes
+
+Playwright E2E specs for the chat UI. Four flows: golden-path
+greeting, mode switcher persistence, dev prompt -> preview -> approve
+-> deploy, and rollback. Slow specs are gated under
+`ALFRED_RUN_SLOW_TESTS=1`. Read the README only if you're touching
+the Vue components or adding a regression test for a UI-visible bug.
+
+**Skip if**: you're not touching the frontend.
+
+### 19. [BENCH_CUSTOMIZATIONS.md](BENCH_CUSTOMIZATIONS.md) - 2 minutes
 
 Two-line reference doc for the Procfile `worker_long` entry. Read it
 once, then forget about it unless you ever set up a new bench.
@@ -400,7 +410,8 @@ For reference, the full order in one list:
 15. `SECURITY.md` (15 min)
 16. `benchmarking.md` (15 min) - optional
 17. `self-hosted-guide.md` (5 min) - optional
-18. `BENCH_CUSTOMIZATIONS.md` (2 min)
+18. `frontend-tests/README.md` (5 min) - optional
+19. `BENCH_CUSTOMIZATIONS.md` (2 min)
 
 Total: ~4.5 hours including the optional items.
 

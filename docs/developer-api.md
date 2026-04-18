@@ -893,3 +893,49 @@ richer tools outperform many narrow ones for agent decision accuracy.
    `pipeline.<name>` - no manual span code needed.
 4. Add a unit test in `tests/test_pipeline_state_machine.py` that stubs the
    phase and asserts on the shared context state.
+
+## Frontend smoke tests (Playwright)
+
+End-to-end UI coverage lives at `alfred_client/frontend-tests/`
+(Playwright + TypeScript). Four specs cover the flows that are
+expensive to validate by hand on every UI change:
+
+| Spec | What it checks | Needs LLM? |
+|---|---|---|
+| `send-prompt.spec.ts` | greeting -> fast-path chat reply, no crew run | no |
+| `mode-switcher.spec.ts` | mode choice persists across page reload | no |
+| `preview-approve.spec.ts` | dev prompt -> preview -> approve -> deploy success | yes (gated) |
+| `rollback.spec.ts` | deployed changeset -> Rollback menu -> status "Rolled Back" | yes (gated) |
+
+Slow / destructive specs are gated behind `ALFRED_RUN_SLOW_TESTS=1`.
+
+```bash
+cd alfred_client/frontend-tests
+npm install
+npx playwright install chromium
+npm test                              # fast tests only
+ALFRED_RUN_SLOW_TESTS=1 npm test      # all 4
+```
+
+See `alfred_client/frontend-tests/README.md` for full env var list
+(`ALFRED_BASE_URL`, `ALFRED_USER`, etc.) and guidance on adding new
+specs. Selectors currently target CSS classes (`.alfred-*`) because
+Vue components don't carry `data-testid` attributes yet - migrating
+to testids is the documented next step.
+
+## CrewAI version pin
+
+`crewai` is pinned to an exact version in `pyproject.toml`
+(currently `==0.203.2`). CrewAI's API surface churns fast and our
+crew-builder + rescue paths sit on specific internals. To bump:
+
+1. Update the pin in `pyproject.toml`.
+2. `pip install -e .` inside the processing venv.
+3. Run the full test suite (`.venv/bin/python -m pytest tests/ --ignore=tests/test_state_store.py -q`).
+4. Run at least one real Dev-mode prompt and confirm the preview
+   panel opens (catches silent drift/rescue regressions the unit
+   tests miss).
+5. Watch `alfred_crew_drift_total` / `alfred_crew_rescue_total` on
+   `/metrics` for a day after deploy - a sudden rise is the first
+   sign the bump broke something subtle.
+6. If any step fails, revert the pin.

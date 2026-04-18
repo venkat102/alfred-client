@@ -36,6 +36,7 @@ AI-powered assistant that builds Frappe/ERPNext customizations through conversat
 | **[Data Model](docs/data-model.md)** | Developers | Field-by-field reference for every Alfred DocType + Redis key conventions |
 | **[Debugging Guide](docs/debugging.md)** | Developers | Message flow, step-by-step verification, pipeline tracing, common problems |
 | **[Benchmarking Guide](docs/benchmarking.md)** | Developers | Running the benchmark harness, reading the JSON output, gate thresholds, extending the prompt set |
+| **[Frontend Tests](frontend-tests/README.md)** | Developers | Playwright UI smoke tests (send prompt, preview, approve, rollback). Gated LLM specs under `ALFRED_RUN_SLOW_TESTS=1`. |
 | **[Self-Hosted Guide](docs/self-hosted-guide.md)** | Self-hosters | Quick-start for running your own processing app + Ollama |
 
 **Reading paths:**
