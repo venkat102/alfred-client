@@ -105,6 +105,13 @@ Two-factor handshake:
 The JWT has a 24-hour expiry. A forged JWT would need `API_SECRET_KEY`, at
 which point the attacker could impersonate any user on any site anyway.
 
+**`exp` claim is required.** `verify_jwt_token` pins
+`options={"require": ["exp"]}` on decode, so a hand-crafted token with
+a valid signature but no expiry is rejected up-front. Empty or `None`
+token strings also raise immediately. These guards prevent the footgun
+where a forged token would never expire. (`alfred/middleware/auth.py`,
+regression tests in `tests/test_api_gateway.py::TestJWT`.)
+
 ### Processing app → Admin portal
 `Authorization: Bearer <service_api_key>` header. Admin portal endpoints
 use `_validate_service_key()` to verify. An empty key is always rejected.
@@ -226,6 +233,15 @@ Nothing is sent through a third party that isn't your chosen LLM provider.
 Alfred does not ship telemetry, analytics, or error reporting to us by
 default. (If you enable `ALFRED_TRACING_ENABLED`, the trace JSONL is
 written locally - we don't collect it.)
+
+**CrewAI outbound telemetry is disabled by default.** CrewAI (our agent
+framework dependency) ships with a built-in exporter that would POST
+agent run metadata to its own SaaS endpoint. The `Dockerfile` and
+`.env.example` set three env flags to shut this off:
+`CREWAI_DISABLE_TELEMETRY=true`, `CREWAI_DISABLE_TRACKING=true`,
+`OTEL_SDK_DISABLED=true`. Keep these set unless you specifically want
+CrewAI to see your agent run metadata. All three are checked to cover
+older + newer CrewAI versions.
 
 ### What's stored on your site
 
