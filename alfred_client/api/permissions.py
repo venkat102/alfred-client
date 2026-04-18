@@ -1,6 +1,29 @@
 import frappe
 
 
+def _get_sharing_permissions(doctype: str, name: str, user: str) -> dict:
+	"""Return share perms ({read, write, share}) for a user on a given doc.
+
+	Queries DocShare directly because frappe.share has no one-liner for
+	"what are this user's share perms on this doc?". Falls back to the
+	"everyone" grant when no per-user row exists.
+	"""
+	row = frappe.db.get_value(
+		"DocShare",
+		{"share_doctype": doctype, "share_name": name, "user": user},
+		["read", "write", "share"],
+		as_dict=True,
+	)
+	if not row:
+		row = frappe.db.get_value(
+			"DocShare",
+			{"share_doctype": doctype, "share_name": name, "everyone": 1},
+			["read", "write", "share"],
+			as_dict=True,
+		)
+	return row or {"read": 0, "write": 0, "share": 0}
+
+
 @frappe.whitelist()
 def has_app_permission():
 	"""Check if current user has permission to access the Alfred app.
@@ -62,8 +85,8 @@ def conversation_has_permission(doc, ptype="read", user=None):
 	if "System Manager" in frappe.get_roles(user):
 		return True
 	# Check frappe.share (DocShare table)
-	shared = frappe.share.get_sharing_permissions("Alfred Conversation", doc.name, user)
-	return shared.get("read") if ptype == "read" else shared.get("write")
+	shared = _get_sharing_permissions("Alfred Conversation", doc.name, user)
+	return bool(shared.get("read")) if ptype == "read" else bool(shared.get("write"))
 
 
 def conversation_query_conditions(user=None):
@@ -96,8 +119,8 @@ def message_has_permission(doc, ptype="read", user=None):
 	conv_user = frappe.db.get_value("Alfred Conversation", doc.conversation, "user")
 	if conv_user == user:
 		return True
-	shared = frappe.share.get_sharing_permissions("Alfred Conversation", doc.conversation, user)
-	return shared.get("read") if ptype == "read" else shared.get("write")
+	shared = _get_sharing_permissions("Alfred Conversation", doc.conversation, user)
+	return bool(shared.get("read")) if ptype == "read" else bool(shared.get("write"))
 
 
 def message_query_conditions(user=None):
@@ -134,8 +157,8 @@ def changeset_has_permission(doc, ptype="read", user=None):
 	conv_user = frappe.db.get_value("Alfred Conversation", doc.conversation, "user")
 	if conv_user == user:
 		return True
-	shared = frappe.share.get_sharing_permissions("Alfred Conversation", doc.conversation, user)
-	return shared.get("read") if ptype == "read" else shared.get("write")
+	shared = _get_sharing_permissions("Alfred Conversation", doc.conversation, user)
+	return bool(shared.get("read")) if ptype == "read" else bool(shared.get("write"))
 
 
 def changeset_query_conditions(user=None):
