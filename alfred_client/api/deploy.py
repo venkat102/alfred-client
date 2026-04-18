@@ -100,19 +100,32 @@ def apply_changeset(changeset_name):
 	if changeset.status != "Approved":
 		frappe.throw(_("Changeset must be approved before deployment. Current status: {0}").format(changeset.status))
 
-	# Distributed lock: atomically set status to "Deploying" to prevent concurrent deployment.
-	# The WHERE clause ensures only one process can transition from Approved to Deploying.
+	# Distributed lock: atomically set status to "Deploying" to prevent
+	# concurrent deployment. The WHERE clause ensures only one process can
+	# transition from Approved to Deploying.
+	#
+	# SUBTLE: just checking `status == "Deploying"` after reload is NOT enough
+	# to confirm we won the lock - if process A flipped the status first and
+	# then process B's UPDATE matches zero rows, both processes still see
+	# status="Deploying" on reload. We need rowcount to know whether OUR
+	# UPDATE is the one that changed the row.
 	frappe.db.sql(
 		"""UPDATE `tabAlfred Changeset` SET status='Deploying'
 		   WHERE name=%s AND status='Approved'""",
 		changeset_name,
 	)
+	won_lock = (
+		getattr(frappe.db, "_cursor", None) is not None
+		and frappe.db._cursor.rowcount == 1
+	)
 	frappe.db.commit()
 
-	# Re-check - if status is not Deploying, another process grabbed the lock first
-	changeset.reload()
-	if changeset.status != "Deploying":
-		frappe.throw(_("Changeset is already being deployed by another process."))
+	if not won_lock:
+		changeset.reload()
+		frappe.throw(
+			_("Changeset cannot be deployed (status: {0}). Another process may "
+			  "have already started this deployment.").format(changeset.status)
+		)
 
 	# Get the requesting user from the parent conversation
 	conversation = frappe.get_doc("Alfred Conversation", changeset.conversation)
