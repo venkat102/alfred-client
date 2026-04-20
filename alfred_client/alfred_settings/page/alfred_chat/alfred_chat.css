@@ -1,7 +1,13 @@
 /* Alfred Chat Page Styles - all selectors namespaced with .alfred- */
 
-.alfred-page { height: calc(100vh - 80px); overflow: hidden; }
-.alfred-main { display: flex; flex-direction: column; height: 100%; }
+/* Root: fill the height Frappe's page wrapper already gives us instead of
+   assuming a fixed 80px chrome. 100% cascades cleanly when the ancestor
+   chain has a bounded height; `min-height: 0` keeps flex children from
+   bursting out and producing a body-level scrollbar (which is what made
+   the chat and preview "scroll together" on pages with taller Frappe
+   toolbars). */
+.alfred-page { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+.alfred-main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
 /* ── Status Bar ────────────────────────────────────────────────── */
 .alfred-status-bar {
@@ -69,12 +75,44 @@
 }
 
 /* ── Panels ────────────────────────────────────────────────────── */
-.alfred-panels { display: flex; flex: 1; overflow: hidden; }
-.alfred-left-panel {
-	width: 40%; min-width: 320px; display: flex; flex-direction: column;
-	border-right: 1px solid var(--border-color, #e2e2e2);
+/* The user-draggable splitter writes its current width into
+   --alfred-left-width on .alfred-panels; the left panel reads it via
+   flex-basis. Fallback percentages apply when the variable is unset. */
+.alfred-panels {
+	display: flex; flex: 1; overflow: hidden; min-height: 0;
+	--alfred-left-width: 45%;
 }
-.alfred-right-panel { width: 45%; min-width: 360px; max-width: 560px; overflow-y: auto; }
+.alfred-left-panel {
+	flex: 0 0 var(--alfred-left-width);
+	min-width: 320px; display: flex; flex-direction: column; min-height: 0;
+}
+.alfred-right-panel {
+	flex: 1 1 auto;
+	min-width: 360px; max-width: 560px;
+	overflow-y: auto; min-height: 0;
+	border-left: 1px solid var(--border-color, #e2e2e2);
+}
+
+/* Vertical drag-handle between the two panels. 4px feels thin but has a
+   wider invisible hit area via negative margin so it is easy to grab.
+   Hidden on mobile (stacked layout). */
+.alfred-splitter {
+	flex: 0 0 4px;
+	cursor: col-resize;
+	background: transparent;
+	position: relative;
+	z-index: 1;
+	transition: background 0.15s ease;
+}
+.alfred-splitter::before {
+	content: "";
+	position: absolute;
+	top: 0; bottom: 0; left: -3px; right: -3px;
+}
+.alfred-splitter:hover,
+.alfred-splitter.alfred-splitter-active {
+	background: var(--blue-300, #93c5fd);
+}
 
 /* ── Onboarding (UX-01) ──────────────────────────────────────── */
 .alfred-onboarding {
@@ -128,7 +166,7 @@
 }
 
 /* ── Chat Area ─────────────────────────────────────────────────── */
-.alfred-chat-area { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+.alfred-chat-area { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0; }
 
 /* Toolbar: three-zone layout (left | center | right).
    Left zone:  back + title (shrinkable, truncates with ellipsis)
@@ -372,7 +410,7 @@
 	font-weight: 700;
 }
 .alfred-messages {
-	flex: 1; overflow-y: auto; padding: 16px;
+	flex: 1; overflow-y: auto; padding: 16px; min-height: 0;
 	display: flex; flex-direction: column; gap: 12px;
 }
 .alfred-message {
@@ -638,10 +676,15 @@
 @media (max-width: 768px) {
 	.alfred-panels { flex-direction: column; }
 	.alfred-left-panel {
+		flex: 0 0 60vh;
 		width: 100%; min-width: auto; border-right: none;
-		border-bottom: 1px solid var(--border-color, #e2e2e2); max-height: 60vh;
+		border-bottom: 1px solid var(--border-color, #e2e2e2);
 	}
-	.alfred-right-panel { width: 100%; max-height: 40vh; }
+	.alfred-right-panel {
+		flex: 0 0 40vh;
+		width: 100%; max-width: none; min-width: 0; border-left: none;
+	}
+	.alfred-splitter { display: none; }
 	.alfred-phase-pipeline { display: flex; overflow-x: auto; }
 	.alfred-phase-label { display: none; }
 	.alfred-phase { padding: 2px 6px; }

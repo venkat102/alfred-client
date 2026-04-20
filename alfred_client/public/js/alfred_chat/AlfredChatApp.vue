@@ -18,7 +18,10 @@
 			/>
 		</div>
 
-		<div class="alfred-panels">
+		<div
+			ref="panelsEl"
+			class="alfred-panels"
+		>
 			<!-- Left Panel -->
 			<div class="alfred-left-panel">
 				<!-- Conversation List -->
@@ -203,6 +206,18 @@
 				</div>
 			</div>
 
+			<!-- Splitter: drag to resize the left / right split. Writes to
+			     --alfred-left-width on .alfred-panels and persists the
+			     latest value to localStorage. Hidden on mobile. -->
+			<div
+				class="alfred-splitter"
+				:class="{ 'alfred-splitter-active': splitterDragging }"
+				role="separator"
+				aria-orientation="vertical"
+				:aria-label="__('Resize chat and preview panels')"
+				@mousedown.prevent="startSplitterDrag"
+			></div>
+
 			<!-- Right Panel: Preview -->
 			<div class="alfred-right-panel">
 				<PreviewPanel
@@ -256,6 +271,15 @@ const validatingChangeset = ref(false);
 // True while a user-initiated Rollback call is in flight. PreviewPanel
 // shows "Rolling back..." on the button and disables it.
 const rollbackInFlight = ref(false);
+// The draggable splitter between left (chat) and right (preview) panels.
+// splitterDragging drives a hover-style highlight on the handle while the
+// user is actively dragging. panelsEl is the .alfred-panels container -
+// drag math reads its bounding rect to convert the mouse X into a percentage.
+const panelsEl = ref(null);
+const splitterDragging = ref(false);
+const SPLITTER_LS_KEY = "alfred_chat_left_width";
+const SPLITTER_MIN_PX = 320;
+const SPLITTER_MIN_RIGHT_PX = 360;
 const statusState = ref("disconnected");
 const currentPhase = ref(null);
 const completedPhases = ref([]);
@@ -394,6 +418,7 @@ onMounted(() => {
 	setupRealtime();
 	document.addEventListener("click", handleDocumentClick);
 	document.addEventListener("keydown", handleDocumentKey);
+	restoreSplitterWidth();
 	// Restore conversation from URL on page load / refresh
 	const convId = getConversationFromRoute();
 	if (convId) {
@@ -406,8 +431,56 @@ onUnmounted(() => {
 	stopPolling();
 	document.removeEventListener("click", handleDocumentClick);
 	document.removeEventListener("keydown", handleDocumentKey);
+	document.removeEventListener("mousemove", handleSplitterMove);
+	document.removeEventListener("mouseup", endSplitterDrag);
 	// Listeners persist on frappe.realtime - they're global and idempotent
 });
+
+// ── Splitter drag handlers ─────────────────────────────────────
+// Drag math: convert the mouse X into a pixel offset from the left edge
+// of .alfred-panels, clamp between SPLITTER_MIN_PX and (panels_width -
+// SPLITTER_MIN_RIGHT_PX), write back as a px value on --alfred-left-width.
+// On mouseup, persist to localStorage so the same split restores next load.
+function restoreSplitterWidth() {
+	try {
+		const stored = localStorage.getItem(SPLITTER_LS_KEY);
+		if (stored && panelsEl.value) {
+			panelsEl.value.style.setProperty("--alfred-left-width", stored);
+		}
+	} catch (e) { /* localStorage may be unavailable in sandbox */ }
+}
+
+function startSplitterDrag(evt) {
+	if (!panelsEl.value) return;
+	splitterDragging.value = true;
+	document.body.style.userSelect = "none";
+	document.body.style.cursor = "col-resize";
+	document.addEventListener("mousemove", handleSplitterMove);
+	document.addEventListener("mouseup", endSplitterDrag);
+}
+
+function handleSplitterMove(evt) {
+	if (!splitterDragging.value || !panelsEl.value) return;
+	const rect = panelsEl.value.getBoundingClientRect();
+	let leftPx = evt.clientX - rect.left;
+	const maxLeft = rect.width - SPLITTER_MIN_RIGHT_PX;
+	if (leftPx < SPLITTER_MIN_PX) leftPx = SPLITTER_MIN_PX;
+	if (leftPx > maxLeft) leftPx = maxLeft;
+	panelsEl.value.style.setProperty("--alfred-left-width", `${leftPx}px`);
+}
+
+function endSplitterDrag() {
+	if (!splitterDragging.value) return;
+	splitterDragging.value = false;
+	document.body.style.userSelect = "";
+	document.body.style.cursor = "";
+	document.removeEventListener("mousemove", handleSplitterMove);
+	document.removeEventListener("mouseup", endSplitterDrag);
+	try {
+		const width = panelsEl.value?.style.getPropertyValue("--alfred-left-width");
+		if (width) localStorage.setItem(SPLITTER_LS_KEY, width);
+	} catch (e) { /* ignore */ }
+}
 
 // Auto-scroll when messages change
 watch(messages, () => nextTick(scrollToBottom), { deep: true });
