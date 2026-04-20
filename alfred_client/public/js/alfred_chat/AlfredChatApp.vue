@@ -210,9 +210,14 @@
 					:current-phase="currentPhase"
 					:deploy-steps="deploySteps"
 					:deployed="isDeployed"
+					:is-processing="isProcessing"
+					:conversation-status="conversationStatus"
+					:validating="validatingChangeset"
+					:rollback-in-flight="rollbackInFlight"
 					@approve="approveChangeset"
 					@modify="startModify"
 					@reject="rejectChangeset"
+					@rollback="rollbackChangeset"
 				/>
 			</div>
 		</div>
@@ -240,6 +245,17 @@ const statusText = ref(__("Ready"));
 // Tracks an in-flight cancel request so repeated Stop clicks are debounced
 // and the UI reflects that the cancel was accepted.
 const cancelInFlight = ref(false);
+// The Alfred Conversation.status string, rehydrated by openConversation /
+// rehydrateConversationState. Drives the preview-panel CANCELLED /
+// Completed / Failed empty-state copy without the parent having to rerun
+// its own state derivation.
+const conversationStatus = ref("");
+// True while Approve has fired and the second-pass dry-run is running,
+// so PreviewPanel flips to VALIDATING state and disables action buttons.
+const validatingChangeset = ref(false);
+// True while a user-initiated Rollback call is in flight. PreviewPanel
+// shows "Rolling back..." on the button and disables it.
+const rollbackInFlight = ref(false);
 const statusState = ref("disconnected");
 const currentPhase = ref(null);
 const completedPhases = ref([]);
@@ -444,6 +460,9 @@ function openConversation(name) {
 	connectionState.value = "disconnected";
 	statusText.value = __("Ready");
 	statusState.value = "disconnected";
+	conversationStatus.value = "";
+	validatingChangeset.value = false;
+	rollbackInFlight.value = false;
 
 	// Three-mode chat (Phase D): restore the sticky mode for this
 	// conversation from the server-side record so navigating away and
@@ -479,8 +498,34 @@ function rehydrateConversationState(name) {
 			const state = r && r.message;
 			if (!state || currentConversation.value !== name) return;
 
+			// Conversation status drives the EMPTY-state copy in the preview
+			// panel ("Run cancelled", "Conversation complete", etc.).
+			conversationStatus.value = state.status || "";
+
+			// Pipeline mode from the most recent run. Without this, the phase
+			// pipeline would default to "full" after a refresh during a lite
+			// run and show the wrong number of phases.
+			if (state.pipeline_mode === "full" || state.pipeline_mode === "lite") {
+				pipelineMode.value = state.pipeline_mode;
+			}
+
+			// Ticker text - lost today on every refresh because agent_activity
+			// events are realtime-only; Phase 1 started caching it on the
+			// Conversation row so this rehydrate can fill the ticker immediately.
+			if (state.current_activity) currentActivity.value = state.current_activity;
+
+			// Preview panel: pick the one variant that is populated. Priority
+			// pending > deployed > failed so an in-flight review always wins
+			// over a historical deploy.
 			if (state.pending_changeset) {
 				changeset.value = state.pending_changeset;
+				isDeployed.value = false;
+			} else if (state.deployed_changeset) {
+				changeset.value = state.deployed_changeset;
+				isDeployed.value = true;
+			} else if (state.failed_changeset) {
+				changeset.value = state.failed_changeset;
+				isDeployed.value = false;
 			}
 
 			if (state.is_processing) {
@@ -502,6 +547,54 @@ function rehydrateConversationState(name) {
 			}
 		},
 	});
+}
+
+function rollbackChangeset() {
+	// Triggered by the Rollback button on the DEPLOYED preview panel.
+	// Unlike the automatic rollback on deploy failure, this is a user
+	// action on a successfully-deployed changeset.
+	const cs = changeset.value;
+	if (!cs || !cs.name) return;
+	if (rollbackInFlight.value) return;
+	frappe.confirm(
+		__("Rollback deploys all removed-record data back to Alfred but will DELETE every document that was created. Continue?"),
+		() => {
+			rollbackInFlight.value = true;
+			addActivity(__("Rolling back deploy..."));
+			frappe.call({
+				method: "alfred_client.api.deploy.rollback_changeset",
+				args: { changeset_name: cs.name },
+				callback: (r) => {
+					rollbackInFlight.value = false;
+					const result = (r && r.message) || {};
+					const status = result.status || "";
+					if (status === "Rolled Back") {
+						changeset.value = {
+							...cs,
+							status: "Rolled Back",
+							deployment_log: result.deployment_log || cs.deployment_log,
+						};
+						isDeployed.value = false;
+						conversationStatus.value = "Completed";
+						addActivity(__("Rollback complete."));
+						messages.value.push({
+							_id: Date.now(),
+							role: "system",
+							message_type: "status",
+							content: __("Deploy rolled back."),
+						});
+					} else {
+						addActivity(__("Rollback reported status: {0}", [status || "unknown"]), "error");
+					}
+				},
+				error: (err) => {
+					rollbackInFlight.value = false;
+					addActivity(__("Rollback failed"), "error");
+					console.warn("Rollback failed:", err);
+				},
+			});
+		},
+	);
 }
 
 // Three-mode chat (Phase D): persist the user's mode pick to the
@@ -796,11 +889,13 @@ function approveChangeset() {
 			`<li><strong>${c.op || c.operation || "create"}</strong> ${c.doctype}: ${frappe.utils.escape_html((c.data || {}).name || "Unnamed")}</li>`
 		 ).join("")}</ul>`,
 		() => {
+			validatingChangeset.value = true;
 			frappe.show_alert({ message: __("Validating changeset..."), indicator: "blue" });
 			frappe.call({
 				method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.approve_changeset",
 				args: { changeset_name: changeset.value.name },
 				callback: (r) => {
+					validatingChangeset.value = false;
 					if (!r.message) return;
 					let result = r.message;
 
@@ -832,7 +927,10 @@ function approveChangeset() {
 						});
 					}
 				},
-				error: () => frappe.show_alert({ message: __("Deployment failed."), indicator: "red" }),
+				error: () => {
+					validatingChangeset.value = false;
+					frappe.show_alert({ message: __("Deployment failed."), indicator: "red" });
+				},
 			});
 		}
 	);
@@ -1035,6 +1133,7 @@ function setupRealtime() {
 		statusText.value = __("Cancelled");
 		statusState.value = "success";
 		currentActivity.value = null;
+		conversationStatus.value = "Cancelled";
 		addActivity(data?.reason || __("Run cancelled"));
 		messages.value.push({
 			_id: Date.now(),

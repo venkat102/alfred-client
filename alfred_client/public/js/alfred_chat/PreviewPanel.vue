@@ -1,42 +1,62 @@
 <template>
-	<div class="alfred-preview">
-		<!-- Deployed success banner -->
-		<div v-if="deployed" class="alfred-deploy-success">
-			&#10003; {{ __("All changes deployed successfully") }}
-		</div>
-
-		<!-- Deploy progress -->
-		<div v-if="deploySteps.length" class="alfred-deploy-progress">
-			<h6>{{ __("Deploying...") }}</h6>
-			<div v-for="step in deploySteps" :key="step.step" class="alfred-deploy-step"
-				:style="{ color: stepColor(step.status) }">
-				<span>{{ stepIcon(step.status) }}</span>
-				<span>Step {{ step.step }}/{{ step.total }}: {{ step.name || step.doctype }}</span>
-			</div>
-		</div>
-
-		<!-- Empty state -->
-		<div v-if="!changeset && !currentPhase" class="alfred-preview-empty">
+	<div class="alfred-preview" :data-preview-state="previewState">
+		<!-- EMPTY: no changeset, no run in flight. -->
+		<div v-if="previewState === 'EMPTY'" class="alfred-preview-empty">
 			<div class="text-muted text-center" style="padding: 60px 20px;">
 				<i class="fa fa-eye" style="font-size: 48px; margin-bottom: 16px; display: block; opacity: 0.3;"></i>
 				<h5>{{ __("Preview Panel") }}</h5>
-				<p>{{ __("Changes proposed by Alfred will appear here for your review.") }}</p>
+				<p>{{ emptyMessage }}</p>
 			</div>
 		</div>
 
-		<!-- Progressive phase content -->
-		<div v-else-if="!changeset && currentPhase" class="alfred-preview-progress-content text-center" style="padding: 40px;">
+		<!-- WORKING: run in flight, no changeset yet. Show last known phase. -->
+		<div v-else-if="previewState === 'WORKING'" class="alfred-preview-progress-content text-center" style="padding: 40px;">
 			<h5 class="alfred-preview-title">{{ phaseTitle }}</h5>
 			<p class="text-muted">{{ phaseDescription }}</p>
 		</div>
 
-		<!-- Changeset preview -->
+		<!-- VALIDATING: Approve clicked, second-pass dry-run in flight. -->
+		<div v-else-if="previewState === 'VALIDATING'" class="alfred-preview-content">
+			<div class="alfred-validation-banner alfred-validation-ok">
+				{{ __("Validating - checking the site one more time before deploy...") }}
+			</div>
+			<component :is="'div'" v-bind="$attrs">
+				<div class="alfred-preview-content-body alfred-preview-content-muted">
+					<div v-if="changeset">
+						<h5 class="alfred-preview-title">{{ __("Changeset Preview") }}</h5>
+						<div class="alfred-preview-summary">{{ __("{0} operation(s)", [changes.length]) }}</div>
+					</div>
+				</div>
+			</component>
+		</div>
+
+		<!-- DEPLOYING: live deploy-progress stream. -->
+		<div v-else-if="previewState === 'DEPLOYING'" class="alfred-preview-content">
+			<div class="alfred-deploy-progress">
+				<h6>{{ __("Deploying...") }}</h6>
+				<div
+					v-for="step in deploySteps"
+					:key="step.step"
+					class="alfred-deploy-step"
+					:style="{ color: stepColor(step.status) }"
+				>
+					<span>{{ stepIcon(step.status) }}</span>
+					<span>Step {{ step.step }}/{{ step.total }}: {{ step.name || step.doctype }}</span>
+				</div>
+				<div v-if="!deploySteps.length" class="text-muted" style="font-size: 12px;">
+					{{ __("Waiting for the first deploy step...") }}
+				</div>
+			</div>
+		</div>
+
+		<!-- PENDING / DEPLOYED / ROLLED_BACK / FAILED / REJECTED / CANCELLED
+		     all render the changeset body with a state-specific header. -->
 		<div v-else-if="changeset" class="alfred-preview-content">
-			<!-- Dry-run validation banner (pre-deploy) -->
-			<div v-if="changeset.status === 'Pending' && changeset.dry_run_valid === 1" class="alfred-validation-banner alfred-validation-ok">
+			<!-- State-specific header -->
+			<div v-if="previewState === 'PENDING' && changeset.dry_run_valid === 1" class="alfred-validation-banner alfred-validation-ok">
 				&#10003; {{ __("Validated - ready to deploy") }}
 			</div>
-			<div v-else-if="changeset.status === 'Pending' && dryRunIssues.length" class="alfred-validation-banner alfred-validation-warn">
+			<div v-else-if="previewState === 'PENDING' && dryRunIssues.length" class="alfred-validation-banner alfred-validation-warn">
 				<div class="alfred-validation-heading">
 					&#9888; {{ __("{0} validation issue(s) found - review before deploying", [dryRunIssues.length]) }}
 				</div>
@@ -49,15 +69,34 @@
 				</ul>
 			</div>
 
-			<!-- Status banner -->
-			<div v-if="changeset.status === 'Deployed'" class="alfred-deploy-success" style="margin-bottom: 12px;">
+			<div v-if="previewState === 'DEPLOYED'" class="alfred-deploy-success" style="margin-bottom: 12px;">
 				&#10003; {{ __("Deployed successfully") }}
 			</div>
-			<div v-else-if="changeset.status === 'Rejected'" class="alfred-status-banner alfred-status-rejected" style="margin-bottom: 12px;">
+			<div v-else-if="previewState === 'ROLLED_BACK'" class="alfred-status-banner alfred-status-rolled-back" style="margin-bottom: 12px;">
+				&#8634; {{ __("Deployment rolled back") }}
+			</div>
+			<div v-else-if="previewState === 'FAILED'" class="alfred-status-banner alfred-status-failed" style="margin-bottom: 12px;">
+				&#10007; {{ failureHeadline }}
+			</div>
+			<div v-else-if="previewState === 'REJECTED'" class="alfred-status-banner alfred-status-rejected" style="margin-bottom: 12px;">
 				&#10007; {{ __("Changeset rejected") }}
 			</div>
-			<div v-else-if="changeset.status === 'Rolled Back'" class="alfred-status-banner alfred-status-rolled-back" style="margin-bottom: 12px;">
-				&#8634; {{ __("Deployment rolled back") }}
+			<div v-else-if="previewState === 'CANCELLED'" class="alfred-status-banner alfred-status-rejected" style="margin-bottom: 12px;">
+				&#9888; {{ __("Run cancelled") }}
+			</div>
+
+			<!-- FAILED: brief excerpt of the failed deployment_log steps. -->
+			<div v-if="previewState === 'FAILED' && failedSteps.length" class="alfred-deploy-progress" style="margin-bottom: 12px;">
+				<h6>{{ __("Failed deploy steps") }}</h6>
+				<div
+					v-for="step in failedSteps"
+					:key="step.step || step.index"
+					class="alfred-deploy-step"
+					:style="{ color: stepColor(step.status || 'failed') }"
+				>
+					<span>{{ stepIcon(step.status || 'failed') }}</span>
+					<span>Step {{ step.step || step.index }}: {{ step.name || step.doctype }} - {{ step.error || step.message || __("failed") }}</span>
+				</div>
 			</div>
 
 			<h5 class="alfred-preview-title">{{ __("Changeset Preview") }}</h5>
@@ -256,8 +295,8 @@
 				</div>
 			</div>
 
-			<!-- Action buttons - only for Pending status -->
-			<div v-if="changeset.status === 'Pending'" class="alfred-preview-actions">
+			<!-- PENDING: Approve / Request Changes / Reject. -->
+			<div v-if="previewState === 'PENDING'" class="alfred-preview-actions">
 				<button
 					:class="['btn', 'btn-sm', changeset.dry_run_valid === 1 ? 'btn-success' : 'btn-warning']"
 					@click="$emit('approve')">
@@ -265,6 +304,16 @@
 				</button>
 				<button class="btn btn-default btn-sm" @click="$emit('modify')">{{ __("Request Changes") }}</button>
 				<button class="btn btn-danger btn-sm" @click="$emit('reject')">{{ __("Reject") }}</button>
+			</div>
+
+			<!-- DEPLOYED: Rollback button if rollback_data exists. -->
+			<div v-else-if="previewState === 'DEPLOYED' && hasRollbackData" class="alfred-preview-actions">
+				<button
+					class="btn btn-default btn-sm"
+					:disabled="rollbackInFlight"
+					@click="$emit('rollback')">
+					{{ rollbackInFlight ? __("Rolling back...") : __("Rollback") }}
+				</button>
 			</div>
 		</div>
 	</div>
@@ -277,10 +326,22 @@ const props = defineProps({
 	changeset: { type: Object, default: null },
 	currentPhase: { type: String, default: null },
 	deploySteps: { type: Array, default: () => [] },
+	// deployed is retained for backwards-compat but now derives from
+	// changeset.status; callers can stop passing it once everything has
+	// migrated to the new previewState contract.
 	deployed: { type: Boolean, default: false },
+	isProcessing: { type: Boolean, default: false },
+	conversationStatus: { type: String, default: "" },
+	// True while the second-pass dry-run after Approve is in flight.
+	// Drives the VALIDATING state so the Approve button is hidden and a
+	// neutral "re-validating" banner shows instead.
+	validating: { type: Boolean, default: false },
+	// True while a rollback call is in flight so the button label flips
+	// to "Rolling back..." and is disabled.
+	rollbackInFlight: { type: Boolean, default: false },
 });
 
-defineEmits(["approve", "modify", "reject"]);
+defineEmits(["approve", "modify", "reject", "rollback"]);
 
 const PHASE_INFO = {
 	requirement: { title: "Gathering Requirements...", desc: "Understanding your request and identifying what needs to be built." },
@@ -293,6 +354,99 @@ const PHASE_INFO = {
 
 const phaseTitle = computed(() => PHASE_INFO[props.currentPhase]?.title || "Processing...");
 const phaseDescription = computed(() => PHASE_INFO[props.currentPhase]?.desc || "");
+
+// ── State machine ──────────────────────────────────────────────
+//
+// The preview panel renders one of ten states. Each is reached via a
+// pure function of the incoming props, so the UI is a deterministic
+// projection of (changeset, conversationStatus, deploySteps, isProcessing,
+// validating) and can be unit-tested one state at a time.
+//
+// Priority order when conditions overlap:
+//   VALIDATING beats DEPLOYING beats changeset-based states so the
+//   Approve-click visual feedback is not overridden by the pending
+//   changeset still sitting in memory.
+const previewState = computed(() => {
+	// Validating: Approve was just clicked, dry-run is running.
+	if (props.validating) return "VALIDATING";
+
+	// Deploying: either the status is Approved/Deploying OR deploy
+	// progress events are currently streaming in.
+	const cs = props.changeset;
+	const status = cs?.status;
+	const streamingDeploy = Array.isArray(props.deploySteps) && props.deploySteps.length > 0;
+	if (status === "Approved" || status === "Deploying") return "DEPLOYING";
+	if (streamingDeploy && (!status || status === "Pending")) return "DEPLOYING";
+
+	// Changeset-based terminal states.
+	if (status === "Deployed") return "DEPLOYED";
+	if (status === "Rolled Back") {
+		// Distinguish a user-initiated rollback from an auto-rollback
+		// triggered by a mid-deploy failure. Auto-rollback leaves a
+		// failed step in deployment_log; user-initiated rollback has
+		// only successful deploy steps followed by rollback entries.
+		return deploymentLogHasFailure.value ? "FAILED" : "ROLLED_BACK";
+	}
+	if (status === "Rejected") return "REJECTED";
+	if (status === "Pending") return "PENDING";
+
+	// No changeset: look to conversation context.
+	if (props.conversationStatus === "Cancelled") return "CANCELLED";
+	if (props.isProcessing) return "WORKING";
+	return "EMPTY";
+});
+
+const deploymentLog = computed(() => {
+	const raw = props.changeset?.deployment_log;
+	if (!raw) return [];
+	if (Array.isArray(raw)) return raw;
+	if (typeof raw === "string") {
+		try { return JSON.parse(raw); } catch { return []; }
+	}
+	return [];
+});
+
+const deploymentLogHasFailure = computed(() =>
+	deploymentLog.value.some((s) => (s?.status || "").toLowerCase() === "failed")
+);
+
+const failedSteps = computed(() =>
+	deploymentLog.value.filter((s) => (s?.status || "").toLowerCase() === "failed")
+);
+
+const hasRollbackData = computed(() => {
+	const raw = props.changeset?.rollback_data;
+	if (!raw) return false;
+	if (Array.isArray(raw)) return raw.length > 0;
+	if (typeof raw === "string") {
+		try { return Array.isArray(JSON.parse(raw)) && JSON.parse(raw).length > 0; } catch { return false; }
+	}
+	return false;
+});
+
+const emptyMessage = computed(() => {
+	if (props.conversationStatus === "Cancelled") {
+		return __("Run cancelled. Send a new prompt to continue.");
+	}
+	if (props.conversationStatus === "Completed") {
+		return __("Conversation complete. Send a new prompt to start another task.");
+	}
+	if (props.conversationStatus === "Failed") {
+		return __("The previous run failed. Send a new prompt to try again.");
+	}
+	return __("Changes proposed by Alfred will appear here for your review.");
+});
+
+const failureHeadline = computed(() => {
+	const failed = failedSteps.value[0];
+	if (failed) {
+		const ref = failed.name || failed.doctype || "";
+		return ref
+			? __("Deploy failed at {0} - rolled back", [ref])
+			: __("Deploy failed - rolled back");
+	}
+	return __("Deploy failed - rolled back");
+});
 
 const changes = computed(() => {
 	let raw = props.changeset?.changes || [];
