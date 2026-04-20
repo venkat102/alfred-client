@@ -183,6 +183,16 @@
 							</span>
 						</div>
 						<button
+							v-if="isProcessing"
+							class="btn btn-default btn-sm alfred-stop-btn"
+							:disabled="cancelInFlight"
+							:title="__('Stop the running agent gracefully; the current phase will finish.')"
+							@click="cancelRun"
+						>
+							{{ cancelInFlight ? __("Stopping...") : __("Stop") }}
+						</button>
+						<button
+							v-else
 							class="btn btn-primary btn-sm alfred-send-btn"
 							:disabled="inputDisabled || !inputText.trim()"
 							@click="sendMessage(inputText)"
@@ -227,6 +237,9 @@ const inputPlaceholder = ref(__("Describe what you want to build..."));
 const isProcessing = ref(false);
 const inputDisabled = ref(false);
 const statusText = ref(__("Ready"));
+// Tracks an in-flight cancel request so repeated Stop clicks are debounced
+// and the UI reflects that the cancel was accepted.
+const cancelInFlight = ref(false);
 const statusState = ref("disconnected");
 const currentPhase = ref(null);
 const completedPhases = ref([]);
@@ -731,6 +744,47 @@ function retryLastMessage() {
 	if (lastUserMessage.value) sendMessage(lastUserMessage.value);
 }
 
+function cancelRun() {
+	// Graceful cancel: the processing app lets the current phase finish,
+	// exits the pipeline cleanly, and emits `alfred_run_cancelled`. We
+	// optimistically drop isProcessing so the Stop button disappears right
+	// away; the realtime handler reconciles the chat transcript.
+	if (!currentConversation.value || cancelInFlight.value) return;
+	cancelInFlight.value = true;
+	addActivity(__("Cancelling run..."));
+	statusText.value = __("Cancelling...");
+	statusState.value = "processing";
+	frappe.call({
+		method: "alfred_client.api.websocket_client.cancel_run",
+		args: { conversation_name: currentConversation.value },
+		callback: () => {
+			// Give the WS path ~3s to land `alfred_run_cancelled`; if it
+			// doesn't, fall back to local state so the UI never stays stuck.
+			setTimeout(() => {
+				if (!isProcessing.value) return;
+				isProcessing.value = false;
+				inputDisabled.value = false;
+				stopTimer();
+				stopPolling();
+				currentActivity.value = null;
+				statusText.value = __("Cancelled");
+				statusState.value = "success";
+				messages.value.push({
+					_id: Date.now(),
+					role: "system",
+					message_type: "status",
+					content: __("Run cancelled."),
+				});
+				cancelInFlight.value = false;
+			}, 3000);
+		},
+		error: () => {
+			cancelInFlight.value = false;
+			addActivity(__("Failed to send cancel request"), "error");
+		},
+	});
+}
+
 function approveChangeset() {
 	if (!changeset.value) return;
 	const changes = changeset.value.changes || [];
@@ -945,6 +999,28 @@ function setupRealtime() {
 		messages.value.push({
 			_id: Date.now(), role: "system", message_type: "error",
 			content: data.error || data.message || "An error occurred",
+		});
+	});
+
+	// Graceful user-initiated cancel: the processing app emitted run_cancelled
+	// via _send_error because ctx.stop(code="user_cancel") fired. Treat as a
+	// neutral outcome, not an error.
+	frappe.realtime.on("alfred_run_cancelled", (data) => {
+		if (!currentConversation.value) return;
+		isProcessing.value = false;
+		inputDisabled.value = false;
+		cancelInFlight.value = false;
+		stopTimer();
+		stopPolling();
+		statusText.value = __("Cancelled");
+		statusState.value = "success";
+		currentActivity.value = null;
+		addActivity(data?.reason || __("Run cancelled"));
+		messages.value.push({
+			_id: Date.now(),
+			role: "system",
+			message_type: "status",
+			content: data?.reason || __("Run cancelled."),
 		});
 	});
 
