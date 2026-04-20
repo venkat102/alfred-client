@@ -988,6 +988,26 @@ function setupRealtime() {
 			});
 			return;
 		}
+		// OLLAMA_UNHEALTHY is raised by the strict warmup gate when one or more
+		// tier models fail a 1-token probe before the crew starts. This is an
+		// ops failure, not a user-content failure - keep the conversation open
+		// so the user can retry after the admin restarts Ollama, and surface
+		// an admin-flagged toast instead of a red error bubble in the chat.
+		if (data.code === "OLLAMA_UNHEALTHY") {
+			isProcessing.value = false;
+			inputDisabled.value = false;
+			stopTimer();
+			stopPolling();
+			statusText.value = __("Processing service unavailable");
+			statusState.value = "error";
+			currentActivity.value = null;
+			frappe.show_alert({
+				message: __("Processing service is unavailable - contact your admin."),
+				indicator: "red",
+			});
+			addActivity(__("Ollama health check failed - contact your admin"), "error");
+			return;
+		}
 		isProcessing.value = false;
 		inputDisabled.value = false;
 		stopTimer();
