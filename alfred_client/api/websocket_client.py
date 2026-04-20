@@ -121,6 +121,11 @@ def _route_incoming_message(message, user, conversation_name):
 		"insights_reply": "alfred_insights_reply",
 		"plan_doc": "alfred_plan_doc",
 		"mode_switch": "alfred_mode_switch",
+		# Graceful user-initiated cancel: the processing app emits this when
+		# ctx.stop(code="user_cancel") fires, instead of the generic error
+		# event. Separate event so the UI can render it as a neutral system
+		# message, not an error banner.
+		"run_cancelled": "alfred_run_cancelled",
 	}
 
 	event_name = event_map.get(msg_type)
@@ -713,3 +718,41 @@ def stop_conversation(conversation_name):
 	redis_conn = frappe.cache()
 	channel = f"{_REDIS_CHANNEL_PREFIX}{conversation_name}"
 	redis_conn.publish(channel, "__shutdown__")
+
+
+@frappe.whitelist()
+def cancel_run(conversation_name):
+	"""Graceful cancel of an in-flight agent pipeline.
+
+	Unlike stop_conversation (which hard-closes the outbound WS), this pushes
+	a `{"type": "cancel"}` message through the existing durable queue so the
+	processing app can flip should_stop at the next phase boundary and exit
+	via the normal error path. The WS stays open, so the user can keep
+	chatting in the same conversation after the run is cancelled.
+
+	Also flips the Alfred Conversation status to "Cancelled" locally so the
+	UI stays honest even if the processing app is down or the run already
+	completed by the time the cancel arrives.
+	"""
+	from alfred_client.api.permissions import validate_alfred_access
+	validate_alfred_access()
+	frappe.has_permission(
+		"Alfred Conversation", ptype="write", doc=conversation_name, throw=True,
+	)
+
+	msg = json.dumps({
+		"msg_id": str(uuid.uuid4()),
+		"type": "cancel",
+		"data": {"user": frappe.session.user},
+	})
+	redis_conn = frappe.cache()
+	channel = f"{_REDIS_CHANNEL_PREFIX}{conversation_name}"
+	queue_key = f"{_REDIS_CHANNEL_PREFIX}queue:{conversation_name}"
+	redis_conn.rpush(queue_key, msg)
+	redis_conn.publish(channel, "__notify__")
+
+	frappe.db.set_value(
+		"Alfred Conversation", conversation_name, "status", "Cancelled",
+		update_modified=True,
+	)
+	frappe.db.commit()
