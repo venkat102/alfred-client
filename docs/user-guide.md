@@ -80,6 +80,21 @@ This gives you concrete progress instead of a silent spinner - especially useful
 
 While a run is in flight the **Send** button is replaced with a **Stop** button. Clicking Stop sends a graceful cancel: the current agent phase completes, the pipeline exits cleanly, the conversation is marked **Cancelled**, and the chat shows a neutral "Run cancelled" system message. The WebSocket stays open so you can keep chatting in the same conversation. If the processing app is unreachable, the conversation is still marked Cancelled locally so the UI does not stay stuck on "In Progress".
 
+### Resizable panels
+
+The chat and preview panels scroll independently and can be resized by dragging the thin vertical bar between them. Your split is remembered across reloads. On narrow screens (below ~768px wide) the panels stack vertically and the resize handle is hidden.
+
+### Refresh during a run
+
+Refreshing the page at any point keeps everything you had on screen. The chat transcript, the current phase pipeline, the agent activity ticker, and the preview panel all rebuild from the server. What you see after a refresh:
+
+- **Mid-run**: the phase pipeline picks up where it was; the ticker shows the last-known agent activity; the status bar reads "... is working...".
+- **Awaiting review**: the Pending changeset is re-rendered with its Approve / Reject / Request Changes buttons.
+- **After deploy**: the deployed changeset is shown read-only with a green "Deployed successfully" banner and a **Rollback** button (when rollback data is available).
+- **After rollback**: a neutral "Deployment rolled back" banner replaces the Deployed banner.
+- **After a deploy failure**: a red "Deploy failed - rolled back" banner lists the failed steps.
+- **After Stop**: the conversation reads **Cancelled** with a neutral message; send a new prompt to continue in the same conversation.
+
 ### Left Panel
 - **Conversation list** - Shows your past conversations with the first message as a summary, status badge, and relative time. Click to open.
 - **Chat area** - When a conversation is open, shows the message thread and input box.

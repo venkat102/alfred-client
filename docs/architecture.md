@@ -206,6 +206,57 @@ routes as `alfred_run_cancelled` and renders as a neutral system message.
 The Alfred Conversation row is marked `Cancelled` in the same request so
 the UI stays honest even if the processing app is unreachable.
 
+### Refresh-safe chat state
+
+The chat UI reconstructs the full conversation view after a page reload
+from the Frappe DB alone. No browser storage is trusted. Four pieces
+cooperate:
+
+1. **Alfred Conversation fields** cache volatile run state:
+   `current_agent`, `current_activity`, `pipeline_mode`. `current_agent`
+   existed previously but was written only by `escalation.py`; it is now
+   overwritten by every `agent_status` event from the processing app.
+   `agent_activity` writes `current_activity` (truncated to 140 chars).
+   Any terminal event (error, run_cancelled, chat_reply, insights_reply,
+   plan_doc, preview, changeset) clears the ticker fields so stale state
+   does not leak across runs. `pipeline_mode` is preserved so the phase
+   pipeline UI can draw the right number of phases even after the run
+   ended.
+
+2. **Alfred Changeset rows** are the source of truth for preview panel
+   state. Every published `preview`/`changeset` event inserts a row with
+   `status=Pending`. Approve flips the row to `Deploying` then
+   `Deployed` (or `Rolled Back` on failure). Rollback (user-initiated or
+   automatic) flips to `Rolled Back` and appends rollback entries to
+   `deployment_log`. The UI never holds deploy state in sibling Vue refs
+   - it derives from the row.
+
+3. **`get_conversation_state(conversation)`** is the single rehydrate
+   endpoint. It returns the cached run state plus three changeset slots:
+   `pending_changeset`, `deployed_changeset`, `failed_changeset`. At most
+   one is expected to be non-null at a given moment but all three are
+   returned so the UI can resolve status-transition races.
+
+4. **`PreviewPanel` state machine** consumes the rehydrate payload and
+   renders one of ten explicit states (EMPTY, WORKING, VALIDATING,
+   DEPLOYING, PENDING, DEPLOYED, ROLLED_BACK, FAILED, REJECTED,
+   CANCELLED) via a single `previewState` computed prop. Each state
+   maps to a specific header, body layout, and action set. The
+   distinction between ROLLED_BACK (user-initiated on a deployed
+   changeset) and FAILED (auto-rollback from a mid-deploy failure) is
+   derived from `deployment_log`: a failed step implies FAILED, success
+   entries only implies ROLLED_BACK.
+
+`AlfredChatApp.vue` picks the preview variant by priority pending >
+deployed > failed, sets `isDeployed` accordingly, and passes
+`conversationStatus` + `isProcessing` to `PreviewPanel` so the EMPTY
+variant can render mode-specific copy ("Run cancelled", "Conversation
+complete", "The previous run failed"). The chat and preview panel
+scroll independently; the root `.alfred-page` fills whatever bounded
+height the Frappe page wrapper gives it (no more `calc(100vh - 80px)`)
+and `min-height: 0` cascades through the flex children so overflow
+never escapes to the body.
+
 ## Multi-Model Tiers
 
 Standalone LLM calls (outside CrewAI) and CrewAI agents can use different
