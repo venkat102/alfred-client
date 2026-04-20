@@ -72,11 +72,15 @@ User prompt
 │             │   resolves.
 └──────┬──────┘
        ▼
-┌─────────────┐   Pre-warm Ollama models when multiple tiers are
-│   warmup    │   configured (triage/reasoning/agent). Fires parallel
-│             │   1-token generate calls with keep_alive=10m so all
-│             │   models are loaded by the time each stage runs.
-│             │   No-op with a single model. Never fails the pipeline.
+┌─────────────┐   Pre-warm + strict health gate. Fires a 1-token
+│   warmup    │   /api/generate against each distinct Ollama tier
+│             │   model with keep_alive=10m so everything is loaded
+│             │   before the crew runs. Doubles as a health probe:
+│             │   any failure (connection refused, timeout, HTTP 500
+│             │   from a dead model runner) stops the pipeline with
+│             │   OLLAMA_UNHEALTHY rather than letting the crew burn
+│             │   2-3 minutes of retries per agent. Cloud providers
+│             │   (no ollama/ prefix) are skipped.
 └──────┬──────┘
        ▼
 ┌─────────────┐   Admin-portal plan check. Returns allowed, remaining

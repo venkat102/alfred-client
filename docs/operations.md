@@ -212,6 +212,40 @@ key/value store).
    should see `WebSocket connection opened: conversation=...` followed by
    either `authenticated` (success) or `auth failed` (mismatch).
 
+### Chat shows "Processing service is unavailable - contact your admin"
+
+**Cause**: The strict warmup gate in `_phase_warmup` probed one or more
+Ollama tier models with a 1-token `/api/generate` call and got back
+either a connection error or an HTTP 500 ("model runner has unexpectedly
+stopped"). The pipeline emitted `OLLAMA_UNHEALTHY` and exited before the
+crew ran, so no LLM tokens were spent on retries.
+
+1. Tail processing app logs for the warmup failure; it names the model
+   and base URL:
+   ```
+   Ollama health probe failed for qwen2.5-coder:14b at http://10.x.x.x:11434: HTTP 500: {"error":"model runner has unexpectedly stopped"}
+   ```
+2. SSH to the Ollama box and check the service:
+   ```bash
+   sudo journalctl -u ollama -n 200 | grep -iE "oom|killed|panic|cuda|out of memory"
+   nvidia-smi          # (GPU) is another process hogging VRAM?
+   ollama ps           # anything still loaded?
+   ollama list         # confirm the model isn't half-downloaded
+   ```
+3. Common root causes and fixes:
+   - **GPU OOM** from loading all tier models at once: lower to a single
+     tier (clear the per-stage overrides in Alfred Settings) or use a
+     smaller coder model (`qwen2.5-coder:7b` fits ~8 GB).
+   - **Ollama daemon crashed**: `sudo systemctl restart ollama` and
+     re-send the prompt.
+   - **Partial `ollama pull`**: `ollama rm <model> && ollama pull <model>`.
+4. Check `/metrics` for the counter trend:
+   ```
+   alfred_llm_errors_total{tier="warmup", error_type="OLLAMA_UNHEALTHY"}
+   ```
+   A sustained rise here is the strongest leading indicator that the
+   Ollama box needs attention.
+
 ### Pipeline hangs at "Step N/6 - ... is working..." for more than 10 minutes
 
 **Cause**: usually LLM unresponsive, sometimes MCP tool call hung.
