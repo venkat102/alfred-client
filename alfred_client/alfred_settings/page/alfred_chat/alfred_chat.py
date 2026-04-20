@@ -514,13 +514,23 @@ def get_conversation_state(conversation):
 
 	Returns:
 	  {
-	    "is_processing": bool,          # true if pipeline is mid-run
-	    "status": str,                  # conversation status string
-	    "active_agent": str | None,     # e.g. "Developer"
-	    "active_phase": str | None,     # e.g. "development"
-	    "completed_phases": list[str],  # phases derived as done on reload
-	    "pending_changeset": dict|None, # latest Pending changeset if any
+	    "is_processing": bool,           # true if pipeline is mid-run
+	    "status": str,                   # conversation status string
+	    "mode": str | None,              # sticky chat mode (auto/dev/plan/insights)
+	    "pipeline_mode": str | None,     # "full" | "lite" (from last run)
+	    "active_agent": str | None,      # e.g. "Developer"
+	    "active_phase": str | None,      # e.g. "development"
+	    "completed_phases": list[str],   # phases derived as done on reload
+	    "current_activity": str | None,  # live ticker text if run in flight
+	    "pending_changeset": dict|None,  # latest Pending changeset if any
+	    "deployed_changeset": dict|None, # latest Deployed changeset if any
+	    "failed_changeset": dict|None,   # latest Rolled Back / Failed changeset if any
 	  }
+
+	At most one of pending / deployed / failed is expected to be relevant
+	at a given moment but all three are returned so the UI can resolve
+	races (e.g. deploy just completed, status transitioning). The UI picks
+	the variant to show based on a precedence: pending > deployed > failed.
 	"""
 	from alfred_client.api.permissions import validate_alfred_access
 
@@ -541,42 +551,58 @@ def get_conversation_state(conversation):
 				break
 			completed_phases.append(phase)
 
-	# Latest Pending changeset (approval still needed) - rehydrated into
-	# the preview panel. Anything already Approved/Rejected/Deployed is
-	# terminal and doesn't need to be restored as a live preview.
-	pending_changeset = None
-	cs_name = frappe.db.get_value(
-		"Alfred Changeset",
-		{"conversation": conversation, "status": "Pending"},
-		"name",
-		order_by="creation desc",
-	)
-	if cs_name:
-		cs = frappe.get_doc("Alfred Changeset", cs_name)
-		try:
-			changes = json.loads(cs.changes) if cs.changes else []
-		except json.JSONDecodeError:
-			changes = []
-		try:
-			dry_run_issues = json.loads(cs.dry_run_issues) if cs.dry_run_issues else []
-		except json.JSONDecodeError:
-			dry_run_issues = []
-		pending_changeset = {
-			"name": cs.name,
-			"status": cs.status,
-			"conversation": cs.conversation,
-			"changes": changes,
-			"deployment_log": cs.deployment_log,
-			"dry_run_valid": int(cs.dry_run_valid or 0),
-			"dry_run_issues": dry_run_issues,
-			"creation": str(cs.creation) if cs.creation else None,
-		}
-
 	return {
 		"is_processing": is_processing,
 		"status": status,
+		"mode": (conv.mode or "").lower() or None,
+		"pipeline_mode": (conv.pipeline_mode or "").lower() or None,
 		"active_agent": active_agent,
 		"active_phase": active_phase,
 		"completed_phases": completed_phases,
-		"pending_changeset": pending_changeset,
+		"current_activity": conv.current_activity or None,
+		"pending_changeset": _fetch_changeset_by_status(conversation, ("Pending",)),
+		"deployed_changeset": _fetch_changeset_by_status(conversation, ("Deployed",)),
+		"failed_changeset": _fetch_changeset_by_status(conversation, ("Rolled Back",)),
+	}
+
+
+def _fetch_changeset_by_status(conversation, statuses):
+	"""Return the latest Alfred Changeset with status in `statuses`, shaped
+	for the preview panel, or None if none exists.
+
+	Shared by get_conversation_state for the pending / deployed / failed
+	variants so we do not repeat the same load-and-shape logic three times.
+	"""
+	name = frappe.db.get_value(
+		"Alfred Changeset",
+		{"conversation": conversation, "status": ["in", list(statuses)]},
+		"name",
+		order_by="creation desc",
+	)
+	if not name:
+		return None
+	cs = frappe.get_doc("Alfred Changeset", name)
+	try:
+		changes = json.loads(cs.changes) if cs.changes else []
+	except json.JSONDecodeError:
+		changes = []
+	try:
+		dry_run_issues = json.loads(cs.dry_run_issues) if cs.dry_run_issues else []
+	except json.JSONDecodeError:
+		dry_run_issues = []
+	deployment_log = None
+	if cs.deployment_log:
+		try:
+			deployment_log = json.loads(cs.deployment_log)
+		except json.JSONDecodeError:
+			deployment_log = cs.deployment_log
+	return {
+		"name": cs.name,
+		"status": cs.status,
+		"conversation": cs.conversation,
+		"changes": changes,
+		"deployment_log": deployment_log,
+		"dry_run_valid": int(cs.dry_run_valid or 0),
+		"dry_run_issues": dry_run_issues,
+		"creation": str(cs.creation) if cs.creation else None,
 	}

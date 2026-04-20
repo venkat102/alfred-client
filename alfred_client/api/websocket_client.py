@@ -133,6 +133,17 @@ def _route_incoming_message(message, user, conversation_name):
 		logger.info("Publishing realtime event: %s -> %s", msg_type, event_name)
 		frappe.publish_realtime(event_name, data, user=user, after_commit=False)
 
+	# Cache volatile run state on the conversation so the UI can rehydrate
+	# the ticker + phase pipeline on a page refresh. Best-effort; failures
+	# here must not affect the realtime delivery above.
+	try:
+		_update_conversation_run_state(conversation_name, msg_type, data)
+	except Exception as e:
+		logger.warning(
+			"Failed to update run state on Alfred Conversation %s (msg_type=%s): %s",
+			conversation_name, msg_type, e,
+		)
+
 	# Persist chat / insights replies and plan docs as Alfred Message
 	# rows so the conversation scrollback survives page reload. None of
 	# them go through the changeset approval flow, so this is the only
@@ -182,6 +193,69 @@ def _route_incoming_message(message, user, conversation_name):
 			)
 		except Exception as e:
 			logger.error("Failed to store changeset: %s", e)
+
+
+# Message types that signal the run is done and the live ticker fields
+# on Alfred Conversation should be cleared so a post-run refresh does not
+# show a stale "Developer - generating..." label. `preview` / `changeset`
+# are included because once the crew has produced a changeset, the ticker
+# is no longer meaningful - the user is now reviewing, not waiting.
+_RUN_TERMINAL_TYPES = frozenset({
+	"error",
+	"run_cancelled",
+	"chat_reply",
+	"insights_reply",
+	"plan_doc",
+	"preview",
+	"changeset",
+})
+
+
+def _update_conversation_run_state(conversation_name, msg_type, data):
+	"""Update the refresh-safe run-state fields on an Alfred Conversation.
+
+	- `agent_status` carries the current agent name (and optional pipeline_mode).
+	  We cache both so the phase pipeline + "Basic Mode" badge rehydrate on
+	  reload.
+	- `agent_activity` carries the one-line ticker text. Cache it so the
+	  ticker reappears after a refresh mid-run.
+	- Any terminal event (see _RUN_TERMINAL_TYPES) clears current_agent and
+	  current_activity so the UI does not show stale phase state after the
+	  run has ended.
+
+	Best-effort: failures are swallowed by the caller; this is telemetry,
+	not critical path.
+	"""
+	payload = data or {}
+	updates: dict[str, object | None] = {}
+
+	if msg_type == "agent_status":
+		agent = payload.get("agent")
+		if agent:
+			updates["current_agent"] = agent
+		# The processing app emits pipeline_mode on the first status event
+		# of each run. Normalise to the select options on the doctype.
+		pipeline_mode = payload.get("pipeline_mode")
+		if pipeline_mode:
+			normalised = str(pipeline_mode).strip().lower()
+			if normalised == "full":
+				updates["pipeline_mode"] = "Full"
+			elif normalised == "lite":
+				updates["pipeline_mode"] = "Lite"
+	elif msg_type == "agent_activity":
+		message = payload.get("message") or payload.get("text") or payload.get("detail")
+		if message:
+			updates["current_activity"] = str(message)[:140]
+	elif msg_type in _RUN_TERMINAL_TYPES:
+		updates["current_agent"] = None
+		updates["current_activity"] = None
+
+	if not updates:
+		return
+
+	frappe.db.set_value(
+		"Alfred Conversation", conversation_name, updates, update_modified=False,
+	)
 
 
 def _store_agent_reply_message(conversation_name, msg_type, data):

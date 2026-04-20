@@ -11,6 +11,8 @@
 		"status",
 		"column_break_details",
 		"current_agent",
+		"current_activity",
+		"pipeline_mode",
 		"mode",
 		"requirement_summary_section",
 		"requirement_summary",
@@ -64,8 +66,23 @@
 			"fieldname": "current_agent",
 			"fieldtype": "Data",
 			"label": "Current Agent",
-			"description": "Name of the currently active agent in the pipeline",
+			"description": "Name of the currently active agent in the pipeline. Overwritten on each agent_status event; NULL when no run is in flight.",
 			"in_list_view": 1,
+			"read_only": 1
+		},
+		{
+			"fieldname": "current_activity",
+			"fieldtype": "Data",
+			"label": "Current Activity",
+			"description": "Last live-activity ticker text (e.g. 'Reading Leave Application schema'). Overwritten on each agent_activity event; NULL when no run is in flight. Used to rehydrate the ticker on page refresh.",
+			"read_only": 1
+		},
+		{
+			"fieldname": "pipeline_mode",
+			"fieldtype": "Select",
+			"label": "Pipeline Mode",
+			"options": "\nFull\nLite",
+			"description": "Pipeline mode of the most recent run. Captured from the first agent_status event so the phase pipeline UI renders the right number of phases after a refresh.",
 			"read_only": 1
 		},
 		{
