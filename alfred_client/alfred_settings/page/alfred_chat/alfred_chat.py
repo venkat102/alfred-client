@@ -259,6 +259,14 @@ def get_conversation_health(conversation):
 				job_running = True
 				break
 
+	# How many workers are actually serving the 'long' queue. If this is
+	# zero, no connection manager can run until the operator starts
+	# worker_long (Procfile + bench restart). This is usually the real
+	# root cause when background_job_running is false with queued items
+	# pending - surface it first so the health toast points at the fix.
+	from alfred_client.api.websocket_client import _long_queue_worker_count
+	long_worker_count = _long_queue_worker_count()
+
 	# Check Redis queue depth
 	redis_conn = frappe.cache()
 	queue_key = f"alfred:ws:outbound:queue:{conversation}"
@@ -286,6 +294,7 @@ def get_conversation_health(conversation):
 		"current_agent": conv.current_agent,
 		"last_message": last_msg[0] if last_msg else None,
 		"background_job_running": job_running,
+		"long_worker_count": long_worker_count,
 		"redis_queue_depth": queue_depth,
 		"processing_app_reachable": processing_app_ok,
 		"processing_app_error": processing_app_error,

@@ -429,6 +429,7 @@ onMounted(() => {
 onUnmounted(() => {
 	stopTimer();
 	stopPolling();
+	clearDisconnectWatchdog();
 	document.removeEventListener("click", handleDocumentClick);
 	document.removeEventListener("keydown", handleDocumentKey);
 	document.removeEventListener("mousemove", handleSplitterMove);
@@ -536,6 +537,7 @@ function openConversation(name) {
 	conversationStatus.value = "";
 	validatingChangeset.value = false;
 	rollbackInFlight.value = false;
+	clearDisconnectWatchdog();
 
 	// Three-mode chat (Phase D): restore the sticky mode for this
 	// conversation from the server-side record so navigating away and
@@ -561,6 +563,61 @@ function openConversation(name) {
 	// Without this the UI forgets everything on a mid-run refresh even though
 	// the pipeline is still running in the background.
 	rehydrateConversationState(name);
+
+	// Eagerly ensure the connection manager background job is running. This
+	// is idempotent server-side, so calling on every open is safe and it
+	// prevents "disconnected forever" state when a user opens an old
+	// conversation without sending a new message (the old model only started
+	// the manager inside send_message).
+	ensureConnectionManager(name);
+}
+
+function ensureConnectionManager(name) {
+	if (!name) return;
+	frappe.call({
+		method: "alfred_client.api.websocket_client.start_conversation",
+		args: { conversation_name: name },
+		callback: (r) => {
+			const status = r?.message?.status;
+			if (status === "no_worker") {
+				frappe.show_alert({
+					message: r.message.message || __(
+						"No background worker is running - contact your admin.",
+					),
+					indicator: "red",
+				});
+			}
+		},
+		error: () => { /* non-fatal; watchdog will nag if it stays disconnected */ },
+	});
+}
+
+// ── Disconnect watchdog ────────────────────────────────────────
+// If the WS stays disconnected for more than 15 seconds while a
+// conversation is open, try to restart the connection manager. The
+// server side is idempotent, so the retry is a safe no-op if a job
+// already came back up in the meantime. Auto-arms on every disconnect
+// event from setupRealtime and clears when the connection is healthy.
+let disconnectWatchdogTimer = null;
+
+function armDisconnectWatchdog() {
+	clearDisconnectWatchdog();
+	if (!currentConversation.value) return;
+	disconnectWatchdogTimer = setTimeout(() => {
+		// Only nag if still disconnected at fire time and a conversation
+		// is still open. Otherwise silently drop.
+		if (!currentConversation.value) return;
+		if (connectionState.value === "connected") return;
+		addActivity(__("Connection still down after 15s; attempting restart..."), "error");
+		ensureConnectionManager(currentConversation.value);
+	}, 15000);
+}
+
+function clearDisconnectWatchdog() {
+	if (disconnectWatchdogTimer) {
+		clearTimeout(disconnectWatchdogTimer);
+		disconnectWatchdogTimer = null;
+	}
 }
 
 function rehydrateConversationState(name) {
@@ -736,13 +793,24 @@ function checkHealth() {
 				? '<span style="color: var(--green-600); font-weight: 600;">&#10003; running</span>'
 				: '<span style="color: var(--red-600); font-weight: 600;">&#10007; not running</span>';
 
+			const workerCount = Number.isFinite(h.long_worker_count) ? h.long_worker_count : -1;
+			let workerStatus;
+			if (workerCount === -1) {
+				workerStatus = '<span class="text-muted">-</span>';
+			} else if (workerCount === 0) {
+				workerStatus = `<span style="color: var(--red-600); font-weight: 600;">&#10007; 0 workers</span>
+					<span class="text-muted" style="margin-left: 8px;">${__("worker_long not running - check Procfile + bench restart")}</span>`;
+			} else {
+				workerStatus = `<span style="color: var(--green-600); font-weight: 600;">&#10003; ${workerCount} worker(s)</span>`;
+			}
+
 			const depth = h.redis_queue_depth || 0;
 			const queueColor = depth === 0 ? "var(--green-600)" : "var(--orange-600)";
 			const queueLabel = depth === 0
 				? __("empty (drained or never had a message)")
 				: __("{0} message(s) waiting", [depth]);
 
-			const overallOk = h.processing_app_reachable && h.background_job_running;
+			const overallOk = h.processing_app_reachable && h.background_job_running && workerCount > 0;
 
 			frappe.msgprint({
 				title: __("Conversation Health"),
@@ -761,6 +829,10 @@ function checkHealth() {
 							<tr>
 								<td><strong>${__("Last Message")}</strong></td>
 								<td>${lastMsg}</td>
+							</tr>
+							<tr>
+								<td><strong>${__("Long-Queue Workers")}</strong></td>
+								<td>${workerStatus}</td>
 							</tr>
 							<tr>
 								<td><strong>${__("Background Job")}</strong></td>
@@ -1044,6 +1116,9 @@ function setupRealtime() {
 		// the user sees "Reading X..." frozen in place while the processing app is gone.
 		if (data.state === "failed" || data.state === "disconnected" || data.state === "stopped") {
 			currentActivity.value = null;
+			armDisconnectWatchdog();
+		} else {
+			clearDisconnectWatchdog();
 		}
 	});
 

@@ -700,14 +700,66 @@ def send_message(conversation_name, message, msg_type="prompt"):
 	redis_conn.publish(channel, "__notify__")
 
 
+def _long_queue_worker_count() -> int:
+	"""Return the number of RQ workers currently serving the 'long' queue
+	for this site. Zero means no background job can run until ops starts
+	`worker_long` in the Procfile (or the existing one is restarted).
+	"""
+	try:
+		from frappe.utils.background_jobs import get_workers
+
+		count = 0
+		for w in get_workers():
+			try:
+				names = list(w.queue_names())
+			except Exception:
+				names = []
+			if any("long" in (n or "") for n in names):
+				count += 1
+		return count
+	except Exception:
+		return -1  # unknown
+
+
+def _conversation_job_in_flight(conversation_name: str) -> bool:
+	"""Check whether a `_connection_manager` job for this conversation is
+	already queued or started on the long queue. Used to keep
+	start_conversation idempotent so repeated calls (on every openConversation,
+	on every send_message) do not stack redundant RQ jobs.
+	"""
+	try:
+		from frappe.utils.background_jobs import get_jobs
+
+		site_jobs = get_jobs(site=frappe.local.site, queue="long") or {}
+		for _site, jobs in site_jobs.items():
+			for job in jobs:
+				if isinstance(job, str):
+					if conversation_name in job:
+						return True
+				elif isinstance(job, dict):
+					name = job.get("job_name") or job.get("name") or ""
+					if conversation_name in str(name):
+						return True
+		return False
+	except Exception:
+		# On introspection failure, err on the side of enqueueing so the
+		# user is not blocked. Duplicate jobs are less bad than no jobs.
+		return False
+
+
 @frappe.whitelist()
 def start_conversation(conversation_name):
-	"""Start a WebSocket connection for a conversation.
+	"""Start (or re-use) the WebSocket connection manager for a conversation.
+
+	Idempotent: if a `_connection_manager` job is already queued or running
+	for `conversation_name`, this is a no-op so repeated calls do not stack
+	redundant RQ jobs (openConversation, send_message, and the UI watchdog
+	all call this safely).
 
 	Each active conversation consumes one slot on the 'long' RQ worker queue
-	for up to 7200s. If the user has more active conversations than the worker
-	can handle, the new job will queue indefinitely - we warn the user when we
-	detect the queue is already saturated.
+	for up to 7200s. If no worker is serving the long queue at all, we
+	surface that as an error rather than silently enqueueing a job that will
+	never run.
 
 	SECURITY:
 	  - Caller must have read permission on the conversation (owner, shared,
@@ -721,6 +773,12 @@ def start_conversation(conversation_name):
 	    shared conversation would silently run all MCP calls as the caller,
 	    letting the agent see data the owner can't and leaking it into the
 	    conversation.
+
+	Returns a small status dict so the UI can show a targeted toast:
+	  - {"status": "already_running"} - a manager is already in flight.
+	  - {"status": "enqueued"} - a new job was enqueued.
+	  - {"status": "no_worker"} - long queue has zero workers, job not
+	    enqueued; caller should prompt the operator to start worker_long.
 	"""
 	from alfred_client.api.permissions import validate_alfred_access
 	validate_alfred_access()
@@ -731,6 +789,30 @@ def start_conversation(conversation_name):
 	frappe.has_permission(
 		"Alfred Conversation", ptype="read", doc=conversation_name, throw=True,
 	)
+
+	# Idempotent: if a manager is already in flight, do nothing. This also
+	# stops repeated UI calls from piling up hundreds of jobs when
+	# worker_long is dead and jobs cannot drain.
+	if _conversation_job_in_flight(conversation_name):
+		return {"status": "already_running"}
+
+	worker_count = _long_queue_worker_count()
+	if worker_count == 0:
+		# No worker is serving the long queue. Enqueueing a job would just
+		# make it sit forever. Tell the caller so the UI can surface a
+		# clear "worker_long not running" toast instead of an invisible
+		# failure.
+		frappe.logger().error(
+			"Alfred: refusing to enqueue _connection_manager for %s - no worker is serving the 'long' queue",
+			conversation_name,
+		)
+		return {
+			"status": "no_worker",
+			"message": frappe._(
+				"No background worker is serving the 'long' RQ queue. "
+				"Ask your admin to start worker_long (check Procfile + bench restart)."
+			),
+		}
 
 	# The connection manager MUST run as the conversation's owner. MCP tool
 	# calls made from the processing app run under frappe.session.user inside
@@ -774,6 +856,7 @@ def start_conversation(conversation_name):
 		queue="long",
 		timeout=7200,
 	)
+	return {"status": "enqueued"}
 
 
 @frappe.whitelist()
