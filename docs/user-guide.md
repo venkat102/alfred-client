@@ -76,6 +76,10 @@ While Alfred is working on your request, a compact blue bar appears just above t
 
 This gives you concrete progress instead of a silent spinner - especially useful on long runs. The ticker disappears when the pipeline finishes.
 
+### Stop a run
+
+While a run is in flight the **Send** button is replaced with a **Stop** button. Clicking Stop sends a graceful cancel: the current agent phase completes, the pipeline exits cleanly, the conversation is marked **Cancelled**, and the chat shows a neutral "Run cancelled" system message. The WebSocket stays open so you can keep chatting in the same conversation. If the processing app is unreachable, the conversation is still marked Cancelled locally so the UI does not stay stuck on "In Progress".
+
 ### Left Panel
 - **Conversation list** - Shows your past conversations with the first message as a summary, status badge, and relative time. Click to open.
 - **Chat area** - When a conversation is open, shows the message thread and input box.
@@ -331,6 +335,7 @@ Your past conversations are listed with:
 | Escalated | Red | Too complex for AI | A human developer will handle it |
 | Failed | Red | Something went wrong | Read the error, retry or start over |
 | Stale | Gray | Inactive for 24+ hours | Open and continue, or start a new one |
+| Cancelled | Gray | You clicked Stop mid-run | Send a new prompt to continue in the same chat |
 
 ### Finding a Conversation
 

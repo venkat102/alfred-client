@@ -187,6 +187,21 @@ the error after the phase loop exits. Exception boundaries are centralised in
 `AgentPipeline.run()`: `asyncio.TimeoutError` -> `PIPELINE_TIMEOUT`, any other
 exception -> `PIPELINE_ERROR`. Every phase is unit-testable in isolation.
 
+### User-initiated cancel (graceful stop)
+
+The chat UI Stop button pushes a `{"type": "cancel"}` message through the
+existing durable Redis queue to `alfred_client.api.websocket_client.cancel_run`.
+The processing app's `_handle_custom_message` receives it, looks up
+`conn.active_pipeline_ctx`, and calls `ctx.stop("Cancelled by user",
+code="user_cancel")`. The pipeline loop checks `ctx.should_stop` at the next
+phase boundary and exits via the same `_send_error` path as any other stop.
+`_send_error` branches on the `user_cancel` code: instead of emitting a
+generic `error` WS event (which would trip the rescue/retry path and render
+a red banner) it emits a distinct `run_cancelled` event, which the client
+routes as `alfred_run_cancelled` and renders as a neutral system message.
+The Alfred Conversation row is marked `Cancelled` in the same request so
+the UI stays honest even if the processing app is unreachable.
+
 ## Multi-Model Tiers
 
 Standalone LLM calls (outside CrewAI) and CrewAI agents can use different
