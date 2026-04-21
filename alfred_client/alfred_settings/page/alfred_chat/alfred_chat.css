@@ -182,6 +182,14 @@ body.alfred-page-active .navbar-breadcrumbs { display: none; }
 	color: var(--alfred-mode-insights-fg);
 	border-color: var(--alfred-mode-insights-border);
 }
+/* "Finished" tone: graphite/slate, visually calmer than success-green.
+ * Used by PlanDocPanel's "Built" status chip so it reads as concluded
+ * work rather than another shade of the active-pipeline palette. */
+.alfred-chip--finished {
+	background: var(--gray-800, #374151);
+	color: var(--bg-color, #ffffff);
+	border-color: var(--gray-900, #111827);
+}
 
 /* Banner: one class with tone modifiers replaces validation-ok / warn,
  * deploy-success, status-rolled-back / rejected, saturation-amber / red. */

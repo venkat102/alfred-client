@@ -29,6 +29,38 @@ Alfred is an AI assistant that builds Frappe customizations through conversation
 
 ---
 
+## What the interface looks like
+
+The chat page follows a single design language across every surface so
+it is easy to learn once and scan fast after that:
+
+- **Gradient marks**. The "A" glyph in the left of the toolbar (chat
+  side, blue -> purple) and the round glyph in the preview panel
+  hero (teal -> violet) anchor each side so you always know which
+  pane you are looking at. Both pulse while a run is active.
+- **Mode chips**. Every message carries a small pill for its mode
+  (Auto / Dev / Plan / Insights) in the same four colors the mode
+  switcher uses, so you can scan the transcript and spot mode
+  changes at a glance.
+- **Tone-coded banners**. Green for success (validated, deployed),
+  blue for info (validating, waiting for you), orange for warn
+  (rolled back, cancelled, dry-run issues), red for danger (deploy
+  failed), gray for neutral (rejected). The four intents no longer
+  share colors.
+- **Step trails**. Both the toolbar phase pipeline and the preview
+  deploy stream use the same dot + pulse vocabulary - done rows go
+  green with a checkmark, the current row is blue with a pulsing
+  dot, upcoming rows stay muted, failed rows are red.
+- **Breadcrumb**. `Alfred > <conversation title>` sits inside the
+  toolbar; Frappe's empty breadcrumb strip above the page head is
+  hidden while the chat page is mounted.
+
+Screenshots (captured from a live session):
+
+![Welcome state](images/alfred-welcome.png)
+![Mid-run working state](images/alfred-working.png)
+![Deployed changeset](images/alfred-deployed.png)
+
 ## The Interface
 
 When you open `/app/alfred-chat`, you see two panels:
