@@ -963,39 +963,84 @@
 /* Progressive preview (UX-16) */
 .alfred-preview-progress-content { padding: 20px; text-align: center; }
 
-/* Deploy progress (UX-22) */
-.alfred-deploy-progress {
-	padding: 12px; background: var(--subtle-fg, #f8f8f8);
-	border-radius: 8px; margin-bottom: 16px;
+/* Status row: small mark + title OR small mark + banner, used by
+ * VALIDATING and DEPLOYING heros to keep continuity with the big
+ * pulsing mark of WORKING. */
+.alfred-preview-status-row {
+	display: flex; align-items: center; gap: 12px;
+	margin-bottom: 14px;
 }
-.alfred-deploy-progress h6 { margin-bottom: 8px; }
-.alfred-deploy-step { padding: 4px 0; font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.alfred-preview-status-row .alfred-banner { flex: 1; margin-bottom: 0; }
+.alfred-preview-steps-label { margin: 8px 2px; display: block; }
 
-/* Deploy success (UX-21) */
-.alfred-deploy-success {
-	padding: 12px; background: var(--green-50, #f0fdf4);
-	border: 1px solid var(--green-200, #bbf7d0); border-radius: 8px;
-	margin-bottom: 16px; text-align: center; font-weight: 500; color: var(--green-700, #15803d);
-}
-.alfred-status-rejected {
-	padding: 12px; background: var(--orange-50, #fff7ed);
-	border: 1px solid var(--orange-200, #fed7aa); border-radius: 8px;
-	text-align: center; font-weight: 500; color: var(--orange-700, #c2410c);
-}
-.alfred-status-rolled-back {
-	padding: 12px; background: var(--red-50, #fef2f2);
-	border: 1px solid var(--red-200, #fecaca); border-radius: 8px;
-	text-align: center; font-weight: 500; color: var(--red-700, #b91c1c);
-}
+/* DEPLOYING step rows slide in as the stream arrives. */
+.alfred-step--stream { animation: alfred-ticker-in 0.25s ease-out; }
+
+/* Detail table shared across type-specific preview breakdowns. */
 .alfred-detail-table { margin: 8px 0; font-size: 13px; }
 .alfred-detail-table td:first-child { width: 120px; font-weight: 500; }
 .alfred-msg-preview { margin: 8px 0; font-size: 13px; }
 .alfred-msg-preview .alfred-code-preview { padding: 8px; background: var(--subtle-fg, #f8f8f8); border-radius: 4px; font-size: 12px; max-height: 150px; overflow-y: auto; }
 
-/* Preview Actions */
+/* Preview Actions: row that holds Approve / Request Changes / Reject
+ * or the Rollback button. Sits at the bottom of the preview card. */
 .alfred-preview-actions {
 	display: flex; gap: 8px; padding: 12px 0;
 	border-top: 1px solid var(--border-color, #e2e2e2); flex-shrink: 0;
+}
+
+/* Primary / ghost button variants (extending .alfred-btn-primary from
+ * Phase 2). Approve uses --success; Request Changes / Rollback use
+ * --ghost; Reject uses --ghost--danger; Deploy Anyway (validation
+ * warnings) uses --warn. Consistent focus ring + disabled state. */
+.alfred-btn-primary--success {
+	background: linear-gradient(135deg, var(--green-500, #28a745), var(--green-600, #16a34a));
+	box-shadow: 0 2px 6px rgba(40, 167, 69, 0.24);
+}
+.alfred-btn-primary--success:hover { box-shadow: 0 3px 10px rgba(40, 167, 69, 0.32); }
+.alfred-btn-primary--success:focus-visible { outline: 2px solid var(--alfred-tone-success-200); outline-offset: 2px; }
+.alfred-btn-primary--warn {
+	background: linear-gradient(135deg, var(--orange-500, #f59e0b), var(--orange-600, #d97706));
+	box-shadow: 0 2px 6px rgba(245, 158, 11, 0.24);
+}
+.alfred-btn-primary--warn:hover { box-shadow: 0 3px 10px rgba(245, 158, 11, 0.32); }
+.alfred-btn-primary--warn:focus-visible { outline: 2px solid var(--alfred-tone-warn-200); outline-offset: 2px; }
+
+.alfred-btn-ghost {
+	display: inline-flex; align-items: center; justify-content: center;
+	gap: 6px; padding: 7px 14px; border-radius: 8px;
+	font-size: 12px; font-weight: 600; line-height: 1;
+	color: var(--text-color, #374151);
+	background: var(--bg-color, white);
+	border: 1px solid var(--border-color, #e5e7eb);
+	cursor: pointer; text-decoration: none;
+	transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.08s;
+}
+.alfred-btn-ghost:hover {
+	background: var(--alfred-tone-info-50);
+	border-color: var(--alfred-tone-info-200);
+	color: var(--alfred-tone-info-700);
+}
+.alfred-btn-ghost:active { transform: translateY(1px); }
+.alfred-btn-ghost:focus-visible { outline: 2px solid var(--alfred-tone-info-200); outline-offset: 2px; }
+.alfred-btn-ghost[disabled] { opacity: 0.6; cursor: not-allowed; }
+.alfred-btn-ghost--danger { color: var(--alfred-tone-danger-700); }
+.alfred-btn-ghost--danger:hover {
+	background: var(--alfred-tone-danger-50);
+	border-color: var(--alfred-tone-danger-200);
+	color: var(--alfred-tone-danger-700);
+}
+.alfred-btn-ghost--danger:focus-visible { outline: 2px solid var(--alfred-tone-danger-200); outline-offset: 2px; }
+
+/* Tiny inline spinner for in-flight actions (Rollback). */
+.alfred-btn-spinner {
+	width: 10px; height: 10px; border-radius: 50%;
+	border: 2px solid currentColor; border-right-color: transparent;
+	animation: alfred-btn-spin 0.7s linear infinite;
+	display: inline-block; flex-shrink: 0;
+}
+@keyframes alfred-btn-spin {
+	to { transform: rotate(360deg); }
 }
 
 /* ── Pipeline Mode Badge ───────────────────────────────────────── */
@@ -1067,28 +1112,14 @@
 	to { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Dry-Run Validation Banner ─────────────────────────────────── */
-.alfred-validation-banner {
-	margin-bottom: 12px; padding: 10px 14px; border-radius: 6px;
-	font-size: 13px; border: 1px solid transparent;
-}
-.alfred-validation-ok {
-	background: var(--green-50, #e8f5e9); color: var(--green-800, #1b5e20);
-	border-color: var(--green-200, #a5d6a7); font-weight: 500;
-}
-.alfred-validation-warn {
-	background: var(--orange-50, #fff3e0); color: var(--orange-900, #bf360c);
-	border-color: var(--orange-200, #ffcc80);
-}
-.alfred-validation-heading { font-weight: 500; margin-bottom: 6px; }
-.alfred-validation-issues {
-	margin: 6px 0 0 0; padding-left: 20px; font-size: 12px; max-height: 160px;
-	overflow-y: auto;
-}
-.alfred-validation-issues li { margin-bottom: 4px; line-height: 1.4; }
-.alfred-issue-critical { color: var(--red-700, #c62828); }
-.alfred-issue-critical strong { color: var(--red-800, #b71c1c); }
-.alfred-issue-warning { color: var(--orange-800, #e65100); }
+/* ── Dry-Run Validation Issue Tones ────────────────────────────────
+ * Issue <li> severity tones inside .alfred-banner__list. The old
+ * .alfred-validation-banner / -ok / -warn shells are retired in
+ * favor of .alfred-banner + tone modifiers. */
+.alfred-issue-critical { color: var(--alfred-tone-danger-700); }
+.alfred-issue-critical strong { color: var(--alfred-tone-danger-700); }
+.alfred-issue-warning { color: var(--alfred-tone-warn-700); }
+.alfred-issue-info { color: var(--alfred-tone-info-700); }
 
 /* ── Mobile ────────────────────────────────────────────────────── */
 @media (max-width: 768px) {

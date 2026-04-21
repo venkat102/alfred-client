@@ -59,87 +59,113 @@
 			</div>
 		</div>
 
-		<!-- VALIDATING: Approve clicked, second-pass dry-run in flight. -->
+		<!-- VALIDATING: Approve clicked, second-pass dry-run in flight.
+		     Hero mark keeps pulsing; info banner announces the second
+		     pass; the changeset body is shown in a muted card so the
+		     user understands this is the same payload being checked. -->
 		<div v-else-if="previewState === 'VALIDATING'" class="alfred-preview-content">
-			<div class="alfred-validation-banner alfred-validation-ok">
-				{{ __("Validating - checking the site one more time before deploy...") }}
-			</div>
-			<component :is="'div'" v-bind="$attrs">
-				<div class="alfred-preview-content-body alfred-preview-content-muted">
-					<div v-if="changeset">
-						<h5 class="alfred-preview-title">{{ __("Changeset Preview") }}</h5>
-						<div class="alfred-preview-summary">{{ __("{0} operation(s)", [changes.length]) }}</div>
-					</div>
+			<div class="alfred-preview-status-row">
+				<div class="alfred-mark alfred-mark--preview alfred-mark--sm alfred-mark-pulse" aria-hidden="true">&#9675;</div>
+				<div class="alfred-banner alfred-banner--info">
+					<span class="alfred-banner__icon" aria-hidden="true">&#9679;</span>
+					<div class="alfred-banner__body">{{ __("Validating - checking the site one more time before deploy...") }}</div>
 				</div>
-			</component>
+			</div>
+			<div v-if="changeset" class="alfred-card alfred-card--muted alfred-preview-content-body">
+				<h5 class="alfred-preview-title">{{ __("Changeset Preview") }}</h5>
+				<div class="alfred-preview-summary">{{ __("{0} operation(s)", [changes.length]) }}</div>
+			</div>
 		</div>
 
-		<!-- DEPLOYING: live deploy-progress stream. -->
+		<!-- DEPLOYING: live deploy-progress stream using the shared
+		     .alfred-step vocabulary. Each row slides in as the stream
+		     arrives (alfred-ticker-in keyframe). -->
 		<div v-else-if="previewState === 'DEPLOYING'" class="alfred-preview-content">
-			<div class="alfred-deploy-progress">
-				<h6>{{ __("Deploying...") }}</h6>
+			<div class="alfred-preview-status-row">
+				<div class="alfred-mark alfred-mark--preview alfred-mark--sm alfred-mark-pulse" aria-hidden="true">&#9675;</div>
+				<h5 class="alfred-preview-title-lg">{{ __("Deploying...") }}</h5>
+			</div>
+			<div class="alfred-preview-steps" role="list">
 				<div
 					v-for="step in deploySteps"
 					:key="step.step"
-					class="alfred-deploy-step"
-					:style="{ color: stepColor(step.status) }"
+					:class="[
+						'alfred-step', 'alfred-step--stream',
+						step.status === 'success' ? 'alfred-step--done' :
+						step.status === 'failed' ? 'alfred-step--failed' :
+						'alfred-step--current',
+					]"
+					role="listitem"
 				>
-					<span>{{ stepIcon(step.status) }}</span>
-					<span>Step {{ step.step }}/{{ step.total }}: {{ step.name || step.doctype }}</span>
+					<span class="alfred-step-dot" aria-hidden="true">{{ stepIcon(step.status) }}</span>
+					<span class="alfred-step-label">{{ __("Step") }} {{ step.step }}/{{ step.total }}: {{ step.name || step.doctype }}</span>
 				</div>
-				<div v-if="!deploySteps.length" class="text-muted" style="font-size: 12px;">
-					{{ __("Waiting for the first deploy step...") }}
+				<div v-if="!deploySteps.length" class="alfred-step alfred-step--current">
+					<span class="alfred-step-dot" aria-hidden="true">&#9679;</span>
+					<span class="alfred-step-label">{{ __("Waiting for the first deploy step...") }}</span>
 				</div>
 			</div>
 		</div>
 
 		<!-- PENDING / DEPLOYED / ROLLED_BACK / FAILED / REJECTED / CANCELLED
-		     all render the changeset body with a state-specific header. -->
+		     all render the changeset body with a state-specific banner. -->
 		<div v-else-if="changeset" class="alfred-preview-content">
-			<!-- State-specific header -->
-			<div v-if="previewState === 'PENDING' && changeset.dry_run_valid === 1" class="alfred-validation-banner alfred-validation-ok">
-				&#10003; {{ __("Validated - ready to deploy") }}
+			<!-- PENDING: validation banners (success if dry-run passed,
+			     warn with issue list if not) -->
+			<div v-if="previewState === 'PENDING' && changeset.dry_run_valid === 1" class="alfred-banner alfred-banner--success">
+				<span class="alfred-banner__icon" aria-hidden="true">&#10003;</span>
+				<div class="alfred-banner__body">{{ __("Validated - ready to deploy") }}</div>
 			</div>
-			<div v-else-if="previewState === 'PENDING' && dryRunIssues.length" class="alfred-validation-banner alfred-validation-warn">
-				<div class="alfred-validation-heading">
-					&#9888; {{ __("{0} validation issue(s) found - review before deploying", [dryRunIssues.length]) }}
+			<div v-else-if="previewState === 'PENDING' && dryRunIssues.length" class="alfred-banner alfred-banner--warn">
+				<span class="alfred-banner__icon" aria-hidden="true">&#9888;</span>
+				<div class="alfred-banner__body">
+					<strong>{{ __("{0} validation issue(s) found - review before deploying", [dryRunIssues.length]) }}</strong>
+					<ul class="alfred-banner__list">
+						<li v-for="(issue, i) in dryRunIssues" :key="i" :class="`alfred-issue-${issue.severity || 'warning'}`">
+							<strong>{{ (issue.severity || 'warning').toUpperCase() }}:</strong>
+							<span v-if="issue.doctype"> {{ issue.doctype }}<span v-if="issue.name"> ({{ issue.name }})</span> - </span>
+							{{ issue.issue || issue.message }}
+						</li>
+					</ul>
 				</div>
-				<ul class="alfred-validation-issues">
-					<li v-for="(issue, i) in dryRunIssues" :key="i" :class="`alfred-issue-${issue.severity || 'warning'}`">
-						<strong>{{ (issue.severity || 'warning').toUpperCase() }}:</strong>
-						<span v-if="issue.doctype"> {{ issue.doctype }}<span v-if="issue.name"> ({{ issue.name }})</span> - </span>
-						{{ issue.issue || issue.message }}
-					</li>
-				</ul>
 			</div>
 
-			<div v-if="previewState === 'DEPLOYED'" class="alfred-deploy-success" style="margin-bottom: 12px;">
-				&#10003; {{ __("Deployed successfully") }}
+			<!-- Terminal-state banners: one banner per state with its
+			     own tone so the three "red" states (FAILED crash vs
+			     user-initiated ROLLED_BACK vs REJECTED) read as
+			     visually distinct intents. -->
+			<div v-if="previewState === 'DEPLOYED'" class="alfred-banner alfred-banner--success">
+				<div class="alfred-mark alfred-mark--preview alfred-mark--sm" aria-hidden="true">&#10003;</div>
+				<div class="alfred-banner__body"><strong>{{ __("Deployed successfully") }}</strong></div>
 			</div>
-			<div v-else-if="previewState === 'ROLLED_BACK'" class="alfred-status-banner alfred-status-rolled-back" style="margin-bottom: 12px;">
-				&#8634; {{ __("Deployment rolled back") }}
+			<div v-else-if="previewState === 'ROLLED_BACK'" class="alfred-banner alfred-banner--warn">
+				<span class="alfred-banner__icon" aria-hidden="true">&#8634;</span>
+				<div class="alfred-banner__body">{{ __("Deployment rolled back") }}</div>
 			</div>
-			<div v-else-if="previewState === 'FAILED'" class="alfred-status-banner alfred-status-failed" style="margin-bottom: 12px;">
-				&#10007; {{ failureHeadline }}
+			<div v-else-if="previewState === 'FAILED'" class="alfred-banner alfred-banner--danger">
+				<span class="alfred-banner__icon" aria-hidden="true">&#10007;</span>
+				<div class="alfred-banner__body"><strong>{{ failureHeadline }}</strong></div>
 			</div>
-			<div v-else-if="previewState === 'REJECTED'" class="alfred-status-banner alfred-status-rejected" style="margin-bottom: 12px;">
-				&#10007; {{ __("Changeset rejected") }}
+			<div v-else-if="previewState === 'REJECTED'" class="alfred-banner alfred-banner--neutral">
+				<span class="alfred-banner__icon" aria-hidden="true">&#10007;</span>
+				<div class="alfred-banner__body">{{ __("Changeset rejected") }}</div>
 			</div>
-			<div v-else-if="previewState === 'CANCELLED'" class="alfred-status-banner alfred-status-rejected" style="margin-bottom: 12px;">
-				&#9888; {{ __("Run cancelled") }}
+			<div v-else-if="previewState === 'CANCELLED'" class="alfred-banner alfred-banner--warn">
+				<span class="alfred-banner__icon" aria-hidden="true">&#9888;</span>
+				<div class="alfred-banner__body">{{ __("Run cancelled") }}</div>
 			</div>
 
 			<!-- FAILED: brief excerpt of the failed deployment_log steps. -->
-			<div v-if="previewState === 'FAILED' && failedSteps.length" class="alfred-deploy-progress" style="margin-bottom: 12px;">
-				<h6>{{ __("Failed deploy steps") }}</h6>
+			<div v-if="previewState === 'FAILED' && failedSteps.length" class="alfred-preview-steps" role="list">
+				<div class="alfred-eyebrow alfred-preview-steps-label">{{ __("Failed deploy steps") }}</div>
 				<div
 					v-for="step in failedSteps"
 					:key="step.step || step.index"
-					class="alfred-deploy-step"
-					:style="{ color: stepColor(step.status || 'failed') }"
+					class="alfred-step alfred-step--failed"
+					role="listitem"
 				>
-					<span>{{ stepIcon(step.status || 'failed') }}</span>
-					<span>Step {{ step.step || step.index }}: {{ step.name || step.doctype }} - {{ step.error || step.message || __("failed") }}</span>
+					<span class="alfred-step-dot" aria-hidden="true">{{ stepIcon(step.status || 'failed') }}</span>
+					<span class="alfred-step-label">{{ __("Step") }} {{ step.step || step.index }}: {{ step.name || step.doctype }} - {{ step.error || step.message || __("failed") }}</span>
 				</div>
 			</div>
 
@@ -342,20 +368,25 @@
 			<!-- PENDING: Approve / Request Changes / Reject. -->
 			<div v-if="previewState === 'PENDING'" class="alfred-preview-actions">
 				<button
-					:class="['btn', 'btn-sm', changeset.dry_run_valid === 1 ? 'btn-success' : 'btn-warning']"
+					:class="[
+						changeset.dry_run_valid === 1
+							? 'alfred-btn-primary alfred-btn-primary--success'
+							: 'alfred-btn-primary alfred-btn-primary--warn',
+					]"
 					@click="$emit('approve')">
 					{{ changeset.dry_run_valid === 1 ? __("Approve & Deploy") : __("Deploy Anyway") }}
 				</button>
-				<button class="btn btn-default btn-sm" @click="$emit('modify')">{{ __("Request Changes") }}</button>
-				<button class="btn btn-danger btn-sm" @click="$emit('reject')">{{ __("Reject") }}</button>
+				<button class="alfred-btn-ghost" @click="$emit('modify')">{{ __("Request Changes") }}</button>
+				<button class="alfred-btn-ghost alfred-btn-ghost--danger" @click="$emit('reject')">{{ __("Reject") }}</button>
 			</div>
 
 			<!-- DEPLOYED: Rollback button if rollback_data exists. -->
 			<div v-else-if="previewState === 'DEPLOYED' && hasRollbackData" class="alfred-preview-actions">
 				<button
-					class="btn btn-default btn-sm"
+					class="alfred-btn-ghost"
 					:disabled="rollbackInFlight"
 					@click="$emit('rollback')">
+					<span v-if="rollbackInFlight" class="alfred-btn-spinner" aria-hidden="true"></span>
 					{{ rollbackInFlight ? __("Rolling back...") : __("Rollback") }}
 				</button>
 			</div>
