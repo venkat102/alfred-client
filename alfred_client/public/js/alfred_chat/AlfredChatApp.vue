@@ -192,6 +192,24 @@
 						</div>
 					</div>
 
+					<!-- Queue saturation banner - appears when start_conversation
+					     returned no_worker or the enqueued manager has not
+					     connected within SATURATION_WATCHDOG_MS. Clicking
+					     opens the Health dialog so the user can see the
+					     worker count and queue depth themselves. -->
+					<div
+						v-if="saturationBanner"
+						:class="['alfred-saturation-banner', `alfred-saturation-${saturationBanner.tone}`]"
+						role="button"
+						:tabindex="0"
+						:title="__('Click to open the Health dialog')"
+						@click="checkHealth"
+						@keydown.enter.space.prevent="checkHealth"
+					>
+						<span class="alfred-saturation-icon" aria-hidden="true">&#9888;</span>
+						<span class="alfred-saturation-text">{{ saturationBanner.text }}</span>
+					</div>
+
 					<!-- Live activity ticker - shows what the agent is doing right now -->
 					<div v-if="isProcessing && currentActivity" class="alfred-activity-ticker" :key="currentActivity">
 						<span class="alfred-activity-ticker-icon">&#9679;</span>
@@ -653,17 +671,79 @@ function ensureConnectionManager(name) {
 		callback: (r) => {
 			const status = r?.message?.status;
 			if (status === "no_worker") {
+				saturationReason.value = "no_worker";
+				clearSaturationWatchdog();
 				frappe.show_alert({
 					message: r.message.message || __(
 						"No background worker is running - contact your admin.",
 					),
 					indicator: "red",
 				});
+				return;
+			}
+			if (status === "already_running") {
+				// Manager exists; if we are actually connected this will be
+				// cleared by the realtime listener. Leave whatever banner
+				// state we have alone.
+				return;
+			}
+			if (status === "enqueued") {
+				// Freshly enqueued. Arm a watchdog: if we do not reach
+				// "connected" within SATURATION_WATCHDOG_MS, every worker is
+				// probably busy with a long-lived manager for another
+				// conversation, so warn the user rather than let them stare
+				// at a silent UI.
+				armSaturationWatchdog();
 			}
 		},
 		error: () => { /* non-fatal; watchdog will nag if it stays disconnected */ },
 	});
 }
+
+// ── Queue saturation banner ───────────────────────────────────
+// Shown above the input when either start_conversation returned
+// no_worker or the manager has been enqueued without connecting for
+// SATURATION_WATCHDOG_MS. The banner is informational: clicking it
+// opens the Health dialog so the user can see worker count + queue
+// depth themselves.
+const SATURATION_WATCHDOG_MS = 10000;
+const saturationReason = ref(null); // null | "waiting" | "no_worker"
+let saturationWatchdogTimer = null;
+
+function armSaturationWatchdog() {
+	clearSaturationWatchdog();
+	saturationWatchdogTimer = setTimeout(() => {
+		// Only flag if we still haven't connected by fire time. If the
+		// manager came up in the meantime, setupRealtime's "connected"
+		// listener will have already cleared the reason.
+		if (connectionState.value === "connected") return;
+		if (!currentConversation.value) return;
+		saturationReason.value = "waiting";
+	}, SATURATION_WATCHDOG_MS);
+}
+
+function clearSaturationWatchdog() {
+	if (saturationWatchdogTimer) {
+		clearTimeout(saturationWatchdogTimer);
+		saturationWatchdogTimer = null;
+	}
+}
+
+const saturationBanner = computed(() => {
+	if (saturationReason.value === "no_worker") {
+		return {
+			tone: "red",
+			text: __("No background worker is running. Open Health for details."),
+		};
+	}
+	if (saturationReason.value === "waiting") {
+		return {
+			tone: "amber",
+			text: __("Waiting for a worker - other conversations are holding the queue. Open Health for details."),
+		};
+	}
+	return null;
+});
 
 // ── Disconnect watchdog ────────────────────────────────────────
 // If the WS stays disconnected for more than 15 seconds while a
@@ -1192,6 +1272,13 @@ function setupRealtime() {
 			armDisconnectWatchdog();
 		} else {
 			clearDisconnectWatchdog();
+		}
+		// A "connected" event means the manager started and reached the
+		// processing app, so any saturation banner we were showing is now
+		// stale. Clear it.
+		if (data.state === "connected" || data.state === "starting") {
+			clearSaturationWatchdog();
+			saturationReason.value = null;
 		}
 	});
 

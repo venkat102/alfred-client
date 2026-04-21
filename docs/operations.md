@@ -291,29 +291,75 @@ bench restart
 
 ### Long queue saturated (queued jobs piling up)
 
-**Symptom**: `redis-cli -p 11000 LLEN 'rq:queue:<site>:long'` grows without
-bound; new chat conversations say "Warning: 10+ long-running jobs are
-already active".
+**Symptom**: the chat UI shows an amber banner above the input area
+reading "Waiting for a worker - other conversations are holding the
+queue"; new chat conversations stall on the first prompt; the Health
+dialog shows `Background Job: running` but the Redis queue depth stays
+at 1; `redis-cli -p 11000 LLEN 'rq:queue:<site>:long'` is greater than
+zero for several seconds.
 
-1. Check if users are opening conversations faster than the worker can
-   handle. Default bench has 1-3 `long` workers.
-2. Kill zombie connection managers:
-   ```bash
-   # List active long-queue jobs
-   redis-cli -p 11000 LRANGE 'rq:queue:<site>:long' 0 -1
-   ```
-3. **Nuclear option** - drain the queue entirely:
-   ```bash
-   # Only if you're sure everything in there is stale
-   redis-cli -p 11000 DEL 'rq:queue:<site>:long'
-   bench restart
-   ```
-   This kills every in-progress conversation. Users will need to retry.
-4. **Permanent fix** - add more workers:
-   ```
-   # In Procfile
-   worker_long_2: bench worker --queue long 1>> logs/worker_long_2.log 2>> logs/worker_long_2.error.log
-   ```
+Each active chat conversation occupies one slot on the `long` worker
+queue for up to ~1.75 hours (the connection manager's lifetime cap).
+When every slot is held and nothing is draining, new conversations are
+forced to wait.
+
+**Fast diagnosis** with the bundled bench command:
+
+```bash
+bench --site <site> alfred-reap
+```
+
+Dry-runs a list of every running and queued `_connection_manager` with
+its conversation ID and age, e.g.:
+
+```
+STATE    CONVERSATION       AGE      WORKER/JOB
+running  7shilmh6g3         5m 36s   e58192e0272f4e75bf2b63f02bfd8ad4
+queued   k0tw9nrb2x         12s      dev.alfred||37a2b8d7-6518-4def-9705-...
+```
+
+**Free a slot** by shutting down the managers that are idle (the
+conversation has not received a prompt in over an hour):
+
+```bash
+bench --site <site> alfred-reap --idle --yes
+```
+
+Or target a specific conversation by ID:
+
+```bash
+bench --site <site> alfred-reap --conv <conversation-id>
+```
+
+Or nuke all of them (prompts for confirmation unless you pass `--yes`):
+
+```bash
+bench --site <site> alfred-reap --all
+```
+
+Closed conversations reconnect automatically on next open, so reaping
+is safe - it only interrupts a manager that was about to time out
+anyway.
+
+**Permanent fix**: add more workers to `Procfile` so two idle managers
+can never block everyone. Paste beside the existing `worker_long:`:
+
+```
+worker_long_2: OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES NO_PROXY=* bench worker --queue long 1>> logs/worker_long_2.log 2>> logs/worker_long_2.error.log
+```
+
+Then `bench restart`. With 4 slots a single-user dev box effectively
+never hits the jam.
+
+**Nuclear option** - drain the queue entirely:
+
+```bash
+# Only if you're sure everything in there is stale
+redis-cli -p 11000 DEL 'rq:queue:<site>:long'
+bench restart
+```
+
+This kills every in-progress conversation. Users will need to retry.
 
 ### Alfred stops responding to one specific user
 

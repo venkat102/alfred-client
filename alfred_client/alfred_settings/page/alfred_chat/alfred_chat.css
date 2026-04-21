@@ -680,6 +680,33 @@
 	border: 1px solid var(--purple-200, #ce93d8);
 }
 
+/* ── Queue Saturation Banner ──────────────────────────────────────
+ * Appears above the live activity ticker when the backend has reported
+ * or inferred that no worker can start the user's connection manager
+ * right now. Amber when enqueued-but-waiting, red when no worker is
+ * serving the long queue at all. Clickable -> opens Health dialog. */
+.alfred-saturation-banner {
+	display: flex; align-items: center; gap: 8px;
+	padding: 8px 14px; margin: 0 12px 4px 12px;
+	border-radius: 6px; font-size: 12px; cursor: pointer;
+	user-select: none; transition: filter 0.15s;
+	animation: alfred-ticker-in 0.25s ease-out;
+}
+.alfred-saturation-banner:hover { filter: brightness(0.97); }
+.alfred-saturation-banner:focus { outline: 2px solid var(--blue-400, #60a5fa); outline-offset: 2px; }
+.alfred-saturation-amber {
+	background: var(--orange-50, #fff7ed);
+	color: var(--orange-800, #9a3412);
+	border-left: 3px solid var(--orange-500, #f59e0b);
+}
+.alfred-saturation-red {
+	background: var(--red-50, #fef2f2);
+	color: var(--red-800, #991b1b);
+	border-left: 3px solid var(--red-500, #ef4444);
+}
+.alfred-saturation-icon { font-size: 14px; flex-shrink: 0; }
+.alfred-saturation-text { line-height: 1.4; }
+
 /* ── Live Activity Ticker ──────────────────────────────────────── */
 .alfred-activity-ticker {
 	display: flex; align-items: center; gap: 8px;
