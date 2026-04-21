@@ -1,18 +1,62 @@
 <template>
 	<div class="alfred-preview" :data-preview-state="previewState">
 		<!-- EMPTY: no changeset, no run in flight. -->
-		<div v-if="previewState === 'EMPTY'" class="alfred-preview-empty">
-			<div class="text-muted text-center" style="padding: 60px 20px;">
-				<i class="fa fa-eye" style="font-size: 48px; margin-bottom: 16px; display: block; opacity: 0.3;"></i>
-				<h5>{{ __("Preview Panel") }}</h5>
-				<p>{{ emptyMessage }}</p>
+		<div v-if="previewState === 'EMPTY'" class="alfred-preview-empty-state">
+			<div class="alfred-preview-hero">
+				<div class="alfred-preview-mark" aria-hidden="true">&#9719;</div>
+				<h3 class="alfred-preview-title-lg">{{ __("Preview Panel") }}</h3>
+				<p class="alfred-preview-subtitle">{{ emptyMessage }}</p>
+			</div>
+			<div class="alfred-preview-hints">
+				<div class="alfred-preview-hints-label">{{ __("What lands here") }}</div>
+				<div class="alfred-preview-hint">
+					<span class="alfred-preview-hint-icon" aria-hidden="true">&#9634;</span>
+					<div>
+						<strong>{{ __("Proposed changes") }}</strong>
+						<p>{{ __("DocTypes, custom fields, notifications, scripts - each with a plain-English summary you can review.") }}</p>
+					</div>
+				</div>
+				<div class="alfred-preview-hint">
+					<span class="alfred-preview-hint-icon" aria-hidden="true">&#10003;</span>
+					<div>
+						<strong>{{ __("Approve, modify, or reject") }}</strong>
+						<p>{{ __("Nothing touches your site until you click Approve and Deploy.") }}</p>
+					</div>
+				</div>
+				<div class="alfred-preview-hint">
+					<span class="alfred-preview-hint-icon" aria-hidden="true">&#8634;</span>
+					<div>
+						<strong>{{ __("Roll back anytime") }}</strong>
+						<p>{{ __("Every deployment captures a rollback plan - one click undoes it.") }}</p>
+					</div>
+				</div>
 			</div>
 		</div>
 
 		<!-- WORKING: run in flight, no changeset yet. Show last known phase. -->
-		<div v-else-if="previewState === 'WORKING'" class="alfred-preview-progress-content text-center" style="padding: 40px;">
-			<h5 class="alfred-preview-title">{{ phaseTitle }}</h5>
-			<p class="text-muted">{{ phaseDescription }}</p>
+		<div v-else-if="previewState === 'WORKING'" class="alfred-preview-working">
+			<div class="alfred-preview-hero">
+				<div class="alfred-preview-mark alfred-preview-mark-pulse" aria-hidden="true">&#9675;</div>
+				<h3 class="alfred-preview-title-lg">{{ phaseTitle }}</h3>
+				<p class="alfred-preview-subtitle">{{ phaseDescription || __("Alfred is working on it...") }}</p>
+			</div>
+			<div class="alfred-preview-steps" role="list">
+				<div
+					v-for="step in phaseSteps"
+					:key="step.key"
+					class="alfred-preview-step"
+					:class="{
+						'alfred-preview-step-current': step.current,
+						'alfred-preview-step-done': step.done,
+					}"
+					role="listitem"
+				>
+					<span class="alfred-preview-step-dot" aria-hidden="true">
+						{{ step.done ? '\u2713' : (step.current ? '\u25CF' : '\u25CB') }}
+					</span>
+					<span class="alfred-preview-step-label">{{ step.label }}</span>
+				</div>
+			</div>
 		</div>
 
 		<!-- VALIDATING: Approve clicked, second-pass dry-run in flight. -->
@@ -354,6 +398,30 @@ const PHASE_INFO = {
 
 const phaseTitle = computed(() => PHASE_INFO[props.currentPhase]?.title || "Processing...");
 const phaseDescription = computed(() => PHASE_INFO[props.currentPhase]?.desc || "");
+
+// Ordered step list for the WORKING-state pipeline visualization. Each
+// step is marked done / current / pending based on the agent's current
+// phase, so the user sees an always-advancing progress trail rather than
+// a static "Alfred is working" line.
+const PHASE_ORDER = [
+	{ key: "requirement", label: __("Gathering requirements") },
+	{ key: "assessment", label: __("Checking feasibility") },
+	{ key: "architecture", label: __("Designing solution") },
+	{ key: "development", label: __("Generating code") },
+	{ key: "testing", label: __("Validating") },
+	{ key: "deployment", label: __("Preparing deployment") },
+];
+const phaseSteps = computed(() => {
+	const current = props.currentPhase;
+	const idx = PHASE_ORDER.findIndex((s) => s.key === current);
+	return PHASE_ORDER.map((s, i) => ({
+		...s,
+		// If we haven't seen a recognised phase yet, mark the first as current
+		// so the trail still has a focal point instead of six dim dots.
+		done: idx >= 0 && i < idx,
+		current: idx >= 0 ? i === idx : i === 0,
+	}));
+});
 
 // ── State machine ──────────────────────────────────────────────
 //
@@ -842,6 +910,103 @@ function stepColor(status) {
 </script>
 
 <style scoped>
+/* ── Empty / Working hero states ───────────────────────────────────
+ * Matches the chat-side empty-state language: gradient mark, centered
+ * title + subtitle. Different hue (teal -> violet) so the two panels
+ * feel related but distinct at a glance. */
+.alfred-preview-empty-state,
+.alfred-preview-working {
+	display: flex; flex-direction: column; align-items: center;
+	justify-content: center; gap: 28px; padding: 32px 16px;
+	min-height: 100%; text-align: center;
+}
+.alfred-preview-hero { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.alfred-preview-mark {
+	width: 56px; height: 56px; border-radius: 16px;
+	display: flex; align-items: center; justify-content: center;
+	font-size: 26px; font-weight: 700; color: white;
+	background: linear-gradient(135deg, #14b8a6, #7c3aed);
+	box-shadow: 0 6px 18px rgba(20, 184, 166, 0.22);
+	line-height: 1;
+}
+.alfred-preview-mark-pulse {
+	animation: alfred-preview-pulse 1.6s ease-in-out infinite;
+}
+@keyframes alfred-preview-pulse {
+	0%, 100% { box-shadow: 0 6px 18px rgba(20, 184, 166, 0.22); transform: scale(1); }
+	50%      { box-shadow: 0 8px 26px rgba(124, 58, 237, 0.38); transform: scale(1.05); }
+}
+.alfred-preview-title-lg {
+	margin: 4px 0 0; font-size: 18px; font-weight: 600;
+	color: var(--text-color, #333);
+}
+.alfred-preview-subtitle {
+	margin: 0; max-width: 420px; font-size: 13px;
+	color: var(--text-muted, #6b7280); line-height: 1.5;
+}
+
+/* EMPTY hints: three rows describing what the panel is for. Uses the same
+ * pill-card shape as the chat's starter prompts but non-interactive. */
+.alfred-preview-hints {
+	display: flex; flex-direction: column; gap: 10px;
+	width: 100%; max-width: 480px; text-align: left;
+}
+.alfred-preview-hints-label {
+	font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+	color: var(--text-muted, #9ca3af); margin-bottom: 2px;
+	padding-left: 4px;
+}
+.alfred-preview-hint {
+	display: flex; gap: 12px; padding: 12px 14px;
+	background: var(--bg-color, white);
+	border: 1px solid var(--border-color, #e2e2e2); border-radius: 10px;
+	font-size: 13px; line-height: 1.5;
+}
+.alfred-preview-hint strong { display: block; color: var(--text-color, #333); margin-bottom: 2px; }
+.alfred-preview-hint p { margin: 0; color: var(--text-muted, #6b7280); font-size: 12px; }
+.alfred-preview-hint-icon {
+	flex-shrink: 0; width: 28px; height: 28px; border-radius: 8px;
+	display: flex; align-items: center; justify-content: center;
+	font-size: 14px; color: var(--blue-600, #2563eb);
+	background: var(--blue-50, #eff6ff);
+}
+
+/* WORKING pipeline: ordered step list with current highlighted. */
+.alfred-preview-steps {
+	display: flex; flex-direction: column; gap: 8px;
+	width: 100%; max-width: 360px; text-align: left;
+	padding: 8px 0;
+}
+.alfred-preview-step {
+	display: flex; align-items: center; gap: 10px;
+	padding: 8px 12px; border-radius: 8px;
+	font-size: 13px; color: var(--text-muted, #9ca3af);
+	background: transparent;
+	transition: background 0.2s, color 0.2s;
+}
+.alfred-preview-step-dot {
+	display: inline-flex; align-items: center; justify-content: center;
+	width: 18px; height: 18px; font-size: 11px; flex-shrink: 0;
+}
+.alfred-preview-step-done {
+	color: var(--green-600, #059669);
+}
+.alfred-preview-step-done .alfred-preview-step-dot {
+	color: var(--green-600, #059669);
+}
+.alfred-preview-step-current {
+	color: var(--text-color, #111827); font-weight: 600;
+	background: var(--blue-50, #eff6ff);
+}
+.alfred-preview-step-current .alfred-preview-step-dot {
+	color: var(--blue-600, #2563eb);
+	animation: alfred-step-pulse 1.2s ease-in-out infinite;
+}
+@keyframes alfred-step-pulse {
+	0%, 100% { opacity: 1; transform: scale(1); }
+	50%      { opacity: 0.6; transform: scale(1.15); }
+}
+
 /* Plain-English description card (one per changeset item) */
 .alfred-describe-card {
 	margin: 10px 0;
