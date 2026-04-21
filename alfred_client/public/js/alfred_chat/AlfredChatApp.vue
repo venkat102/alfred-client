@@ -131,6 +131,34 @@
 						</div>
 					</div>
 					<div ref="messagesContainer" class="alfred-messages">
+						<!-- Empty-state welcome shown on a fresh conversation with
+						     no messages yet. Hides the moment the first user
+						     prompt or system row lands in messages[]. -->
+						<div
+							v-if="!messages.length && !isProcessing"
+							class="alfred-empty-state"
+						>
+							<div class="alfred-empty-hero">
+								<div class="alfred-empty-mark" aria-hidden="true">A</div>
+								<h3 class="alfred-empty-title">{{ emptyGreeting }}</h3>
+								<p class="alfred-empty-subtitle">{{ emptySubtitle }}</p>
+							</div>
+							<div class="alfred-empty-prompts">
+								<div class="alfred-empty-prompts-label">
+									{{ __("Try one of these") }}
+								</div>
+								<button
+									v-for="(prompt, i) in emptyPrompts"
+									:key="i"
+									type="button"
+									class="alfred-empty-prompt"
+									@click="sendMessage(prompt)"
+								>
+									<span class="alfred-empty-prompt-icon" aria-hidden="true">&rsaquo;</span>
+									<span class="alfred-empty-prompt-text">{{ prompt }}</span>
+								</button>
+							</div>
+						</div>
 						<MessageBubble
 							v-for="msg in messages"
 							:key="msg.name || msg._id"
@@ -367,6 +395,51 @@ const liteBadgeTooltip = computed(() => {
 	}
 	return __("Basic mode is configured in Alfred Settings. Single-agent fast pipeline - ~5× faster, best for simple customizations. Switch to Full in Alfred Settings for complex workflows.");
 });
+
+// Empty-state welcome content. Re-evaluated when the user flips the mode
+// switcher so the greeting and starter prompts match the chosen lane.
+const EMPTY_STARTERS = {
+	auto: [
+		__("Add a 'Priority' custom field on Task with High, Medium, Low"),
+		__("Show top 10 customers by revenue this quarter"),
+		__("Outline an approval workflow for Material Request"),
+		__("Notify sales team when a Lead has no activity for 7 days"),
+	],
+	dev: [
+		__("Add a 'Delivery Priority' custom field on Sales Order"),
+		__("Create a notification when a Purchase Order exceeds 100,000"),
+		__("Restrict Salary Structure read access to HR Manager only"),
+		__("Add a print format for Sales Invoice with our company logo"),
+	],
+	plan: [
+		__("Plan an approval workflow for expense claims over 50,000"),
+		__("Draft a 'Vendor Onboarding' module with fields and permissions"),
+		__("Outline a migration to add multi-warehouse support to Stock Entry"),
+		__("Design a weekly sales digest for regional managers"),
+	],
+	insights: [
+		__("Show top 10 customers by revenue this quarter"),
+		__("Compare this month's sales to the same month last year"),
+		__("What's our outstanding AR by age bucket?"),
+		__("Which items had stock-outs in the last 30 days?"),
+	],
+};
+const EMPTY_SUBTITLES = {
+	auto: __("Ask me to build, plan, or analyze. I'll pick the right path."),
+	dev: __("Tell me what to build or change, and I'll ship a reviewable changeset."),
+	plan: __("Describe what you want, and I'll draft a plan before touching code."),
+	insights: __("Ask a question about your data, and I'll run the numbers."),
+};
+const emptyGreeting = computed(() => {
+	const name = (frappe.boot && frappe.boot.user && frappe.boot.user.first_name) || "";
+	return name ? __("Hi {0}, I'm Alfred.", [name]) : __("Hi, I'm Alfred.");
+});
+const emptySubtitle = computed(
+	() => EMPTY_SUBTITLES[currentMode.value] || EMPTY_SUBTITLES.auto,
+);
+const emptyPrompts = computed(
+	() => EMPTY_STARTERS[currentMode.value] || EMPTY_STARTERS.auto,
+);
 
 function addActivity(text, level = "info") {
 	const now = new Date();
