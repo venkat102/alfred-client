@@ -726,20 +726,21 @@ def _conversation_job_in_flight(conversation_name: str) -> bool:
 	already queued or started on the long queue. Used to keep
 	start_conversation idempotent so repeated calls (on every openConversation,
 	on every send_message) do not stack redundant RQ jobs.
+
+	Uses get_jobs(key="conversation_name") which walks each job's nested
+	kwargs for the "conversation_name" key - the one Alfred passes when
+	enqueueing _connection_manager. Jobs without that kwarg (Frappe search
+	indexing, etc.) are naturally excluded.
 	"""
 	try:
 		from frappe.utils.background_jobs import get_jobs
 
-		site_jobs = get_jobs(site=frappe.local.site, queue="long") or {}
-		for _site, jobs in site_jobs.items():
-			for job in jobs:
-				if isinstance(job, str):
-					if conversation_name in job:
-						return True
-				elif isinstance(job, dict):
-					name = job.get("job_name") or job.get("name") or ""
-					if conversation_name in str(name):
-						return True
+		site_jobs = get_jobs(
+			site=frappe.local.site, queue="long", key="conversation_name"
+		) or {}
+		for conv_names in site_jobs.values():
+			if conversation_name in conv_names:
+				return True
 		return False
 	except Exception:
 		# On introspection failure, err on the side of enqueueing so the
@@ -827,22 +828,29 @@ def start_conversation(conversation_name):
 			frappe._("Conversation {0} has no owner recorded").format(conversation_name)
 		)
 
-	# Soft check: count queued + started jobs on the long queue for this site.
-	# If we're at/above the worker count, the new job will sit idle and the user
-	# will see nothing happen. Surface that as a clear error.
+	# Soft check: count distinct Alfred conversations with a queued/started
+	# connection manager. Pulling by key="conversation_name" naturally skips
+	# unrelated long-queue jobs (Frappe search indexing, etc.) since only
+	# Alfred's _connection_manager enqueues with that kwarg. Deduping on the
+	# set also stops legacy duplicate jobs (from before the idempotency
+	# guard landed) from inflating the count.
 	try:
 		from frappe.utils.background_jobs import get_jobs
-		site_jobs = get_jobs(site=frappe.local.site, queue="long")
-		long_queue_jobs = sum(len(jobs) for jobs in site_jobs.values())
-		# Rough heuristic: alert above 10 concurrent long-queue jobs since the
-		# default bench worker count is 1-3 for the long queue.
-		if long_queue_jobs > 10:
+		site_jobs = get_jobs(
+			site=frappe.local.site, queue="long", key="conversation_name"
+		) or {}
+		distinct_convs: set[str] = set()
+		for conv_names in site_jobs.values():
+			for cname in conv_names:
+				if cname:
+					distinct_convs.add(cname)
+		if len(distinct_convs) > 10:
 			frappe.msgprint(
 				frappe._(
-					"Warning: {0} long-running jobs are already active. "
+					"Warning: {0} active Alfred conversations are already running. "
 					"This conversation may take longer to start - close unused "
 					"conversations if it doesn't start within 30 seconds."
-				).format(long_queue_jobs),
+				).format(len(distinct_convs)),
 				indicator="orange",
 				alert=True,
 			)
