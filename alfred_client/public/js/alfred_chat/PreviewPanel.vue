@@ -211,7 +211,40 @@
 						<summary class="alfred-details-summary">{{ __("Technical details") }}</summary>
 
 					<!-- Fields table for DocTypes -->
-					<table v-if="type === 'DocType' && item.data" class="table table-sm alfred-detail-table">
+					<!--
+						When Alfred's per-intent DocType Builder has populated
+						field_defaults_meta, render every shape-defining field
+						unconditionally with a "default" pill on rows the LLM
+						(or the defaults-backfill post-processor) sourced from
+						the registry. Hover the pill for the rationale.
+
+						If field_defaults_meta is absent, fall back to the
+						legacy v-if-on-truthy rendering - keeps non-DocType-
+						Builder changesets displaying the same way.
+					-->
+					<div v-if="type === 'DocType' && item.field_defaults_meta" class="alfred-defaults-banner">
+						{{ __("Alfred filled the fields below using sensible defaults where you didn't specify one. If any look wrong, say so in your next message.") }}
+					</div>
+					<table v-if="type === 'DocType' && item.data && item.field_defaults_meta" class="table table-sm alfred-detail-table">
+						<tbody>
+							<tr v-for="key in DOCTYPE_REGISTRY_KEYS" :key="key">
+								<td class="text-muted">
+									{{ DOCTYPE_REGISTRY_LABELS[key] }}
+									<span
+										v-if="isDefaulted(item, key)"
+										class="alfred-default-pill"
+										:title="defaultRationale(item, key) || ''"
+									>{{ __("default") }}</span>
+								</td>
+								<td>
+									<span v-if="key === 'permissions'">{{ permissionsSummary(item.data[key]) }}</span>
+									<code v-else-if="key === 'autoname'">{{ item.data[key] }}</code>
+									<span v-else>{{ fieldDisplayValue(item.data[key], key) }}</span>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+					<table v-else-if="type === 'DocType' && item.data" class="table table-sm alfred-detail-table">
 						<tbody>
 							<tr v-if="item.data.module"><td class="text-muted">Module</td><td>{{ item.data.module }}</td></tr>
 							<tr v-if="item.data.naming_rule"><td class="text-muted">Naming Rule</td><td>{{ item.data.naming_rule }}</td></tr>
@@ -574,6 +607,58 @@ const groupedChanges = computed(() => {
 	});
 	return groups;
 });
+
+// ── Per-intent Builder defaults review (DocType) ──────────────────
+//
+// When alfred-processing runs with ALFRED_PER_INTENT_BUILDERS=1 and the
+// prompt is classified as create_doctype, each ChangesetItem gains a
+// field_defaults_meta dict recording which shape-defining fields were
+// sourced from the user vs. from the intent registry (with a rationale
+// for each defaulted field). See
+// docs/specs/2026-04-21-doctype-builder-specialist.md in the
+// alfred-processing repo for the full shape.
+//
+// The registry lives in alfred-processing; these arrays mirror the
+// create_doctype registry's `fields[].key` / `.label` so the UI can
+// render the table order and labels without fetching the registry.
+const DOCTYPE_REGISTRY_KEYS = [
+	"module",
+	"is_submittable",
+	"autoname",
+	"istable",
+	"issingle",
+	"permissions",
+];
+const DOCTYPE_REGISTRY_LABELS = {
+	module: __("Module"),
+	is_submittable: __("Submittable?"),
+	autoname: __("Naming rule"),
+	istable: __("Child table?"),
+	issingle: __("Singleton?"),
+	permissions: __("Permissions"),
+};
+
+function isDefaulted(item, key) {
+	return item?.field_defaults_meta?.[key]?.source === "default";
+}
+
+function defaultRationale(item, key) {
+	return item?.field_defaults_meta?.[key]?.rationale || "";
+}
+
+function fieldDisplayValue(value, key) {
+	if (value === null || value === undefined || value === "") return __("(empty)");
+	// check-typed registry fields store 0/1 in Frappe; show Yes/No for readability
+	if (["is_submittable", "istable", "issingle"].includes(key)) {
+		return value ? __("Yes") : __("No");
+	}
+	return String(value);
+}
+
+function permissionsSummary(perms) {
+	if (!Array.isArray(perms) || perms.length === 0) return __("(none)");
+	return perms.map((p) => p.role || "(unnamed)").join(", ");
+}
 
 // Fields to hide in generic key-value display (internal/noisy fields)
 const HIDDEN_FIELDS = new Set(["doctype", "name", "owner", "creation", "modified", "modified_by", "idx", "docstatus"]);
@@ -941,6 +1026,36 @@ function stepColor(status) {
 </script>
 
 <style scoped>
+/* ── Per-intent Builder defaults review ───────────────────────────
+ * When alfred-processing annotates a DocType changeset item with
+ * field_defaults_meta, the technical-details table renders every
+ * shape-defining field with a "default" pill on rows whose value was
+ * filled from the intent registry rather than the user. Hover the pill
+ * to see the registry rationale. */
+.alfred-defaults-banner {
+	background: #f0f7ff;
+	border: 1px solid #cfe3ff;
+	border-radius: 4px;
+	padding: 8px 12px;
+	margin: 8px 0;
+	font-size: 12px;
+	color: #334;
+}
+.alfred-default-pill {
+	display: inline-block;
+	background: #eef;
+	color: #334;
+	font-size: 10px;
+	font-weight: 500;
+	text-transform: lowercase;
+	padding: 1px 6px;
+	border-radius: 10px;
+	margin-left: 6px;
+	cursor: help;
+	vertical-align: middle;
+}
+.alfred-default-pill:hover { background: #dde; }
+
 /* ── Empty / Working hero states ───────────────────────────────────
  * Matches the chat-side empty-state language: gradient mark, centered
  * title + subtitle. Different hue (teal -> violet) so the two panels
