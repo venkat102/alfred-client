@@ -91,7 +91,7 @@ this by loading the owner from `Alfred Conversation` before generating the JWT.
 |------|------------|
 | `auth_success` | Handshake accepted |
 | `agent_status` | Phase / agent status update. Includes `phase`, `pipeline_mode`, `pipeline_mode_source`. |
-| `agent_activity` | Live MCP tool call description (for the activity ticker) |
+| `agent_activity` | Live MCP tool call description. The client renders it inside the floating status pill during processing. |
 | `minimality_review` | Reflection step dropped one or more items from the changeset. Includes the dropped items + reasons. |
 | `clarify` | Clarifier is asking a question or announcing done. |
 | `validation` | Dry-run validation status update. |
@@ -506,8 +506,8 @@ Returns:
 ```
 
 The chat UI calls this right after `get_messages` on `openConversation`.
-Restores the preview panel, the active phase pill, and the processing flag
-so a mid-run refresh doesn't drop to an idle screen.
+Restores the preview drawer, the floating status pill, and the
+processing flag so a mid-run refresh doesn't drop to an idle screen.
 
 ---
 

@@ -76,15 +76,15 @@ able to describe what a user sees at every point in a conversation.
 ### 4. [user-guide.md](user-guide.md) - 20 minutes
 
 The most important functional doc. Walks through the chat UI, the
-preview panel, the approval flow, the status badges, the error messages,
-and rollback. Covers the Basic mode badge (lite pipeline selection),
-the live activity ticker, and the conversation list.
+preview drawer, the approval flow, the status badges, the error
+messages, and rollback. Covers the Basic mode badge (lite pipeline
+selection), the floating status pill, and the conversation list.
 
 **What to focus on**: "Your First Conversation" (step-by-step), "When
-Things Go Wrong" (error catalogue), and "The Interface" (preview panel
-layout).
+Things Go Wrong" (error catalogue), and "The Interface" (single-column
+shell + slide-in drawer).
 
-**What to skip on first pass**: the detailed preview-panel section for
+**What to skip on first pass**: the detailed preview-drawer section for
 every DocType (Workflow states / Server Script body / Custom Field
 options). Skim it - you'll internalise the details when you first see
 them in a live run.

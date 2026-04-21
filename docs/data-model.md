@@ -76,7 +76,7 @@ or `"insights_reply"`).
 
 ### Alfred Changeset
 
-The proposed changes from one pipeline run. Shows in the preview panel.
+The proposed changes from one pipeline run. Shown in the preview drawer.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|

@@ -121,28 +121,46 @@ something to show.
 
 While a run is in flight the **Send** button is replaced with a **Stop** button. Clicking Stop sends a graceful cancel: the current agent phase completes, the pipeline exits cleanly, the conversation is marked **Cancelled**, and the chat shows a neutral "Run cancelled" system message. The WebSocket stays open so you can keep chatting in the same conversation. If the processing app is unreachable, the conversation is still marked Cancelled locally so the UI does not stay stuck on "In Progress".
 
-### Resizable panels
+### Transcript + drawer scroll independently
 
-The chat and preview panels scroll independently and can be resized by dragging the thin vertical bar between them. Your split is remembered across reloads. On narrow screens (below ~768px wide) the panels stack vertically and the resize handle is hidden.
+The transcript fills the page width and scrolls on its own. The preview
+drawer slides in from the right when there is something to review; on
+desktop the chat area shoves left by the drawer width so both stay
+readable side-by-side, and on mobile (below ~768px wide) the drawer
+becomes a full-screen modal with a dimming scrim.
 
 ### Refresh during a run
 
-Refreshing the page at any point keeps everything you had on screen. The chat transcript, the current phase pipeline, the agent activity ticker, and the preview panel all rebuild from the server. What you see after a refresh:
+Refreshing the page at any point keeps everything you had on screen.
+The chat transcript, the floating status pill, and the preview drawer
+all rebuild from the server. What you see after a refresh:
 
-- **Mid-run**: the phase pipeline picks up where it was; the ticker shows the last-known agent activity; the status bar reads "... is working...".
-- **Awaiting review**: the Pending changeset is re-rendered with its Approve / Reject / Request Changes buttons.
-- **After deploy**: the deployed changeset is shown read-only with a green "Deployed successfully" banner and a **Rollback** button (when rollback data is available).
-- **After rollback**: a neutral "Deployment rolled back" banner replaces the Deployed banner.
-- **After a deploy failure**: a red "Deploy failed - rolled back" banner lists the failed steps.
-- **After Stop**: the conversation reads **Cancelled** with a neutral message; send a new prompt to continue in the same conversation.
+- **Mid-run**: the status pill picks up where it was - pulsing mark +
+  live agent name + last-known activity phrase. Click the pill to
+  expand the full six-step pipeline popover.
+- **Awaiting review**: the Pending changeset is re-rendered inside
+  the drawer with its Approve / Reject / Request Changes buttons. The
+  drawer auto-opens on reload so you see it without any extra clicks.
+- **After deploy**: the deployed changeset is shown read-only in the
+  drawer with a green "Deployed successfully" banner and a
+  **Rollback** button (when rollback data is available).
+- **After rollback**: a neutral "Deployment rolled back" banner
+  replaces the Deployed banner inside the drawer.
+- **After a deploy failure**: a red "Deploy failed - rolled back"
+  banner lists the failed steps inside the drawer.
+- **After Stop**: the conversation reads **Cancelled** with a neutral
+  message in the pill's outcome flash; send a new prompt to continue
+  in the same conversation.
 
-### Left Panel
-- **Conversation list** - Shows your past conversations with the first message as a summary, status badge, and relative time. Click to open.
-- **Chat area** - When a conversation is open, shows the message thread and input box.
+### Conversation list (no-chat route)
+- Shows your past conversations with the first message as a summary, a mode chip, a status chip, and relative time. Click to open.
+- When you open a conversation, the list is replaced by the single-column chat shell (topbar + transcript + composer).
 
-### Right Panel
-- **Preview** - Empty until Alfred has something to show. During early phases, shows what Alfred is doing ("Gathering Requirements...", "Designing Solution..."). Once a changeset is ready, shows DocType field tables, script code, and permission grids.
-- **Action buttons** - Appear when a changeset is ready for your review.
+### Preview drawer
+- Auto-opens when Alfred has something to show (during VALIDATING, DEPLOYING, PENDING review, DEPLOYED, ROLLED_BACK, FAILED, REJECTED, CANCELLED). Stays closed during early-phase EMPTY / WORKING states (the pill popover carries progress detail instead).
+- During early phases the drawer's own hero shows what Alfred is doing ("Gathering Requirements...", "Designing Solution...") if you open it manually.
+- Once a changeset is ready, shows DocType field tables, script code, and permission grids; action buttons (Approve / Request Changes / Reject) sit at the bottom.
+- Can be minimized to a floating chip at the bottom-right and reopened any time.
 
 ---
 
@@ -223,9 +241,8 @@ for the full details.
 ### Step 2: Alfred Gathers Requirements
 
 The **Requirement Analyst** agent processes your request. You'll see:
-- Status bar shows "Step 1/6 - Requirement Analyst is working..." with a pulsing yellow dot
-- Bouncing dots (typing indicator) appear in the chat
-- Preview panel shows "Gathering Requirements..."
+- The floating status pill at the top flips from "Ready" to a pulsing chat-gradient mark + "Requirement Analyst" + "gathering requirements". Click the pill to expand the six-step pipeline popover.
+- Bouncing dots (typing indicator) appear in the chat as the first agent reply streams in.
 
 **If your request is clear**, the agent moves to the next phase automatically.
 
@@ -259,10 +276,10 @@ The **Feasibility Assessor** verifies:
 
 ### Step 4: Design & Development
 
-The **Solution Architect** designs the technical solution, then the **Frappe Developer** generates the actual code. The preview panel updates progressively:
+The **Solution Architect** designs the technical solution, then the **Frappe Developer** generates the actual code. The status pill text updates progressively:
 
-- "Designing Solution..." → "Generating Code..."
-- Once complete, the preview shows the full changeset
+- "Designing Solution..." -> "Generating Code..."
+- Once complete, the preview drawer slides in with the full changeset.
 
 ### Step 5: Validation
 
@@ -276,14 +293,14 @@ The **QA Validator** (plus a dedicated **pre-preview dry-run** against your live
 - Deployment order is correct (dependencies first)
 - **Dry-run insert with savepoint rollback** - every proposed document is actually inserted into your database in a transaction, then immediately rolled back. This catches errors that only surface at insert time (missing mandatory fields, unresolved Link targets, etc.) **without** leaving any trace in your data.
 
-**If validation fails**, Alfred automatically asks the Developer to fix the issues and runs the dry-run again (once). If it still fails, the preview panel shows the concrete issues and you can:
+**If validation fails**, Alfred automatically asks the Developer to fix the issues and runs the dry-run again (once). If it still fails, the preview drawer shows the concrete issues and you can:
 - Click **Deploy Anyway** (if you know the error is a false positive)
 - Click **Request Changes** and tell Alfred what to fix
 - Click **Reject** and start over
 
 ### Step 6: Review & Approve
 
-The preview panel shows the complete changeset:
+The preview drawer shows the complete changeset:
 
 **Validation banner** at the top:
 - ✓ **Validated - ready to deploy** - dry-run passed, deploy is safe
@@ -346,7 +363,7 @@ Three buttons appear:
 ### Step 7: Deployment
 
 After you approve:
-- The preview panel shows a step-by-step progress tracker:
+- The preview drawer shows a step-by-step progress tracker:
   ```
   ✓ Training Program (DocType)        Created
   ✓ validate_training (Server Script)  Created

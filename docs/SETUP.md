@@ -459,13 +459,18 @@ curl http://dev.alfred:8000/api/method/frappe.client.get_count?doctype=Alfred+Se
 2. You should see the Alfred welcome screen with example prompts
 3. Click **"Create a DocType called Book with title, author, and ISBN fields"**
 4. Watch the pipeline progress:
-   - Status bar shows the current agent and phase
-   - Pipeline indicator highlights each step
-   - Typing indicator (bouncing dots) appears while agents work
-5. When the changeset preview appears in the right panel, review:
+   - The floating status pill at the top flips from "Ready" to a
+     pulsing gradient mark with the live agent name and activity
+     ("Developer - generating code"). Click it to expand the
+     six-step pipeline popover.
+   - Typing indicator (bouncing dots) appears while agents work.
+5. When the changeset preview arrives, the right-edge preview drawer
+   slides in automatically. Review:
    - Field table showing the DocType fields
    - Permission matrix
-6. Click **"Approve & Deploy"**
+   - (You can minimize the drawer to a chip at the bottom-right and
+     reopen it any time; the toolbar also carries a preview toggle.)
+6. Click **"Approve & Deploy"** inside the drawer
 7. Confirm in the dialog
 8. Verify: navigate to `/app/book` - you should see the new DocType
 
@@ -483,7 +488,7 @@ Setup is complete. For the full usage guide - including step-by-step conversatio
 | Start a conversation | Click "Start a Conversation" or an example prompt |
 | Send a message | Type in the input box, press Enter |
 | Answer a question | Click an option button or type your answer |
-| Approve changes | Click "Approve & Deploy" in the preview panel |
+| Approve changes | Click "Approve & Deploy" in the preview drawer |
 | Request modifications | Click "Request Changes", then describe what to change |
 | Reject changes | Click "Reject" |
 | Find past conversations | They're listed on the main Alfred page with summaries |

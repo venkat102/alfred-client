@@ -223,7 +223,7 @@ cooperate:
    pipeline UI can draw the right number of phases even after the run
    ended.
 
-2. **Alfred Changeset rows** are the source of truth for preview panel
+2. **Alfred Changeset rows** are the source of truth for preview drawer
    state. Every published `preview`/`changeset` event inserts a row with
    `status=Pending`. Approve flips the row to `Deploying` then
    `Deployed` (or `Rolled Back` on failure). Rollback (user-initiated or
@@ -251,11 +251,13 @@ cooperate:
 deployed > failed, sets `isDeployed` accordingly, and passes
 `conversationStatus` + `isProcessing` to `PreviewPanel` so the EMPTY
 variant can render mode-specific copy ("Run cancelled", "Conversation
-complete", "The previous run failed"). The chat and preview panel
-scroll independently; the root `.alfred-page` fills whatever bounded
-height the Frappe page wrapper gives it (no more `calc(100vh - 80px)`)
-and `min-height: 0` cascades through the flex children so overflow
-never escapes to the body.
+complete", "The previous run failed"). The transcript and the preview
+drawer scroll independently; on desktop the drawer shoves the
+transcript left via `body.alfred-drawer-open` (see "Shell layout"
+below), and the root `.alfred-app` fills whatever bounded height the
+Frappe page wrapper gives it (no more `calc(100vh - 80px)`) with
+`min-height: 0` cascading through the flex children so overflow never
+escapes to the body.
 
 ### Frontend design system
 
@@ -516,7 +518,7 @@ answers after `_phase_clarify` and with changeset items after `_phase_post_crew`
 ## Dry-Run Validation
 
 Every pipeline run validates the final changeset via the `dry_run_changeset`
-MCP tool **before** the Preview Panel is shown. The validator classifies each
+MCP tool **before** the preview drawer opens. The validator classifies each
 item by doctype and routes to one of two paths:
 
 ```

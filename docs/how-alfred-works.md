@@ -837,11 +837,12 @@ actually work before showing it to Alice. See
 
 **e. Save + send.** Conversation memory gets updated with the new
 items + clarifications. The changeset goes out as a `changeset`
-WebSocket event. The UI renders it in the preview panel.
+WebSocket event. The UI slides the preview drawer in from the right.
 
-### Step 13: The preview panel
+### Step 13: The preview drawer
 
-Alice sees:
+Alice sees the drawer slide in from the right edge (the toolbar
+toggle picks up a red unseen-dot; clicking the drawer clears it):
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -880,10 +881,12 @@ and the Approve button would relabel to "Deploy Anyway" - she could
 still proceed, but with eyes open.
 
 This is the first place Alice sees the agent's full work product. Up
-to this point, she was watching an activity ticker *(`Reading Expense
-Claim schema...`, `Checking write permission on Notification...`, `Validating
-changeset against live site...`)* stream by. Now she has a static,
-structured review surface.
+to this point, she was watching the floating status pill flip through
+activity phrases *(`Reading Expense Claim schema...`, `Checking write
+permission on Notification...`, `Validating changeset against live
+site...`)* as each tool call fired. Now she has a static, structured
+review surface in the drawer. She can minimize the drawer to a chip
+at the bottom-right and reopen it any time.
 
 ---
 
@@ -1303,7 +1306,7 @@ Seven safety features in this one function:
 
 Progress is streamed to Alice's browser via
 `frappe.publish_realtime("alfred_deploy_progress", ...)`. She sees a
-step-by-step progress tracker in the preview panel:
+step-by-step progress tracker inside the preview drawer:
 
 ```
 ⏳ Alert on New Expense Claim (Notification)   In progress...
@@ -1777,7 +1780,7 @@ depending on what you're working on:
 
 **If you're a user who just wants to use it:**
 
-- [user-guide.md](user-guide.md) - chat UI walkthrough, preview panel,
+- [user-guide.md](user-guide.md) - chat UI walkthrough, preview drawer,
   tips for writing better prompts
 - [SETUP.md](SETUP.md) - quick start
 

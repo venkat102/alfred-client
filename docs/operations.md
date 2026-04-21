@@ -167,8 +167,8 @@ and features silently break.
 Things to verify after an upgrade:
 
 - [ ] `/app/alfred-settings` loads without errors.
-- [ ] `/app/alfred-chat` loads and the activity ticker shows tool calls
-      on a test prompt.
+- [ ] `/app/alfred-chat` loads and the floating status pill flips from
+      "Ready" to the live agent name + activity on a test prompt.
 - [ ] `worker_long` is still running.
 - [ ] Alfred's scheduled job (`stale_conversation_cleanup`) ran at its
       next scheduled tick.
