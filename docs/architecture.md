@@ -277,11 +277,59 @@ radii, or tone sets:
 
 Tokens (`--alfred-mark-*`, `--alfred-mode-*`, `--alfred-tone-*`,
 `--alfred-card-radius / --alfred-chip-radius / --alfred-card-shadow`)
-are scoped under `.alfred-page` so nothing leaks into Frappe Desk.
-Frappe's empty `.navbar-breadcrumbs` strip is hidden while the chat
-page is mounted via a `body.alfred-page-active` class toggled in
-`AlfredChatApp.vue`'s `onMounted` / `onUnmounted`; the chat renders
-its own `Alfred > <conversation title>` crumb inside the toolbar.
+are scoped under `.alfred-app, .alfred-page` so nothing leaks into
+Frappe Desk. Frappe's empty `.navbar-breadcrumbs` strip is hidden
+while the chat page is mounted via a `body.alfred-page-active` class
+toggled in `AlfredChatApp.vue`'s `onMounted` / `onUnmounted`.
+
+### Shell layout (conversation-first)
+
+The page is a single column. The two-panel flex split and the
+draggable splitter are retired; the preview is a slide-in drawer
+instead. Layout tree:
+
+```
+<div class="alfred-app">
+  <ConversationList v-if="!currentConversation" />
+  <div v-else class="alfred-chat-area">
+    <div class="alfred-topbar">           <!-- frosted 48px -->
+      [back] [mark] title | ModeSwitcher | [preview-toggle] [+ New] [...]
+    </div>
+    <div class="alfred-transcript">
+      <AgentStatusPill absolute top-center />
+      <div class="alfred-transcript-scroll">
+        <div class="alfred-messages"> ... </div>
+      </div>
+      <div class="alfred-composer-wrap">
+        <!-- saturation banner + activity log + .alfred-composer -->
+      </div>
+    </div>
+  </div>
+  <PreviewDrawer v-if="currentConversation" v-model="drawerOpen" />
+  <button class="alfred-preview-minimized-pill" />
+</div>
+```
+
+Two new SFCs carry the shell-specific UI:
+
+- `AgentStatusPill.vue` - the floating status indicator. Renders one of
+  four states (`idle / processing / outcome-success / outcome-error`)
+  driven by the `statusPillState` computed in `AlfredChatApp.vue`.
+  Processing state is clickable to expand a popover that embeds the
+  existing `PhasePipeline` component for the full six-step trail.
+- `PreviewDrawer.vue` - wraps the existing `PreviewPanel` inside a
+  slide-in overlay with a head (minimize + close) and a body that
+  hosts `PreviewPanel` unchanged. Mobile: modal with dimming scrim
+  (`role="dialog"`, focus-trap via the close button). Desktop:
+  non-modal (`role="complementary"`) and `body.alfred-drawer-open`
+  shoves `.alfred-chat-area` left by the drawer width with a 280ms
+  transition.
+
+Drawer open state is persisted in `localStorage.alfred_chat_drawer_open`
+and auto-opens on changeset arrival (watcher on `previewChangeCount`).
+Escape-key precedence for closing surfaces: overflow menu -> status
+popover -> drawer. Both the toolbar toggle and the floating
+minimized-pill (bottom right) reopen the drawer.
 
 ## Multi-Model Tiers
 

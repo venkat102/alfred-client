@@ -31,82 +31,91 @@ Alfred is an AI assistant that builds Frappe customizations through conversation
 
 ## What the interface looks like
 
-The chat page follows a single design language across every surface so
-it is easy to learn once and scan fast after that:
+Alfred Chat is a conversation-first shell. Your transcript fills the
+page; everything else (status, preview, navigation) floats on top so
+the chat is never cropped or compressed.
 
-- **Gradient marks**. The "A" glyph in the left of the toolbar (chat
-  side, blue -> purple) and the round glyph in the preview panel
-  hero (teal -> violet) anchor each side so you always know which
-  pane you are looking at. Both pulse while a run is active.
-- **Mode chips**. Every message carries a small pill for its mode
-  (Auto / Dev / Plan / Insights) in the same four colors the mode
-  switcher uses, so you can scan the transcript and spot mode
-  changes at a glance.
-- **Tone-coded banners**. Green for success (validated, deployed),
-  blue for info (validating, waiting for you), orange for warn
-  (rolled back, cancelled, dry-run issues), red for danger (deploy
-  failed), gray for neutral (rejected). The four intents no longer
-  share colors.
-- **Step trails**. Both the toolbar phase pipeline and the preview
-  deploy stream use the same dot + pulse vocabulary - done rows go
-  green with a checkmark, the current row is blue with a pulsing
-  dot, upcoming rows stay muted, failed rows are red.
-- **Breadcrumb**. `Alfred > <conversation title>` sits inside the
-  toolbar; Frappe's empty breadcrumb strip above the page head is
-  hidden while the chat page is mounted.
+- **Frosted topbar** (48px, sticky). Back button, a small gradient
+  "A" mark + the conversation title, the mode switcher in the
+  center, and the right zone for the preview toggle, "+ New", and
+  the overflow menu (Health / Share / Delete). Frappe's empty
+  breadcrumb strip above the page head is hidden so the topbar is
+  the only chrome you see.
+- **Floating status pill** centered near the top of the transcript.
+  Idle state shows a small green dot with "Ready". While a run is
+  processing, the pill switches to a pulsing chat-gradient mark +
+  the current agent name + a live activity phrase ("Developer -
+  generating code"). Click the pill to expand a popover with the
+  full six-step pipeline trail. When a run ends, the pill briefly
+  flashes green (completed) or red (failed) for ~4 seconds and
+  then settles back to idle.
+- **Centered composer** floats at the bottom of the chat, max-width
+  760px. Gradient Send button with an arrow that slides right on
+  hover; ghost-red Stop button that takes over during a run.
+  Keyboard hints sit below: `Enter` to send, `Shift+Enter` for a
+  newline, and `Cmd/Ctrl+Enter` also sends.
+- **Slide-in preview drawer** from the right edge, 420px wide. It
+  auto-opens when a changeset arrives and the toolbar toggle shows
+  a red dot until you do. Click the toggle (or press Escape when
+  no other surface is open) to close; the drawer minimizes to a
+  floating chip at the bottom-right showing the change count, and
+  clicking the chip reopens the drawer. The drawer state is
+  persisted across reloads. On mobile the drawer becomes a
+  full-screen modal with a dimming scrim.
+- **Mode chips + tone banners + step trails** still anchor the
+  visual language - mode chips use the four mode colors (auto,
+  dev, plan, insights), banners use tone colors (success green,
+  info blue, warn orange, danger red, neutral gray), and step
+  trails share one dot + pulse vocabulary across the transcript
+  and the preview deploy stream.
 
 Screenshots (captured from a live session):
 
 ![Welcome state](images/alfred-welcome.png)
-![Mid-run working state](images/alfred-working.png)
-![Deployed changeset](images/alfred-deployed.png)
+![Mid-run with status pill](images/alfred-working.png)
+![Deployed changeset in drawer](images/alfred-deployed.png)
 
 ## The Interface
 
-When you open `/app/alfred-chat`, you see two panels:
+When you open `/app/alfred-chat`, you see a single-column chat. The
+preview lives in a drawer that slides in from the right when it has
+something to show.
 
 ```
-┌──────────────────────┬────────────────────────────────────┐
-│  Status Bar: Agent status, timer, phase pipeline OR Basic │
-│              badge (lite mode)                             │
-├──────────────────────┬────────────────────────────────────┤
-│                      │                                    │
-│  Left Panel (40%)    │  Right Panel (60%)                 │
-│                      │                                    │
-│  Conversation List   │  Preview Panel                     │
-│  or                  │                                    │
-│  Chat Messages       │  Shows what Alfred proposes:       │
-│                      │  - Dry-run validation banner        │
-│                      │    (✓ Validated / ⚠ N issues)       │
-│                      │  - DocType field tables             │
-│                      │  - Script code                      │
-│                      │  - Permission grid                  │
-│                      │  - Deploy progress                  │
-│  Activity Ticker     │                                    │
-│  (live tool call     │                                    │
-│   status while       │                                    │
-│   processing)        │                                    │
-│  ┌────────────────┐  │  [Approve] [Modify] [Reject]       │
-│  │ Input box      │  │                                    │
-│  └────────────────┘  │                                    │
-└──────────────────────┴────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ [<-] [A] Title · [ModeSwitcher]   [≡] [+ New] [...]          │ <- frosted topbar (48px)
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│          ┌──── ● Ready  OR  [mark] Developer...┐             │ <- floating status pill
+│          └─────────────────────────────────────┘             │
+│                                                              │
+│   [user msg]                                                 │
+│   [agent msg]                                                │
+│   [agent-step]                                               │
+│                                                              │
+│                                                              │
+│        ┌────────────────────────────────────┐                │
+│        │ Composer (centered, max 760px)     │  [Send ->]     │ <- floating composer
+│        │ Enter to send, Shift+Enter newline │                │
+│        └────────────────────────────────────┘                │
+└──────────────────────────────────────────────────────────────┘
+                          ┌───────────────────────────────┐
+                          │ Preview (slides in from right │
+                          │  when a changeset arrives)    │
+                          └───────────────────────────────┘
 ```
 
-### Status Bar (top)
-- **Status dot** - Green (ready), yellow pulsing (processing), blue pulsing (waiting for you), red (error)
-- **Agent name** - Shows which agent is currently working (e.g., "Step 3/6 - Solution Architect is working...")
-- **Timer** - Elapsed seconds since the current phase started
-- **Pipeline** - Six numbered steps: Requirements → Assessment → Architecture → Development → Testing → Deployment. Current step is highlighted blue, completed steps are green with a checkmark. Hidden in **Basic mode** (see below).
-- **Basic badge** - Small purple pill next to the status text. Appears when the site (or your subscription plan) is using the single-agent "Basic" pipeline mode - faster and cheaper, but less thorough. Hover for details on which setting triggered it.
+### Status pill (top of transcript)
+- **Idle**: small green dot + **Ready**. Sits at ~75% opacity; brightens on hover.
+- **Processing**: pulsing chat-gradient mark + bold agent name + live activity phrase (e.g. "Developer - generating code"). Click to expand a popover that shows the full six-step pipeline (Requirements -> Assessment -> Architecture -> Development -> Testing -> Deployment) with the current step highlighted.
+- **Outcome**: briefly flashes green (**Completed**) or red (**Failed**) for ~4 seconds then returns to idle. The elapsed seconds counter sits to the right of the label during a run.
+- **Basic mode**: the popover replaces the six-step pipeline with a "Basic mode" chip since the single-agent run has no visible phases.
 
-### Live Activity Ticker (while processing)
-While Alfred is working on your request, a compact blue bar appears just above the input area showing exactly what the agent is doing right now, updated on every tool call:
-
-- `● Reading Leave Application schema`
-- `● Checking write permission on Notification`
-- `● Validating changeset against live site`
-
-This gives you concrete progress instead of a silent spinner - especially useful on long runs. The ticker disappears when the pipeline finishes.
+### Preview drawer (right edge)
+- **Auto-opens** when Alfred produces a changeset; the toolbar toggle (hamburger icon) shows a red dot until you see it.
+- **Minimize** to a floating pill at the bottom-right showing the change count; click the pill to reopen at the exact scroll position.
+- **Escape** closes the drawer (after the overflow menu and status popover, if those are open first).
+- **Persisted** across reloads via localStorage. On mobile the drawer becomes a full-screen modal with a dimming scrim and focuses the close button for keyboard users.
 
 ### Stop a run
 

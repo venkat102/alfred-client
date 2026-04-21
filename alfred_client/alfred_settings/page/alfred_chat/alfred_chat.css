@@ -303,76 +303,19 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	color: var(--text-muted, #9ca3af);
 }
 
-/* ── Flow Strip ───────────────────────────────────────────────────
- * Replaces the cramped status-bar + phase-pipeline split with one
- * breathing row that shows EITHER:
- *   - Idle / Completed / Error / Lite: hero pulse dot + big label
- *     + elapsed time + pipeline-mode chip
- *   - Processing (Full pipeline): horizontal step trail on a rail
- * The strip sits directly under the Frappe page-head so it is the
- * first thing the eye lands on; all colors pull from --alfred-tone-*. */
-.alfred-flow-strip {
-	display: flex; align-items: center; gap: 16px;
-	padding: 12px 20px; flex-shrink: 0;
-	background: linear-gradient(
-		180deg,
-		var(--bg-color, #ffffff) 0%,
-		var(--subtle-fg, #fafbfc) 100%
-	);
-	border-bottom: 1px solid var(--border-color, #e5e7eb);
-	min-height: 56px;
-}
-
-/* Ready / Completed / Error state - hero pulse + label */
-.alfred-flow-ready {
-	display: flex; align-items: center; gap: 10px;
-	font-size: 13.5px; font-weight: 500;
-	color: var(--text-color, #111827);
-}
-.alfred-flow-pulse {
-	width: 10px; height: 10px; border-radius: 50%;
-	position: relative;
-	flex-shrink: 0;
-}
-.alfred-flow-pulse::after {
-	content: ""; position: absolute;
-	top: -4px; left: -4px; right: -4px; bottom: -4px;
-	border-radius: 50%; border: 2px solid currentColor;
-	opacity: 0; animation: alfred-flow-halo 2s ease-out infinite;
-}
+/* alfred-flow-halo keyframe retained - the expanding-ring animation is
+ * now used by .alfred-status-pill-dot-halo and
+ * .alfred-status-pill-mark-ring in the floating status pill. The
+ * .alfred-flow-strip / .alfred-flow-ready / .alfred-flow-pulse* /
+ * .alfred-flow-status / .alfred-flow-elapsed / .alfred-flow-mode-chip
+ * rules were retired with the conversation-first shell. */
 @keyframes alfred-flow-halo {
 	0%   { opacity: 0.5; transform: scale(0.6); }
 	100% { opacity: 0;   transform: scale(1.6); }
 }
-.alfred-flow-pulse--disconnected {
-	background: var(--alfred-tone-neutral-500); color: var(--alfred-tone-neutral-500);
-}
-.alfred-flow-pulse--disconnected::after { animation: none; }
-.alfred-flow-pulse--success {
-	background: var(--alfred-tone-success-500); color: var(--alfred-tone-success-500);
-}
-.alfred-flow-pulse--processing {
-	background: var(--alfred-tone-warn-500); color: var(--alfred-tone-warn-500);
-}
-.alfred-flow-pulse--waiting {
-	background: var(--alfred-tone-info-500); color: var(--alfred-tone-info-500);
-}
-.alfred-flow-pulse--error {
-	background: var(--alfred-tone-danger-500); color: var(--alfred-tone-danger-500);
-}
-.alfred-flow-pulse--error::after { animation: none; }
-.alfred-flow-status { color: var(--text-color, #111827); }
-.alfred-flow-elapsed {
-	font-variant-numeric: tabular-nums;
-	font-size: 12px; color: var(--text-muted, #6b7280);
-	padding-left: 6px;
-	border-left: 1px solid var(--border-color, #e5e7eb);
-	margin-left: 2px;
-}
-.alfred-flow-mode-chip { margin-left: auto; }
 
-/* Phase pipeline: horizontal step trail that sits inside the flow
- * strip while a Full-mode run is in flight. A single progress rail
+/* Phase pipeline: horizontal step trail now lives inside the status
+ * pill popover. The markers + rail layout is unchanged - just the
  * underlies the six markers so the eye has a smooth percentage
  * anchor; markers stack on top of the rail. */
 .alfred-pipeline {
@@ -479,45 +422,11 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	50% { opacity: 0.5; transform: scale(1.3); }
 }
 
-/* ── Panels ────────────────────────────────────────────────────── */
-/* The user-draggable splitter writes its current width into
-   --alfred-left-width on .alfred-panels; the left panel reads it via
-   flex-basis. Fallback percentages apply when the variable is unset. */
-.alfred-panels {
-	display: flex; flex: 1; overflow: hidden; min-height: 0;
-	--alfred-left-width: 45%;
-}
-.alfred-left-panel {
-	flex: 0 0 var(--alfred-left-width);
-	min-width: 320px; display: flex; flex-direction: column; min-height: 0;
-}
-.alfred-right-panel {
-	flex: 1 1 auto;
-	min-width: 360px; max-width: 560px;
-	overflow-y: auto; min-height: 0;
-	border-left: 1px solid var(--border-color, #e2e2e2);
-}
-
-/* Vertical drag-handle between the two panels. 4px feels thin but has a
-   wider invisible hit area via negative margin so it is easy to grab.
-   Hidden on mobile (stacked layout). */
-.alfred-splitter {
-	flex: 0 0 4px;
-	cursor: col-resize;
-	background: transparent;
-	position: relative;
-	z-index: 1;
-	transition: background 0.15s ease;
-}
-.alfred-splitter::before {
-	content: "";
-	position: absolute;
-	top: 0; bottom: 0; left: -3px; right: -3px;
-}
-.alfred-splitter:hover,
-.alfred-splitter.alfred-splitter-active {
-	background: var(--blue-300, #93c5fd);
-}
+/* .alfred-panels / -left-panel / -right-panel / -splitter retired with
+ * the conversation-first shell. Single-column layout is now the
+ * default: .alfred-app -> (ConversationList OR .alfred-chat-area), and
+ * .alfred-chat-area fills the viewport height via the flex rule in the
+ * "Chat Area" section below. */
 
 /* ── Onboarding (UX-01) ──────────────────────────────────────── */
 .alfred-onboarding {
@@ -969,59 +878,23 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	min-width: 96px;
 }
 
-/* ── Legacy toolbar (kept for mobile @media rules + Commit 3 prunes) ─ */
-.alfred-chat-toolbar {
-	display: flex; align-items: center; gap: 12px;
-	padding: 10px 16px 10px 10px;
-	border-bottom: 1px solid var(--border-color, #e2e2e2);
-	background: linear-gradient(
-		180deg,
-		var(--bg-color, #ffffff) 0%,
-		var(--subtle-fg, #fafbfc) 100%
-	);
-	flex-shrink: 0;
-	min-height: 52px;
-}
-.alfred-toolbar-left {
-	display: flex; align-items: center; gap: 8px;
-	flex: 1 1 0; min-width: 0;
-}
-.alfred-toolbar-center {
-	display: flex; align-items: center;
-	flex-shrink: 0;
-}
-.alfred-toolbar-right {
-	display: flex; align-items: center; gap: 6px;
-	flex-shrink: 0;
-}
-.alfred-chat-title {
-	min-width: 0;
-	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-	font-size: 14px;
-	font-weight: 600;
-	color: var(--text-color, #111827);
-}
-
-/* Brand: small gradient mark + conversation title. The breadcrumb
- * "Alfred > <title>" is removed - the back button gives navigation,
- * the title alone anchors the left zone. */
+/* Brand: small gradient mark + conversation title. Back button gives
+ * navigation; the title alone anchors the topbar left zone. */
 .alfred-brand {
 	display: flex; align-items: center; gap: 10px;
 	min-width: 0; flex: 1 1 0;
 }
-.alfred-brand .alfred-chat-title {
-	margin: 0; font-size: 15px; font-weight: 600;
+.alfred-brand .alfred-topbar-title { margin: 0; }
+/* Legacy selector kept as an alias for the topbar title so any
+ * callers referencing .alfred-chat-title continue to style cleanly.
+ * (The old .alfred-chat-toolbar / .alfred-toolbar-left / -center /
+ * -right / -divider rules were retired with the conversation-first
+ * shell - the .alfred-topbar zones own that job now.) */
+.alfred-chat-title {
+	min-width: 0;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	font-size: 15px; font-weight: 600;
 	color: var(--text-color, #111827);
-}
-
-/* Legacy vertical divider - still used by callers that need it,
-   but the three-zone toolbar no longer needs visible dividers. */
-.alfred-toolbar-divider {
-	display: inline-block;
-	width: 1px; height: 22px;
-	background: var(--border-color, #e2e2e2);
-	margin: 0 4px;
-	flex-shrink: 0;
 }
 
 /* ── Overflow menu (kebab dropdown) ─────────────────────────────
@@ -1443,23 +1316,10 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	border-left-color: var(--alfred-tone-warn-500);
 }
 
-/* ── Input Area ────────────────────────────────────────────────── */
-.alfred-input-area {
-	display: flex; flex-direction: column; gap: 4px; padding: 8px 16px;
-	border-top: 1px solid var(--border-color, #e2e2e2);
-	background: white; flex-shrink: 0;
-}
-.alfred-input-row { display: flex; gap: 8px; align-items: stretch; }
-.alfred-input {
-	flex: 1; min-width: 0;
-	border: 1px solid var(--border-color, #e2e2e2); border-radius: 8px;
-	padding: 8px 12px; resize: none; font-size: var(--text-base, 14px);
-	outline: none; transition: border-color 0.15s;
-	box-sizing: border-box;
-}
-.alfred-input:focus { border-color: var(--blue-500, #2490ef); }
-.alfred-input:disabled { background: var(--subtle-fg, #f8f8f8); color: var(--text-muted, #999); }
-.alfred-input-hint { display: block; font-size: 10px; padding-left: 4px; }
+/* .alfred-input-area / .alfred-input-row / .alfred-input / .alfred-input-hint
+ * retired with the conversation-first shell; the floating .alfred-composer
+ * owns this territory now (see "Composer" block above). */
+
 /* Send / Stop buttons: stretch to match textarea height and adopt the
  * Alfred button family so the CTA at the bottom of the chat reads as
  * the primary action on the page. Send uses the blue-purple chat
@@ -1647,27 +1507,11 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 .alfred-saturation-icon { font-size: 14px; flex-shrink: 0; }
 .alfred-saturation-text { line-height: 1.4; }
 
-/* ── Live Activity Ticker ──────────────────────────────────────── */
-.alfred-activity-ticker {
-	display: flex; align-items: center; gap: 8px;
-	padding: 8px 14px; margin: 0 12px 4px 12px;
-	background: var(--alfred-tone-info-50); color: var(--alfred-tone-info-700);
-	border-left: 3px solid var(--alfred-tone-info-500);
-	border-radius: 6px; font-size: 12px;
-	animation: alfred-ticker-in 0.25s ease-out;
-}
-.alfred-activity-ticker-icon {
-	color: var(--alfred-tone-info-500);
-	animation: alfred-pulse 1.5s ease-in-out infinite;
-	font-size: 10px;
-}
-.alfred-activity-ticker-label { color: var(--alfred-tone-info-700); }
-.alfred-activity-ticker-sep { color: var(--alfred-tone-info-200); }
-.alfred-activity-ticker-text {
-	font-family: var(--font-stack-monospace, monospace);
-	font-size: 11.5px; line-height: 1.4;
-	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
+/* alfred-ticker-in keyframe retained - the fade + translate-in
+ * animation is still used by the pill popover (alfred-status-pill-popover)
+ * and the preview DEPLOYING step stream (.alfred-step--stream). The
+ * .alfred-activity-ticker* shell was retired - live ticker text now
+ * flows through the floating status pill instead. */
 @keyframes alfred-ticker-in {
 	from { opacity: 0; transform: translateY(4px); }
 	to { opacity: 1; transform: translateY(0); }
