@@ -171,7 +171,7 @@
 					</div>
 
 					<div class="alfred-input-area">
-						<div class="alfred-input-wrapper">
+						<div class="alfred-input-row">
 							<textarea
 								ref="inputField"
 								v-model="inputText"
@@ -181,27 +181,27 @@
 								class="alfred-input"
 								@keydown.enter.exact.prevent="sendMessage(inputText)"
 							></textarea>
-							<span class="alfred-input-hint text-muted text-xs">
-								{{ __("Enter to send, Shift+Enter for new line") }}
-							</span>
+							<button
+								v-if="isProcessing"
+								class="btn btn-default btn-sm alfred-stop-btn"
+								:disabled="cancelInFlight"
+								:title="__('Stop the running agent gracefully; the current phase will finish.')"
+								@click="cancelRun"
+							>
+								{{ cancelInFlight ? __("Stopping...") : __("Stop") }}
+							</button>
+							<button
+								v-else
+								class="btn btn-primary btn-sm alfred-send-btn"
+								:disabled="inputDisabled || !inputText.trim()"
+								@click="sendMessage(inputText)"
+							>
+								{{ __("Send") }}
+							</button>
 						</div>
-						<button
-							v-if="isProcessing"
-							class="btn btn-default btn-sm alfred-stop-btn"
-							:disabled="cancelInFlight"
-							:title="__('Stop the running agent gracefully; the current phase will finish.')"
-							@click="cancelRun"
-						>
-							{{ cancelInFlight ? __("Stopping...") : __("Stop") }}
-						</button>
-						<button
-							v-else
-							class="btn btn-primary btn-sm alfred-send-btn"
-							:disabled="inputDisabled || !inputText.trim()"
-							@click="sendMessage(inputText)"
-						>
-							{{ __("Send") }}
-						</button>
+						<span class="alfred-input-hint text-muted text-xs">
+							{{ __("Enter to send, Shift+Enter for new line") }}
+						</span>
 					</div>
 				</div>
 			</div>

@@ -520,22 +520,24 @@
 
 /* ── Input Area ────────────────────────────────────────────────── */
 .alfred-input-area {
-	display: flex; gap: 8px; padding: 8px 16px;
+	display: flex; flex-direction: column; gap: 4px; padding: 8px 16px;
 	border-top: 1px solid var(--border-color, #e2e2e2);
-	background: white; flex-shrink: 0; align-items: flex-end;
+	background: white; flex-shrink: 0;
 }
-.alfred-input-wrapper { flex: 1; }
+.alfred-input-row { display: flex; gap: 8px; align-items: stretch; }
 .alfred-input {
-	width: 100%; border: 1px solid var(--border-color, #e2e2e2); border-radius: 8px;
+	flex: 1; min-width: 0;
+	border: 1px solid var(--border-color, #e2e2e2); border-radius: 8px;
 	padding: 8px 12px; resize: none; font-size: var(--text-base, 14px);
 	outline: none; transition: border-color 0.15s;
+	box-sizing: border-box;
 }
 .alfred-input:focus { border-color: var(--blue-500, #2490ef); }
 .alfred-input:disabled { background: var(--subtle-fg, #f8f8f8); color: var(--text-muted, #999); }
-.alfred-input-hint { display: block; margin-top: 2px; font-size: 10px; }
-.alfred-send-btn {
+.alfred-input-hint { display: block; font-size: 10px; padding-left: 4px; }
+.alfred-send-btn, .alfred-stop-btn {
 	border-radius: 8px !important; padding: 8px 16px !important;
-	margin-bottom: 18px;
+	flex-shrink: 0; align-self: stretch;
 }
 
 /* ── Preview Panel ─────────────────────────────────────────────── */
