@@ -1,28 +1,7 @@
 <template>
 	<div class="alfred-app">
-		<!-- Flow Strip: one bar that shows EITHER the idle "Ready"
-		     state OR the live agentic pipeline. Replaces the cramped
-		     status-bar + phase-pipeline split with a single breathing
-		     row that reads from across the room. -->
-		<div class="alfred-flow-strip" :data-state="statusState">
-			<!-- Idle / Completed / Error: hero pulse dot + label + elapsed + badges -->
-			<div v-if="!isProcessing || pipelineMode === 'lite'" class="alfred-flow-ready">
-				<span :class="['alfred-flow-pulse', `alfred-flow-pulse--${statusState}`]" aria-hidden="true"></span>
-				<span class="alfred-flow-status">{{ statusText }}</span>
-				<span v-if="elapsedTime" class="alfred-flow-elapsed">{{ elapsedTime }}s</span>
-				<span v-if="pipelineMode === 'lite'" class="alfred-chip alfred-chip--plan alfred-flow-mode-chip" :title="liteBadgeTooltip">
-					{{ __("Basic") }}
-				</span>
-			</div>
-
-			<!-- Processing (Full pipeline): horizontal step trail -->
-			<PhasePipeline
-				v-else
-				:current-phase="currentPhase"
-				:completed-phases="completedPhases"
-				:active-agent="activeAgent"
-			/>
-		</div>
+		<!-- Flow Strip retired: the agent state now lives in the floating
+		     status pill inside .alfred-transcript (see AgentStatusPill). -->
 
 		<div
 			ref="panelsEl"
@@ -43,17 +22,13 @@
 
 				<!-- Chat Area -->
 				<div v-else class="alfred-chat-area">
-					<!-- Chat Toolbar: three-zone layout.
-					     Zone 1 (left):  back + conversation title
-					     Zone 2 (mid):   mode switcher (the identity of the current turn)
-					     Zone 3 (right): primary "+ New" pill + single overflow menu
-					     Secondary actions (Health, Share, Delete) live inside the
-					     overflow menu so the bar never overflows regardless of how
-					     narrow the chat area gets. This replaces the old row of
-					     four side-by-side buttons that got clipped by the preview
-					     panel. -->
-					<div class="alfred-chat-toolbar">
-						<div class="alfred-toolbar-left">
+					<!-- Topbar: frosted, 48px sticky header. Three zones -
+					     left (back + mark + title), center (mode switcher),
+					     right (+ New + kebab overflow). No status here;
+					     the floating status pill inside .alfred-transcript
+					     carries that job. -->
+					<div class="alfred-topbar">
+						<div class="alfred-topbar-zone alfred-topbar-zone--left">
 							<button
 								type="button"
 								class="alfred-icon-btn"
@@ -63,21 +38,17 @@
 							>
 								<span class="alfred-btn-glyph" aria-hidden="true">&#8592;</span>
 							</button>
-							<!-- Brand: small gradient mark + the conversation
-							     title. The back button already gives nav
-							     affordance, so the breadcrumb is gone - the
-							     title alone anchors the left zone. -->
 							<div class="alfred-brand">
 								<div class="alfred-mark alfred-mark--chat alfred-mark--sm" aria-hidden="true">A</div>
-								<h1 class="alfred-chat-title" :title="conversationSummary">{{ conversationSummary }}</h1>
+								<h1 class="alfred-topbar-title" :title="conversationSummary">{{ conversationSummary }}</h1>
 							</div>
 						</div>
 
-						<div class="alfred-toolbar-center">
+						<div class="alfred-topbar-zone alfred-topbar-zone--center">
 							<ModeSwitcher v-model="currentMode" />
 						</div>
 
-						<div class="alfred-toolbar-right">
+						<div class="alfred-topbar-zone alfred-topbar-zone--right">
 							<button
 								type="button"
 								class="alfred-primary-btn alfred-primary-btn--gradient"
@@ -89,12 +60,6 @@
 								<span>{{ __("New") }}</span>
 							</button>
 
-							<!-- Overflow menu: single kebab button gates the three
-							     less-frequent actions. Click toggles menuOpen; a
-							     document-level listener (see onMounted) closes on
-							     outside click. The menu is absolutely positioned
-							     and right-aligned so it never clips against the
-							     preview panel edge. -->
 							<div class="alfred-menu-wrapper" ref="menuWrapperEl">
 								<button
 									type="button"
@@ -144,129 +109,152 @@
 							</div>
 						</div>
 					</div>
-					<div ref="messagesContainer" class="alfred-messages">
-						<!-- Empty-state welcome shown on a fresh conversation with
-						     no messages yet. Hides the moment the first user
-						     prompt or system row lands in messages[]. -->
+
+					<!-- Transcript: floating status pill on top, scroll
+					     container holding messages, composer absolute at
+					     bottom. Pill sits absolute at top-center so the
+					     user always sees current agent state. -->
+					<div class="alfred-transcript">
 						<div
-							v-if="!messages.length && !isProcessing"
-							class="alfred-empty-state"
+							ref="pillWrapperEl"
+							class="alfred-status-pill-anchor"
 						>
-							<div class="alfred-empty-hero">
-								<div class="alfred-empty-mark" aria-hidden="true">A</div>
-								<h3 class="alfred-empty-title">{{ emptyGreeting }}</h3>
-								<p class="alfred-empty-subtitle">{{ emptySubtitle }}</p>
-							</div>
-							<div class="alfred-empty-prompts">
-								<div class="alfred-empty-prompts-label">
-									{{ __("Try one of these") }}
-								</div>
-								<button
-									v-for="(prompt, i) in emptyPrompts"
-									:key="i"
-									type="button"
-									class="alfred-empty-prompt"
-									@click="sendMessage(prompt)"
+							<AgentStatusPill
+								:state="statusPillState"
+								:agent-name="activeAgent"
+								:activity="currentActivity"
+								:elapsed="elapsedTime"
+								:pipeline-mode="pipelineMode"
+								:current-phase="currentPhase"
+								:completed-phases="completedPhases"
+								:label="statusText"
+								:open="pillPopoverOpen"
+								@update:open="pillPopoverOpen = $event"
+							/>
+						</div>
+
+						<div ref="messagesContainer" class="alfred-transcript-scroll">
+							<div class="alfred-messages">
+								<div
+									v-if="!messages.length && !isProcessing"
+									class="alfred-empty-state"
 								>
-									<span class="alfred-empty-prompt-icon" aria-hidden="true">&rsaquo;</span>
-									<span class="alfred-empty-prompt-text">{{ prompt }}</span>
-								</button>
+									<div class="alfred-empty-hero">
+										<div class="alfred-empty-mark" aria-hidden="true">A</div>
+										<h3 class="alfred-empty-title">{{ emptyGreeting }}</h3>
+										<p class="alfred-empty-subtitle">{{ emptySubtitle }}</p>
+									</div>
+									<div class="alfred-empty-prompts">
+										<div class="alfred-empty-prompts-label">
+											{{ __("Try one of these") }}
+										</div>
+										<button
+											v-for="(prompt, i) in emptyPrompts"
+											:key="i"
+											type="button"
+											class="alfred-empty-prompt"
+											@click="sendMessage(prompt)"
+										>
+											<span class="alfred-empty-prompt-icon" aria-hidden="true">&rsaquo;</span>
+											<span class="alfred-empty-prompt-text">{{ prompt }}</span>
+										</button>
+									</div>
+								</div>
+								<MessageBubble
+									v-for="msg in messages"
+									:key="msg.name || msg._id"
+									:message="msg"
+									@option-click="sendMessage"
+									@retry="retryLastMessage"
+									@plan-refine="onPlanRefine"
+									@plan-approve="onPlanApprove"
+								/>
+								<TypingIndicator v-if="isProcessing && !currentActivity" />
 							</div>
 						</div>
-						<MessageBubble
-							v-for="msg in messages"
-							:key="msg.name || msg._id"
-							:message="msg"
-							@option-click="sendMessage"
-							@retry="retryLastMessage"
-							@plan-refine="onPlanRefine"
-							@plan-approve="onPlanApprove"
-						/>
-						<TypingIndicator v-if="isProcessing && !currentActivity" />
-					</div>
 
-					<!-- Activity Log (collapsible) -->
-					<div v-if="activityLog.length" class="alfred-activity-log">
-						<div class="alfred-activity-log-toggle" @click="activityLogOpen = !activityLogOpen">
-							<span :class="['alfred-conn-dot', `alfred-dot-${connectionState}`]"></span>
-							<span class="alfred-eyebrow">{{ connectionLabel }}</span>
-							<span class="alfred-activity-log-count">
-								{{ activityLogOpen ? '&#9662;' : '&#9656;' }} {{ __("Activity") }} ({{ activityLog.length }})
-							</span>
-						</div>
-						<div v-if="activityLogOpen" class="alfred-activity-log-entries">
+						<!-- Composer wrap: centered, floating at bottom of the
+						     transcript area. Saturation banner and activity
+						     log live here too so they follow the composer
+						     instead of stealing scroll space. -->
+						<div class="alfred-composer-wrap">
 							<div
-								v-for="(entry, idx) in activityLog"
-								:key="idx"
-								:class="['alfred-activity-entry', `alfred-activity-${entry.level}`]"
+								v-if="saturationBanner"
+								:class="['alfred-saturation-banner', `alfred-saturation-${saturationBanner.tone}`]"
+								role="button"
+								:tabindex="0"
+								:title="__('Click to open the Health dialog')"
+								@click="checkHealth"
+								@keydown.enter.space.prevent="checkHealth"
 							>
-								<span class="alfred-activity-time text-muted">{{ entry.time }}</span>
-								<span>{{ entry.text }}</span>
+								<span class="alfred-saturation-icon" aria-hidden="true">&#9888;</span>
+								<span class="alfred-saturation-text">{{ saturationBanner.text }}</span>
+							</div>
+
+							<div v-if="activityLog.length" class="alfred-activity-log">
+								<div class="alfred-activity-log-toggle" @click="activityLogOpen = !activityLogOpen">
+									<span :class="['alfred-conn-dot', `alfred-dot-${connectionState}`]"></span>
+									<span class="alfred-eyebrow">{{ connectionLabel }}</span>
+									<span class="alfred-activity-log-count">
+										{{ activityLogOpen ? '&#9662;' : '&#9656;' }} {{ __("Activity") }} ({{ activityLog.length }})
+									</span>
+								</div>
+								<div v-if="activityLogOpen" class="alfred-activity-log-entries">
+									<div
+										v-for="(entry, idx) in activityLog"
+										:key="idx"
+										:class="['alfred-activity-entry', `alfred-activity-${entry.level}`]"
+									>
+										<span class="alfred-activity-time text-muted">{{ entry.time }}</span>
+										<span>{{ entry.text }}</span>
+									</div>
+								</div>
+							</div>
+
+							<div class="alfred-composer">
+								<textarea
+									ref="inputField"
+									v-model="inputText"
+									:placeholder="inputPlaceholder"
+									:disabled="inputDisabled"
+									rows="2"
+									class="alfred-composer-input"
+									@keydown.enter.exact.prevent="sendMessage(inputText)"
+									@keydown.meta.enter.exact.prevent="sendMessage(inputText)"
+									@keydown.ctrl.enter.exact.prevent="sendMessage(inputText)"
+								></textarea>
+								<div class="alfred-composer-actions">
+									<div class="alfred-composer-kbd-hints">
+										<kbd class="alfred-kbd">Enter</kbd>
+										<span>{{ __("to send") }}</span>
+										<kbd class="alfred-kbd">Shift</kbd>
+										<span>+</span>
+										<kbd class="alfred-kbd">Enter</kbd>
+										<span>{{ __("for newline") }}</span>
+									</div>
+									<button
+										v-if="isProcessing"
+										class="alfred-btn-ghost alfred-btn-ghost--danger alfred-stop-btn"
+										:disabled="cancelInFlight"
+										:title="__('Stop the running agent gracefully; the current phase will finish.')"
+										@click="cancelRun"
+									>
+										<span v-if="cancelInFlight" class="alfred-btn-spinner" aria-hidden="true"></span>
+										<span v-else class="alfred-stop-glyph" aria-hidden="true">&#9632;</span>
+										<span>{{ cancelInFlight ? __("Stopping...") : __("Stop") }}</span>
+									</button>
+									<button
+										v-else
+										class="alfred-btn-primary alfred-send-btn"
+										:disabled="inputDisabled || !inputText.trim()"
+										@click="sendMessage(inputText)"
+									>
+										<span>{{ __("Send") }}</span>
+										<span class="alfred-send-glyph" aria-hidden="true">&rarr;</span>
+									</button>
+								</div>
 							</div>
 						</div>
-					</div>
-
-					<!-- Queue saturation banner - appears when start_conversation
-					     returned no_worker or the enqueued manager has not
-					     connected within SATURATION_WATCHDOG_MS. Clicking
-					     opens the Health dialog so the user can see the
-					     worker count and queue depth themselves. -->
-					<div
-						v-if="saturationBanner"
-						:class="['alfred-saturation-banner', `alfred-saturation-${saturationBanner.tone}`]"
-						role="button"
-						:tabindex="0"
-						:title="__('Click to open the Health dialog')"
-						@click="checkHealth"
-						@keydown.enter.space.prevent="checkHealth"
-					>
-						<span class="alfred-saturation-icon" aria-hidden="true">&#9888;</span>
-						<span class="alfred-saturation-text">{{ saturationBanner.text }}</span>
-					</div>
-
-					<!-- Live activity ticker - shows what the agent is doing right now -->
-					<div v-if="isProcessing && currentActivity" class="alfred-activity-ticker" :key="currentActivity">
-						<span class="alfred-activity-ticker-icon" aria-hidden="true">&#9679;</span>
-						<span class="alfred-eyebrow alfred-activity-ticker-label">{{ __("Live") }}</span>
-						<span class="alfred-activity-ticker-sep" aria-hidden="true">&middot;</span>
-						<span class="alfred-activity-ticker-text">{{ currentActivity }}</span>
-					</div>
-
-					<div class="alfred-input-area">
-						<div class="alfred-input-row">
-							<textarea
-								ref="inputField"
-								v-model="inputText"
-								:placeholder="inputPlaceholder"
-								:disabled="inputDisabled"
-								rows="2"
-								class="alfred-input"
-								@keydown.enter.exact.prevent="sendMessage(inputText)"
-							></textarea>
-							<button
-								v-if="isProcessing"
-								class="alfred-btn-ghost alfred-btn-ghost--danger alfred-stop-btn"
-								:disabled="cancelInFlight"
-								:title="__('Stop the running agent gracefully; the current phase will finish.')"
-								@click="cancelRun"
-							>
-								<span v-if="cancelInFlight" class="alfred-btn-spinner" aria-hidden="true"></span>
-								<span v-else class="alfred-stop-glyph" aria-hidden="true">&#9632;</span>
-								<span>{{ cancelInFlight ? __("Stopping...") : __("Stop") }}</span>
-							</button>
-							<button
-								v-else
-								class="alfred-btn-primary alfred-send-btn"
-								:disabled="inputDisabled || !inputText.trim()"
-								@click="sendMessage(inputText)"
-							>
-								<span>{{ __("Send") }}</span>
-								<span class="alfred-send-glyph" aria-hidden="true">&rarr;</span>
-							</button>
-						</div>
-						<span class="alfred-input-hint text-muted text-xs">
-							{{ __("Enter to send, Shift+Enter for new line") }}
-						</span>
 					</div>
 				</div>
 			</div>
@@ -309,7 +297,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
 import ConversationList from "./ConversationList.vue";
 import MessageBubble from "./MessageBubble.vue";
 import TypingIndicator from "./TypingIndicator.vue";
-import PhasePipeline from "./PhasePipeline.vue";
+import AgentStatusPill from "./AgentStatusPill.vue";
 import PreviewPanel from "./PreviewPanel.vue";
 import ModeSwitcher from "./ModeSwitcher.vue";
 
@@ -392,6 +380,54 @@ const inputField = ref(null);
 // the menuOpen/close plumbing is load-bearing UI, not a nicety.
 const menuOpen = ref(false);
 const menuWrapperEl = ref(null);
+
+// Floating agent status pill state. statusPillState is computed from the
+// processing lifecycle plus a short outcome window: when a run ends we
+// flash the pill for OUTCOME_FADE_MS so the user sees the final state
+// before it settles back to idle. pillPopoverOpen drives the click-to
+// expand popover that reveals the six-step pipeline.
+const OUTCOME_FADE_MS = 4000;
+const outcomeFlash = ref(null); // "success" | "error" | null
+let outcomeFadeTimer = null;
+const pillPopoverOpen = ref(false);
+const pillWrapperEl = ref(null);
+
+const statusPillState = computed(() => {
+	if (isProcessing.value) return "processing";
+	if (outcomeFlash.value === "success") return "outcome-success";
+	if (outcomeFlash.value === "error") return "outcome-error";
+	return "idle";
+});
+
+// Watch isProcessing edges to flash an outcome on completion. We only
+// set the flash when dropping out of processing so a fresh page load
+// into the idle state does not trigger a phantom "Completed" pill.
+watch(isProcessing, (now, was) => {
+	if (was && !now) {
+		// Determine outcome from the final status state. "error" stays
+		// longer (5s) because errors are higher-signal than completions.
+		const stateAtEnd = statusState.value;
+		if (stateAtEnd === "error") {
+			outcomeFlash.value = "error";
+		} else {
+			outcomeFlash.value = "success";
+		}
+		if (outcomeFadeTimer) clearTimeout(outcomeFadeTimer);
+		outcomeFadeTimer = setTimeout(() => {
+			outcomeFlash.value = null;
+			outcomeFadeTimer = null;
+		}, OUTCOME_FADE_MS);
+	}
+	if (!was && now) {
+		// Starting a new run: clear any lingering flash and close the
+		// popover so the first paint shows a fresh processing pill.
+		outcomeFlash.value = null;
+		if (outcomeFadeTimer) {
+			clearTimeout(outcomeFadeTimer);
+			outcomeFadeTimer = null;
+		}
+	}
+});
 
 let timerInterval = null;
 let timerStart = null;
@@ -509,13 +545,28 @@ function syncRoute() {
 
 // ── Lifecycle ──────────────────────────────────────────────────
 function handleDocumentClick(e) {
-	if (!menuOpen.value) return;
-	const wrapper = menuWrapperEl.value;
-	if (wrapper && !wrapper.contains(e.target)) menuOpen.value = false;
+	// Close overflow menu on outside click
+	if (menuOpen.value) {
+		const menuWrap = menuWrapperEl.value;
+		if (menuWrap && !menuWrap.contains(e.target)) menuOpen.value = false;
+	}
+	// Close pill popover on outside click
+	if (pillPopoverOpen.value) {
+		const pillWrap = pillWrapperEl.value;
+		if (pillWrap && !pillWrap.contains(e.target)) pillPopoverOpen.value = false;
+	}
 }
 
 function handleDocumentKey(e) {
-	if (e.key === "Escape" && menuOpen.value) menuOpen.value = false;
+	if (e.key !== "Escape") return;
+	// Precedence: menu -> pill popover. Only close one layer per press.
+	if (menuOpen.value) {
+		menuOpen.value = false;
+		return;
+	}
+	if (pillPopoverOpen.value) {
+		pillPopoverOpen.value = false;
+	}
 }
 
 function menuAction(fn) {
@@ -545,6 +596,10 @@ onUnmounted(() => {
 	stopTimer();
 	stopPolling();
 	clearDisconnectWatchdog();
+	if (outcomeFadeTimer) {
+		clearTimeout(outcomeFadeTimer);
+		outcomeFadeTimer = null;
+	}
 	document.removeEventListener("click", handleDocumentClick);
 	document.removeEventListener("keydown", handleDocumentKey);
 	document.removeEventListener("mousemove", handleSplitterMove);
