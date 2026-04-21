@@ -704,19 +704,17 @@ def _long_queue_worker_count() -> int:
 	"""Return the number of RQ workers currently serving the 'long' queue
 	for this site. Zero means no background job can run until ops starts
 	`worker_long` in the Procfile (or the existing one is restarted).
+
+	Uses Worker.all(queue=q) rather than walking get_workers() and calling
+	w.queue_names(). In this RQ version, a forked child worker's hash does
+	not carry the 'queues' field, so queue_names() returns []; the queue
+	membership set at rq:workers:<qname> is the authoritative source.
 	"""
 	try:
-		from frappe.utils.background_jobs import get_workers
+		from rq import Worker
+		from frappe.utils.background_jobs import get_queue
 
-		count = 0
-		for w in get_workers():
-			try:
-				names = list(w.queue_names())
-			except Exception:
-				names = []
-			if any("long" in (n or "") for n in names):
-				count += 1
-		return count
+		return len(Worker.all(queue=get_queue("long")))
 	except Exception:
 		return -1  # unknown
 
