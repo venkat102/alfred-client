@@ -722,75 +722,156 @@
 	display: flex; flex-direction: column; gap: 12px;
 }
 .alfred-message {
-	max-width: 85%; padding: 10px 14px; border-radius: 12px;
+	max-width: 85%; padding: 10px 14px; border-radius: 14px;
 	font-size: var(--text-base, 14px); line-height: 1.5; word-wrap: break-word;
 }
-.alfred-msg-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.alfred-agent-badge {
-	font-size: 11px; font-weight: 600; color: var(--purple-600, #7c3aed);
-	background: var(--purple-50, #f3e8ff); padding: 1px 8px; border-radius: 10px;
+.alfred-msg-header {
+	display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+	flex-wrap: wrap;
 }
-.alfred-msg-time { font-size: 10px; }
+.alfred-msg-time { font-size: 10px; margin-left: auto; }
 
+/* User bubble: gradient + shadow + kept bottom-right corner for chat affordance */
 .alfred-msg-user {
-	align-self: flex-end; background: var(--blue-500, #2490ef);
+	align-self: flex-end;
+	background: linear-gradient(135deg, var(--blue-500, #2490ef), var(--purple-600, #7c3aed));
 	color: white; border-bottom-right-radius: 4px;
+	box-shadow: 0 3px 10px rgba(36, 144, 239, 0.18);
+	border: none;
 }
-.alfred-msg-user .alfred-msg-time { color: rgba(255,255,255,0.7); }
+.alfred-msg-user .alfred-msg-time { color: rgba(255,255,255,0.75); }
 .alfred-msg-user .alfred-msg-header { display: none; }
+.alfred-msg-user code {
+	background: rgba(255, 255, 255, 0.18); color: white;
+	padding: 1px 5px; border-radius: 4px;
+}
+
+/* Assistant bubble: card treatment replaces flat gray */
 .alfred-msg-agent {
-	align-self: flex-start; background: var(--subtle-fg, #f0f0f0);
-	color: var(--text-color, #333); border-bottom-left-radius: 4px;
+	align-self: flex-start;
+	background: var(--bg-color, white);
+	border: 1px solid var(--border-color, #e5e7eb);
+	border-radius: var(--alfred-card-radius);
+	color: var(--text-color, #333);
+	box-shadow: var(--alfred-card-shadow);
 }
 .alfred-msg-system { align-self: center; max-width: 90%; text-align: center; font-size: 12px; }
 .alfred-status-msg { color: var(--text-muted, #999); font-style: italic; }
 
-/* Agent step messages - live progress feed in chat */
-.alfred-agent-step-msg {
-	display: flex; align-items: center; gap: 8px;
-	font-size: 13px; color: var(--text-muted, #888); padding: 2px 0;
+/* Agent-step rows borrow the .alfred-step vocabulary so the transcript
+ * progress feed and the preview pipeline read identically. */
+.alfred-msg-type-agent-step {
+	background: none; border: none; box-shadow: none;
+	padding: 0; margin: 0; max-width: 100%;
 }
-.alfred-step-icon { font-size: 10px; min-width: 14px; text-align: center; }
-.alfred-msg-type-agent-step { padding: 2px 12px; margin: 0; background: none; }
 .alfred-msg-type-agent-step .alfred-msg-header { display: none; }
 .alfred-msg-type-agent-step .alfred-msg-content { padding: 0; }
 
-/* Error messages (UX-23) */
-.alfred-error-msg {
-	background: var(--red-50, #fff5f5); padding: 10px 14px;
-	border-radius: 8px; border-left: 3px solid var(--red-500, #e24c4c);
+/* Error card: banner-tone card with icon chip + title + technical
+ * details collapse + primary Retry. */
+.alfred-error-card {
+	display: flex; gap: 12px;
+	background: var(--alfred-tone-danger-50);
+	border: 1px solid var(--alfred-tone-danger-200);
+	border-left: 3px solid var(--alfred-tone-danger-500);
+	border-radius: var(--alfred-card-radius);
+	padding: 12px 14px;
 }
-.alfred-error-user-msg { color: var(--red-600, #e24c4c); font-weight: 500; margin-bottom: 4px; }
-.alfred-error-details { margin-top: 6px; }
-.alfred-error-details summary { cursor: pointer; }
+.alfred-error-icon {
+	width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+	display: flex; align-items: center; justify-content: center;
+	background: var(--alfred-tone-danger-200);
+	color: var(--alfred-tone-danger-700);
+	font-size: 14px;
+}
+.alfred-error-body { flex: 1; min-width: 0; }
+.alfred-error-title {
+	color: var(--alfred-tone-danger-700); font-weight: 600;
+	margin-bottom: 6px; line-height: 1.4;
+}
+.alfred-error-details { margin: 6px 0 10px; }
+.alfred-error-details summary {
+	cursor: pointer; font-size: 11px; font-weight: 600;
+	text-transform: uppercase; letter-spacing: 0.5px;
+	color: var(--text-muted, #6b7280); user-select: none;
+}
 .alfred-error-details pre {
-	margin-top: 4px; font-size: 11px; color: var(--text-muted, #999);
+	margin: 6px 0 0; font-size: 11px; color: var(--text-muted, #6b7280);
 	white-space: pre-wrap; word-break: break-all;
+	background: rgba(0, 0, 0, 0.03); padding: 8px; border-radius: 6px;
 }
+.alfred-error-retry { margin-top: 4px; }
 
-/* Question card (UX-14) */
+/* Primary Alfred button: gradient fill + subtle shadow + focus ring.
+ * Replaces raw Bootstrap btn-primary / btn-default for in-content CTAs. */
+.alfred-btn-primary {
+	display: inline-flex; align-items: center; justify-content: center;
+	gap: 6px; padding: 7px 14px; border-radius: 8px;
+	font-size: 12px; font-weight: 600; line-height: 1;
+	color: white; border: 1px solid transparent;
+	background: linear-gradient(135deg, var(--blue-500, #2490ef), var(--blue-600, #1d4ed8));
+	box-shadow: 0 2px 6px rgba(36, 144, 239, 0.24);
+	cursor: pointer; text-decoration: none;
+	transition: transform 0.08s, box-shadow 0.15s, filter 0.15s;
+}
+.alfred-btn-primary:hover { filter: brightness(1.05); box-shadow: 0 3px 10px rgba(36, 144, 239, 0.32); }
+.alfred-btn-primary:active { transform: translateY(1px); box-shadow: 0 1px 3px rgba(36, 144, 239, 0.2); }
+.alfred-btn-primary:focus-visible { outline: 2px solid var(--alfred-tone-info-200); outline-offset: 2px; }
+.alfred-btn-primary[disabled] { opacity: 0.6; cursor: not-allowed; filter: saturate(0.6); }
+
+/* Question card: assistant-waiting prompt with clickable option cards */
 .alfred-question-card {
-	display: flex; gap: 10px; background: var(--blue-50, #eff6ff);
-	padding: 12px 14px; border-radius: 8px; border: 1px solid var(--blue-200, #bfdbfe);
+	display: flex; gap: 12px;
+	background: var(--alfred-tone-info-50);
+	border: 1px solid var(--alfred-tone-info-200);
+	border-left: 3px solid var(--alfred-tone-info-500);
+	padding: 14px;
 }
 .alfred-question-icon {
-	width: 28px; height: 28px; border-radius: 50%; background: var(--blue-500, #2490ef);
-	color: white; font-size: 16px; font-weight: 700;
-	display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+	width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+	display: flex; align-items: center; justify-content: center;
+	background: var(--alfred-tone-info-500); color: white;
+	font-size: 15px; font-weight: 700;
 }
-.alfred-question-body { flex: 1; }
-.alfred-question-text { margin-bottom: 8px; }
-.alfred-question-waiting { margin-top: 8px; font-style: italic; }
-.alfred-question-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.alfred-option-btn { border-radius: 16px !important; }
+.alfred-question-body { flex: 1; min-width: 0; }
+.alfred-question-text { margin-bottom: 10px; line-height: 1.5; }
+.alfred-question-waiting { margin-top: 10px; }
+.alfred-question-options {
+	display: flex; flex-direction: column; gap: 6px;
+	margin-top: 10px;
+}
+.alfred-option-btn {
+	padding: 10px 12px; font-size: 13px;
+}
 
-/* Typing indicator (UX-06) */
+/* Mode switch row: compact chip + optional reason sentence */
+.alfred-mode-switch-msg {
+	display: flex; align-items: center; gap: 8px;
+	font-size: 12px; color: var(--text-muted, #6b7280);
+	padding: 4px 0; flex-wrap: wrap;
+}
+.alfred-mode-switch-prefix { font-weight: 500; }
+.alfred-mode-switch-reason { color: var(--text-muted, #9ca3af); font-style: italic; }
+.alfred-msg-type-mode_switch {
+	background: none; border: none; box-shadow: none;
+	padding: 0; margin: 0; max-width: 100%;
+	align-self: center;
+}
+.alfred-msg-type-mode_switch .alfred-msg-header { display: none; }
+.alfred-msg-type-mode_switch .alfred-msg-content { padding: 0; }
+
+/* Typing indicator: adopts the assistant-card look */
 .alfred-typing-indicator {
-	align-self: flex-start; padding: 14px 18px; background: var(--subtle-fg, #f0f0f0);
+	align-self: flex-start; padding: 14px 18px;
+	background: var(--bg-color, white);
+	border: 1px solid var(--border-color, #e5e7eb);
+	border-radius: var(--alfred-card-radius);
+	box-shadow: var(--alfred-card-shadow);
 }
 .alfred-typing-dots { display: flex; gap: 4px; align-items: center; }
 .alfred-typing-dots span {
-	width: 8px; height: 8px; border-radius: 50%; background: var(--gray-500, #999);
+	width: 8px; height: 8px; border-radius: 50%;
+	background: var(--alfred-tone-info-500);
 	animation: alfred-typing-bounce 1.4s ease-in-out infinite;
 }
 .alfred-typing-dots span:nth-child(2) { animation-delay: 0.2s; }

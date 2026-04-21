@@ -1,13 +1,13 @@
 <template>
 	<div :class="['alfred-message', `alfred-msg-${message.role || 'system'}`, `alfred-msg-type-${message.message_type || 'text'}`]">
 		<div v-if="message.role !== 'user'" class="alfred-msg-header">
-			<span v-if="message.agent_name" class="alfred-agent-badge">{{ message.agent_name }}</span>
-			<span v-if="modeBadge" :class="['alfred-mode-badge', `alfred-mode-${modeBadge.toLowerCase()}`]">{{ modeBadge }}</span>
+			<span v-if="message.agent_name" class="alfred-chip alfred-chip--neutral alfred-agent-badge">{{ message.agent_name }}</span>
+			<span v-if="modeBadge" :class="['alfred-chip', `alfred-chip--${modeBadge.toLowerCase()}`]">{{ modeBadge }}</span>
 			<span class="alfred-msg-time text-muted text-xs">{{ formattedTime }}</span>
 		</div>
 		<div class="alfred-msg-content">
 			<!-- Question -->
-			<div v-if="message.message_type === 'question'" class="alfred-question-card">
+			<div v-if="message.message_type === 'question'" class="alfred-card alfred-question-card">
 				<div class="alfred-question-icon">?</div>
 				<div class="alfred-question-body">
 					<div class="alfred-question-text">{{ message.content }}</div>
@@ -15,34 +15,45 @@
 						<button
 							v-for="opt in options"
 							:key="opt"
-							class="btn btn-xs btn-default alfred-option-btn"
+							class="alfred-card alfred-card--choice alfred-option-btn"
 							@click="$emit('option-click', opt)"
 						>
 							{{ opt }}
 						</button>
 					</div>
-					<div class="alfred-question-waiting text-muted text-xs">
-						{{ __("Alfred is waiting for your response") }}
+					<div class="alfred-question-waiting">
+						<span class="alfred-chip alfred-chip--info">{{ __("Waiting for you") }}</span>
 					</div>
 				</div>
 			</div>
 
 			<!-- Error -->
-			<div v-else-if="message.message_type === 'error'" class="alfred-error-msg">
-				<div class="alfred-error-user-msg">{{ friendlyError }}</div>
-				<details v-if="technicalError" class="alfred-error-details">
-					<summary class="text-xs text-muted">{{ __("Technical details") }}</summary>
-					<pre class="text-xs">{{ technicalError }}</pre>
-				</details>
-				<button class="btn btn-xs btn-default" style="margin-top: 6px;" @click="$emit('retry')">
-					{{ __("Retry") }}
-				</button>
+			<div v-else-if="message.message_type === 'error'" class="alfred-error-card">
+				<div class="alfred-error-icon" aria-hidden="true">&#9888;</div>
+				<div class="alfred-error-body">
+					<div class="alfred-error-title">{{ friendlyError }}</div>
+					<details v-if="technicalError" class="alfred-error-details">
+						<summary>{{ __("Technical details") }}</summary>
+						<pre>{{ technicalError }}</pre>
+					</details>
+					<button class="alfred-btn-primary alfred-error-retry" @click="$emit('retry')">
+						{{ __("Retry") }}
+					</button>
+				</div>
 			</div>
 
 			<!-- Agent step (live progress) -->
-			<div v-else-if="message.message_type === 'agent-step'" class="alfred-agent-step-msg">
-				<span class="alfred-step-icon">{{ message.step_status === 'done' ? '&#10003;' : '&#9679;' }}</span>
-				<span :class="{ 'text-muted': message.step_status === 'done' }">{{ message.content }}</span>
+			<div
+				v-else-if="message.message_type === 'agent-step'"
+				:class="[
+					'alfred-step',
+					message.step_status === 'done' ? 'alfred-step--done' : 'alfred-step--current',
+				]"
+			>
+				<span class="alfred-step-dot" aria-hidden="true">
+					{{ message.step_status === 'done' ? '\u2713' : '\u25CF' }}
+				</span>
+				<span class="alfred-step-label">{{ message.content }}</span>
 			</div>
 
 			<!-- Status -->
@@ -51,9 +62,10 @@
 			</div>
 
 			<!-- Mode switch notice (three-mode chat orchestrator decision) -->
-			<div v-else-if="message.message_type === 'mode_switch'" class="alfred-mode-switch-msg text-xs text-muted">
-				<span class="alfred-mode-switch-icon">&#8651;</span>
-				{{ modeSwitchLabel }}
+			<div v-else-if="message.message_type === 'mode_switch'" class="alfred-mode-switch-msg">
+				<span class="alfred-mode-switch-prefix">{{ __("Switched to") }}</span>
+				<span :class="['alfred-chip', `alfred-chip--${modeSwitchMode || 'neutral'}`]">{{ modeSwitchModeLabel }}</span>
+				<span v-if="modeSwitchReason" class="alfred-mode-switch-reason">{{ modeSwitchReason }}</span>
 			</div>
 
 			<!-- Chat reply (conversational mode, no crew) -->
@@ -135,21 +147,26 @@ const planData = computed(() => {
 	} catch { return null; }
 });
 
-// Three-mode chat: user-visible label for a mode_switch event. Falls back
-// to a generic sentence if the reason/mode are missing.
-const modeSwitchLabel = computed(() => {
+// Three-mode chat: pieces of a mode_switch event, rendered as a
+// chip + optional reason rather than a single prose sentence.
+const _modeSwitchMeta = computed(() => {
 	try {
 		const meta = typeof props.message.metadata === "string"
 			? JSON.parse(props.message.metadata)
 			: props.message.metadata;
-		const mode = (meta?.mode || props.message.mode || "").toLowerCase();
-		const reason = meta?.reason || "";
-		const pretty = mode ? mode.charAt(0).toUpperCase() + mode.slice(1) : "";
-		if (pretty && reason) return `Switched to ${pretty} mode: ${reason}`;
-		if (pretty) return `Switched to ${pretty} mode`;
-		return props.message.content || "Mode changed";
-	} catch { return props.message.content || "Mode changed"; }
+		return meta || {};
+	} catch { return {}; }
 });
+const modeSwitchMode = computed(() => {
+	const m = (_modeSwitchMeta.value?.mode || props.message.mode || "").toLowerCase();
+	return ["auto", "dev", "plan", "insights"].includes(m) ? m : "";
+});
+const modeSwitchModeLabel = computed(() => {
+	const m = modeSwitchMode.value;
+	if (!m) return props.message.content || __("another mode");
+	return m.charAt(0).toUpperCase() + m.slice(1);
+});
+const modeSwitchReason = computed(() => _modeSwitchMeta.value?.reason || "");
 
 // Error mapping
 const ERROR_MAP = [
