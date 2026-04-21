@@ -257,6 +257,32 @@ height the Frappe page wrapper gives it (no more `calc(100vh - 80px)`)
 and `min-height: 0` cascades through the flex children so overflow
 never escapes to the body.
 
+### Frontend design system
+
+Every surface (chat transcript, preview states, sidebar rows, toolbar
+chrome, plan-doc panel) composes from a small vocabulary defined in
+`alfred_client/alfred_settings/page/alfred_chat/alfred_chat.css`. New
+UI work should reuse these primitives rather than inventing gradients,
+radii, or tone sets:
+
+| Primitive | Purpose |
+|---|---|
+| `.alfred-mark` (`--chat`, `--preview`, `--sm`, `.alfred-mark-pulse`) | Gradient hero glyphs used by EMPTY / WORKING / brand / DEPLOYED. |
+| `.alfred-card` (`--hover`, `--choice`, `--muted`, `--warn`, `--info`) | Workhorse container: conv rows, hint cards, plan steps, preview blocks. |
+| `.alfred-chip` with tone modifiers (`--info / --success / --warn / --danger / --neutral / --finished`) and mode modifiers (`--auto / --dev / --plan / --insights`) | Role pills, mode badges, status indicators. |
+| `.alfred-banner` (same tone modifiers) | Replaces validation-ok / -warn, status-rolled-back, deploy-success, saturation-amber / -red. |
+| `.alfred-step` + `.alfred-step-dot` (`--done / --current / --failed`) | Vertical progress rows shared by transcript agent-step, preview DEPLOYING stream, and `PhasePipeline`. |
+| `.alfred-btn-primary` (`--success / --warn`), `.alfred-btn-ghost` (`--danger`), `.alfred-btn-spinner` | First-class Alfred buttons. Replaces raw Bootstrap `btn btn-success / -warning / -default / -danger` inside the chat + preview. |
+| `.alfred-eyebrow` | 11px uppercase section label (ticker "Live", activity log, plan "Steps" / "Risks"). |
+
+Tokens (`--alfred-mark-*`, `--alfred-mode-*`, `--alfred-tone-*`,
+`--alfred-card-radius / --alfred-chip-radius / --alfred-card-shadow`)
+are scoped under `.alfred-page` so nothing leaks into Frappe Desk.
+Frappe's empty `.navbar-breadcrumbs` strip is hidden while the chat
+page is mounted via a `body.alfred-page-active` class toggled in
+`AlfredChatApp.vue`'s `onMounted` / `onUnmounted`; the chat renders
+its own `Alfred > <conversation title>` crumb inside the toolbar.
+
 ## Multi-Model Tiers
 
 Standalone LLM calls (outside CrewAI) and CrewAI agents can use different
