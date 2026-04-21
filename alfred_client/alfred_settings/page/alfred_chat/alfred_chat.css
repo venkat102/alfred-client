@@ -6,13 +6,18 @@
    bursting out and producing a body-level scrollbar (which is what made
    the chat and preview "scroll together" on pages with taller Frappe
    toolbars). */
+/* Root: the Vue app mounts with class .alfred-app. These rules also
+ * carry the design tokens so every descendant (primitives + per-
+ * surface rules) can resolve var(--alfred-*). Scoping here instead of
+ * :root keeps the tokens out of Frappe Desk globally. */
+.alfred-app,
 .alfred-page {
 	display: flex; flex-direction: column; height: 100%;
 	min-height: 0; overflow: hidden;
 
-	/* ── Design tokens (scoped to .alfred-page so they never leak into
-	 *    Frappe Desk). All downstream surfaces read these. Keeping them
-	 *    here means switching a shade or gradient is a single edit. */
+	/* ── Design tokens (scoped so they never leak into Frappe Desk).
+	 *    All downstream surfaces read these. Keeping them here means
+	 *    switching a shade or gradient is a single edit. */
 
 	/* Marks (hero glyphs on EMPTY / WORKING / banners / toolbar) */
 	--alfred-mark-chat: linear-gradient(135deg, var(--blue-500, #2490ef), var(--purple-600, #7c3aed));
