@@ -246,25 +246,24 @@ def get_conversation_health(conversation):
 		limit_page_length=1,
 	)
 
-	# Check if the RQ background job is running
-	from frappe.utils.background_jobs import get_jobs
-	site_jobs = get_jobs(site=frappe.local.site, queue="long")
-	job_running = False
-	for site, jobs in site_jobs.items():
-		for job in jobs:
-			if isinstance(job, str) and conversation in job:
-				job_running = True
-				break
-			elif isinstance(job, dict) and conversation in str(job.get("job_name", "")):
-				job_running = True
-				break
+	# Check if the RQ background job is running. Delegate to the same helper
+	# start_conversation uses for its idempotency guard so the two paths can
+	# never disagree. The previous inline check used get_jobs() with the
+	# default key="method", which returns method path strings - the
+	# conversation name is never embedded there, so the substring test
+	# always matched nothing and background_job_running was permanently
+	# False even with live managers.
+	from alfred_client.api.websocket_client import (
+		_conversation_job_in_flight,
+		_long_queue_worker_count,
+	)
+	job_running = _conversation_job_in_flight(conversation)
 
 	# How many workers are actually serving the 'long' queue. If this is
 	# zero, no connection manager can run until the operator starts
 	# worker_long (Procfile + bench restart). This is usually the real
 	# root cause when background_job_running is false with queued items
 	# pending - surface it first so the health toast points at the fix.
-	from alfred_client.api.websocket_client import _long_queue_worker_count
 	long_worker_count = _long_queue_worker_count()
 
 	# Check Redis queue depth
