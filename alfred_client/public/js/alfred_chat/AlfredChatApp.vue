@@ -57,6 +57,22 @@
 							>
 								<span class="alfred-btn-glyph" aria-hidden="true">&#8592;</span>
 							</button>
+							<!-- Brand + breadcrumb: small gradient mark plus
+							     "Alfred > <conversation title>" crumb. The
+							     "Alfred" segment acts as a secondary back
+							     affordance to the conversation list. -->
+							<div class="alfred-brand">
+								<div class="alfred-mark alfred-mark--chat alfred-mark--sm" aria-hidden="true">A</div>
+								<nav class="alfred-breadcrumb" :aria-label="__('Breadcrumb')">
+									<button
+										type="button"
+										class="alfred-breadcrumb-root"
+										@click="goBack"
+									>{{ __("Alfred") }}</button>
+									<span class="alfred-breadcrumb-sep" aria-hidden="true">&rsaquo;</span>
+									<span class="alfred-chat-title" :title="conversationSummary">{{ conversationSummary }}</span>
+								</nav>
+							</div>
 						</div>
 
 						<div class="alfred-toolbar-center">
@@ -66,7 +82,7 @@
 						<div class="alfred-toolbar-right">
 							<button
 								type="button"
-								class="alfred-primary-btn"
+								class="alfred-primary-btn alfred-primary-btn--gradient"
 								@click="newConversationFromChat"
 								:aria-label="__('Start a new conversation')"
 								:title="__('Start a new conversation')"
@@ -101,7 +117,7 @@
 										role="menuitem"
 										@click="menuAction(checkHealth)"
 									>
-										<span class="alfred-menu-item-icon" aria-hidden="true">&#9829;</span>
+										<span class="alfred-menu-item-icon alfred-menu-item-icon--info" aria-hidden="true">&#9829;</span>
 										<span class="alfred-menu-item-label">{{ __("Check health") }}</span>
 										<span class="alfred-menu-item-hint">{{ __("Redis, worker, app") }}</span>
 									</button>
@@ -112,7 +128,7 @@
 										role="menuitem"
 										@click="menuAction(() => shareConversation(currentConversation))"
 									>
-										<span class="alfred-menu-item-icon" aria-hidden="true">&#8599;</span>
+										<span class="alfred-menu-item-icon alfred-menu-item-icon--neutral" aria-hidden="true">&#8599;</span>
 										<span class="alfred-menu-item-label">{{ __("Share conversation") }}</span>
 									</button>
 									<div v-if="isCurrentConvOwner" class="alfred-menu-separator" role="separator"></div>
@@ -123,7 +139,7 @@
 										role="menuitem"
 										@click="menuAction(deleteConversation)"
 									>
-										<span class="alfred-menu-item-icon" aria-hidden="true">&#10005;</span>
+										<span class="alfred-menu-item-icon alfred-menu-item-icon--danger" aria-hidden="true">&#10005;</span>
 										<span class="alfred-menu-item-label">{{ __("Delete conversation") }}</span>
 									</button>
 								</div>
@@ -175,8 +191,8 @@
 					<div v-if="activityLog.length" class="alfred-activity-log">
 						<div class="alfred-activity-log-toggle" @click="activityLogOpen = !activityLogOpen">
 							<span :class="['alfred-conn-dot', `alfred-dot-${connectionState}`]"></span>
-							<span class="text-xs">{{ connectionLabel }}</span>
-							<span class="text-muted text-xs" style="margin-left: auto;">
+							<span class="alfred-eyebrow">{{ connectionLabel }}</span>
+							<span class="alfred-activity-log-count">
 								{{ activityLogOpen ? '&#9662;' : '&#9656;' }} {{ __("Activity") }} ({{ activityLog.length }})
 							</span>
 						</div>
@@ -212,7 +228,9 @@
 
 					<!-- Live activity ticker - shows what the agent is doing right now -->
 					<div v-if="isProcessing && currentActivity" class="alfred-activity-ticker" :key="currentActivity">
-						<span class="alfred-activity-ticker-icon">&#9679;</span>
+						<span class="alfred-activity-ticker-icon" aria-hidden="true">&#9679;</span>
+						<span class="alfred-eyebrow alfred-activity-ticker-label">{{ __("Live") }}</span>
+						<span class="alfred-activity-ticker-sep" aria-hidden="true">&middot;</span>
 						<span class="alfred-activity-ticker-text">{{ currentActivity }}</span>
 					</div>
 
@@ -510,6 +528,11 @@ onMounted(() => {
 	document.addEventListener("click", handleDocumentClick);
 	document.addEventListener("keydown", handleDocumentKey);
 	restoreSplitterWidth();
+	// Mark the body while the chat page is mounted so our scoped CSS can
+	// hide Frappe's empty .navbar-breadcrumbs strip (we render our own
+	// breadcrumb inside the toolbar). Purely additive: the class is
+	// removed on unmount so every other Desk page is unaffected.
+	document.body.classList.add("alfred-page-active");
 	// Restore conversation from URL on page load / refresh
 	const convId = getConversationFromRoute();
 	if (convId) {
@@ -525,6 +548,7 @@ onUnmounted(() => {
 	document.removeEventListener("keydown", handleDocumentKey);
 	document.removeEventListener("mousemove", handleSplitterMove);
 	document.removeEventListener("mouseup", endSplitterDrag);
+	document.body.classList.remove("alfred-page-active");
 	// Listeners persist on frappe.realtime - they're global and idempotent
 });
 

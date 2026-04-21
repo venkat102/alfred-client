@@ -62,6 +62,13 @@
 }
 .alfred-main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
+/* Hide Frappe Desk's empty breadcrumb strip while the Alfred Chat page
+ * is mounted. The body.alfred-page-active class is toggled by the Vue
+ * app in onMounted / onUnmounted, so every other Desk page is
+ * unaffected. Alfred renders its own in-toolbar breadcrumb, so the
+ * default strip is redundant vertical space. */
+body.alfred-page-active .navbar-breadcrumbs { display: none; }
+
 /* ── Design primitives (shared vocabulary) ────────────────────────
  * Every surface (chat transcript, preview states, sidebar, toolbar
  * chrome) composes from these. If you find yourself copy-pasting a
@@ -311,12 +318,10 @@
 	display: inline-block;
 	width: 6px; height: 6px; border-radius: 50%;
 	background: white;
-	animation: alfred-phase-dot-pulse 1.2s ease-in-out infinite;
+	animation: alfred-step-pulse 1.2s ease-in-out infinite;
 }
-@keyframes alfred-phase-dot-pulse {
-	0%, 100% { opacity: 1; transform: scale(1); }
-	50%      { opacity: 0.45; transform: scale(0.6); }
-}
+/* alfred-phase-dot-pulse retired; the shared alfred-step-pulse keyframe
+ * now drives both the pipeline dot and the preview step-list dots. */
 .alfred-phase-active .alfred-phase-label {
 	max-width: 280px;
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -439,39 +444,107 @@
 .alfred-conversation-list { flex: 1; overflow-y: auto; padding: 8px; }
 .alfred-conv-list-header {
 	display: flex; align-items: center; justify-content: space-between;
-	padding: 8px 12px; border-bottom: 1px solid var(--border-color, #e2e2e2);
+	padding: 10px 12px; border-bottom: 1px solid var(--border-color, #e2e2e2);
 	position: sticky; top: 0; background: white; z-index: 1;
 }
-.alfred-conv-list-title { font-weight: 600; font-size: var(--text-sm, 13px); color: var(--text-color, #333); }
-.alfred-conv-items { display: flex; flex-direction: column; gap: 4px; }
+.alfred-conv-list-title {
+	font-weight: 600; font-size: var(--text-base, 14px);
+	color: var(--text-color, #333);
+}
+.alfred-conv-list-new { padding: 5px 10px; font-size: 11px; }
+.alfred-conv-items {
+	display: flex; flex-direction: column; gap: 8px; padding: 8px;
+}
+
+/* Conversation row: card treatment with mode chip, status chip,
+ * preview line, footer with timestamp + hover action buttons. */
 .alfred-conv-item {
-	padding: 10px 12px; border-radius: 8px; cursor: pointer;
-	transition: background 0.15s; border: 1px solid transparent;
+	padding: 12px 14px; cursor: pointer;
 }
 .alfred-conv-item:hover, .alfred-conv-item:focus {
-	background: var(--subtle-fg, #f5f5f5);
-	border-color: var(--border-color, #e2e2e2); outline: none;
+	border-color: var(--alfred-tone-info-200);
+	box-shadow: var(--alfred-card-hover-shadow);
+	background: var(--bg-color, white);
+	outline: none; transform: translateY(-1px);
 }
-.alfred-conv-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-.alfred-conv-header-left { display: flex; align-items: center; gap: 6px; }
-.alfred-conv-header-right { display: flex; align-items: center; gap: 6px; }
+.alfred-conv-header {
+	display: flex; justify-content: space-between; align-items: flex-start;
+	gap: 6px; margin-bottom: 8px;
+}
+.alfred-conv-header-left {
+	display: flex; align-items: center; gap: 6px;
+	flex-wrap: wrap; min-width: 0;
+}
+.alfred-conv-header-right { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .alfred-conv-action {
-	opacity: 0; padding: 0 4px; line-height: 1; font-size: 13px;
-	color: var(--text-muted, #999); background: none; border: none; cursor: pointer;
-	transition: opacity 0.15s, color 0.15s;
+	opacity: 0; width: 22px; height: 22px; line-height: 1; font-size: 12px;
+	color: var(--text-muted, #9ca3af);
+	background: none; border: none; border-radius: 6px; cursor: pointer;
+	display: inline-flex; align-items: center; justify-content: center;
+	transition: opacity 0.15s, color 0.15s, background 0.15s;
 }
+.alfred-conv-action:hover { background: var(--subtle-fg, #f3f4f6); }
 .alfred-conv-item:hover .alfred-conv-action,
 .alfred-conv-item:focus .alfred-conv-action { opacity: 1; }
-.alfred-conv-delete:hover { color: var(--red-500, #e24c4c); }
-.alfred-conv-shared-badge {
-	font-size: 10px; padding: 1px 6px; border-radius: 8px;
-	background: var(--blue-50, #eff6ff); color: var(--blue-600, #1a73e8);
-	font-weight: 600;
+.alfred-conv-delete:hover { color: var(--alfred-tone-danger-500); background: var(--alfred-tone-danger-50); }
+.alfred-conv-shared-badge { margin-left: auto; }
+.alfred-conv-preview {
+	color: var(--text-color, #374151); font-size: 13px;
+	line-height: 1.45;
+	display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+	overflow: hidden; text-overflow: ellipsis;
+	margin-bottom: 8px;
 }
-.alfred-conv-summary {
-	color: var(--text-color, #333); font-size: 13px;
-	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.alfred-conv-footer {
+	display: flex; align-items: center; gap: 8px;
+	font-size: 11px; color: var(--text-muted, #9ca3af);
 }
+.alfred-conv-time { font-variant-numeric: tabular-nums; }
+.alfred-conv-user { margin-left: auto; font-size: 11px; }
+
+/* Conversation list empty state: mirrors the chat-side welcome
+ * (mark + hero title + hints cards + starter prompts + primary CTA). */
+.alfred-conv-empty-state {
+	display: flex; flex-direction: column; align-items: center;
+	justify-content: flex-start; gap: 22px;
+	padding: 32px 20px; min-height: 100%; text-align: center;
+	overflow-y: auto;
+}
+.alfred-conv-empty-hero { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.alfred-conv-empty-title {
+	margin: 6px 0 0; font-size: 18px; font-weight: 600;
+	color: var(--text-color, #333);
+}
+.alfred-conv-empty-subtitle {
+	margin: 0; max-width: 400px; font-size: 13px;
+	color: var(--text-muted, #6b7280); line-height: 1.5;
+}
+.alfred-conv-empty-hints,
+.alfred-conv-empty-starters {
+	display: flex; flex-direction: column; gap: 8px;
+	width: 100%; max-width: 420px; text-align: left;
+}
+.alfred-conv-empty-hints-label,
+.alfred-conv-empty-starters-label { padding-left: 4px; }
+.alfred-conv-empty-hint {
+	display: flex; gap: 12px; padding: 12px 14px;
+	font-size: 13px; line-height: 1.5;
+}
+.alfred-conv-empty-hint-icon {
+	flex-shrink: 0; width: 28px; height: 28px; padding: 0;
+	border-radius: 8px; justify-content: center;
+}
+.alfred-conv-empty-hint strong { display: block; color: var(--text-color, #333); margin-bottom: 2px; }
+.alfred-conv-empty-hint p { margin: 0; color: var(--text-muted, #6b7280); font-size: 12px; }
+.alfred-conv-empty-starter {
+	display: flex; align-items: center; gap: 10px;
+	padding: 11px 14px; font-size: 13px;
+}
+.alfred-conv-empty-starter-icon {
+	color: var(--alfred-tone-info-500); font-weight: 700;
+	font-size: 16px; flex-shrink: 0; width: 14px;
+}
+.alfred-conv-empty-cta { margin-top: 4px; padding: 10px 20px; font-size: 13px; }
 
 /* ── Chat Area ─────────────────────────────────────────────────── */
 .alfred-chat-area { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0; }
@@ -510,9 +583,33 @@
 .alfred-chat-title {
 	min-width: 0;
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-	font-size: 13px;
-	font-weight: 500;
-	color: var(--text-color, #374151);
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--text-color, #111827);
+}
+
+/* Brand + breadcrumb inside the left zone of the toolbar.
+ *   [mark]  Alfred  >  <conversation title>
+ * The mark is the small chat gradient glyph; "Alfred" is a back
+ * affordance styled as a muted link that becomes the primary text on
+ * hover. The conversation title ellipsises as the chat area narrows. */
+.alfred-brand {
+	display: flex; align-items: center; gap: 10px;
+	min-width: 0; flex: 1 1 0;
+}
+.alfred-breadcrumb {
+	display: flex; align-items: center; gap: 6px;
+	min-width: 0; font-size: 14px;
+}
+.alfred-breadcrumb-root {
+	background: none; border: none; padding: 0;
+	color: var(--text-muted, #6b7280); font-weight: 500;
+	font-size: 14px; cursor: pointer;
+	transition: color 0.15s;
+}
+.alfred-breadcrumb-root:hover { color: var(--alfred-tone-info-700); }
+.alfred-breadcrumb-sep {
+	color: var(--text-muted, #9ca3af); font-size: 14px; flex-shrink: 0;
 }
 
 /* Legacy vertical divider - still used by callers that need it,
@@ -580,11 +677,25 @@
 	display: inline-flex;
 	align-items: center; justify-content: center;
 	width: 22px; height: 22px;
-	border-radius: 5px;
+	border-radius: 6px;
 	background: var(--bg-tertiary, #f3f4f6);
 	color: var(--text-muted, #6b7280);
 	font-size: 12px;
 	flex-shrink: 0;
+}
+/* Tone variants: icon chip tinted to match the action's intent so
+ * Health reads info-blue, Share reads neutral, Delete reads danger. */
+.alfred-menu-item-icon--info {
+	background: var(--alfred-tone-info-50);
+	color: var(--alfred-tone-info-700);
+}
+.alfred-menu-item-icon--neutral {
+	background: var(--alfred-tone-neutral-50);
+	color: var(--alfred-tone-neutral-700);
+}
+.alfred-menu-item-icon--danger {
+	background: var(--alfred-tone-danger-50);
+	color: var(--alfred-tone-danger-700);
 }
 .alfred-menu-item-label { flex: 1; font-weight: 500; }
 .alfred-menu-item-hint {
@@ -597,18 +708,14 @@
 	margin: 4px 2px;
 	background: var(--border-color, #eef0f3);
 }
-.alfred-menu-item-danger { color: var(--red-600, #dc2626); }
-.alfred-menu-item-danger .alfred-menu-item-icon {
-	background: var(--red-50, #fef2f2);
-	color: var(--red-500, #ef4444);
-}
+.alfred-menu-item-danger { color: var(--alfred-tone-danger-700); }
 .alfred-menu-item-danger:hover {
-	background: var(--red-50, #fef2f2);
-	color: var(--red-700, #b91c1c);
+	background: var(--alfred-tone-danger-50);
+	color: var(--alfred-tone-danger-700);
 }
-.alfred-menu-item-danger:hover .alfred-menu-item-icon {
-	background: var(--red-100, #fee2e2);
-	color: var(--red-600, #dc2626);
+.alfred-menu-item-danger:hover .alfred-menu-item-icon--danger {
+	background: var(--alfred-tone-danger-200);
+	color: var(--alfred-tone-danger-700);
 }
 
 /* Primary action pill: dark background, white text, icon + label.
@@ -632,6 +739,20 @@
 }
 .alfred-primary-btn:active { transform: translateY(1px); }
 .alfred-primary-btn i { font-size: 11px; }
+
+/* Gradient variant: used for + New in the chat toolbar and the
+ * conversation-list header. Carries the chat mark's gradient so the
+ * primary CTAs across the page share one identity. */
+.alfred-primary-btn--gradient {
+	background: var(--alfred-mark-chat);
+	border-color: transparent;
+	box-shadow: 0 2px 6px rgba(36, 144, 239, 0.28);
+}
+.alfred-primary-btn--gradient:hover {
+	background: var(--alfred-mark-chat); filter: brightness(1.05);
+	border-color: transparent;
+	box-shadow: 0 3px 10px rgba(36, 144, 239, 0.36);
+}
 
 /* Secondary icon-only button (ghost style). Used for Back, Health,
    Share. 32x32 hit area, icon centered, no background until hover. */
@@ -887,25 +1008,38 @@
 	background: var(--subtle-fg, #f8f8f8); flex-shrink: 0;
 }
 .alfred-activity-log-toggle {
-	display: flex; align-items: center; gap: 6px;
-	padding: 6px 12px; cursor: pointer; user-select: none;
+	display: flex; align-items: center; gap: 8px;
+	padding: 8px 14px; cursor: pointer; user-select: none;
 	font-size: var(--text-sm, 13px);
 }
 .alfred-activity-log-toggle:hover { background: var(--gray-100, #f0f0f0); }
+.alfred-activity-log-count {
+	margin-left: auto; font-size: 11px;
+	color: var(--text-muted, #9ca3af); font-weight: 500;
+}
 .alfred-conn-dot {
 	width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0;
 }
 .alfred-activity-log-entries {
-	max-height: 120px; overflow-y: auto; padding: 0 12px 6px;
-	font-family: var(--font-mono, monospace);
+	max-height: 140px; overflow-y: auto; padding: 2px 12px 8px;
 }
 .alfred-activity-entry {
-	font-size: 11px; padding: 2px 0; display: flex; gap: 8px;
-	color: var(--text-color, #333);
+	font-size: 11px; padding: 3px 8px; display: flex; gap: 8px;
+	color: var(--text-color, #374151);
+	border-left: 2px solid transparent;
+	font-family: var(--font-mono, monospace);
 }
 .alfred-activity-time { flex-shrink: 0; width: 65px; font-variant-numeric: tabular-nums; }
-.alfred-activity-info { color: var(--text-color, #333); }
-.alfred-activity-error { color: var(--red-500, #e24c4c); }
+/* Per-level left rule so success / info / error entries scan fast */
+.alfred-activity-info { border-left-color: var(--alfred-tone-info-500); }
+.alfred-activity-error {
+	color: var(--alfred-tone-danger-700);
+	border-left-color: var(--alfred-tone-danger-500);
+}
+.alfred-activity-warn {
+	color: var(--alfred-tone-warn-700);
+	border-left-color: var(--alfred-tone-warn-500);
+}
 
 /* ── Input Area ────────────────────────────────────────────────── */
 .alfred-input-area {
@@ -1092,16 +1226,18 @@
 .alfred-activity-ticker {
 	display: flex; align-items: center; gap: 8px;
 	padding: 8px 14px; margin: 0 12px 4px 12px;
-	background: var(--blue-50, #e3f2fd); color: var(--blue-900, #0d47a1);
-	border-left: 3px solid var(--blue-500, #2490ef);
-	border-radius: 4px; font-size: 12px;
+	background: var(--alfred-tone-info-50); color: var(--alfred-tone-info-700);
+	border-left: 3px solid var(--alfred-tone-info-500);
+	border-radius: 6px; font-size: 12px;
 	animation: alfred-ticker-in 0.25s ease-out;
 }
 .alfred-activity-ticker-icon {
-	color: var(--blue-500, #2490ef);
+	color: var(--alfred-tone-info-500);
 	animation: alfred-pulse 1.5s ease-in-out infinite;
 	font-size: 10px;
 }
+.alfred-activity-ticker-label { color: var(--alfred-tone-info-700); }
+.alfred-activity-ticker-sep { color: var(--alfred-tone-info-200); }
 .alfred-activity-ticker-text {
 	font-family: var(--font-stack-monospace, monospace);
 	font-size: 11.5px; line-height: 1.4;
