@@ -1,17 +1,23 @@
 <template>
 	<div class="alfred-app">
-		<!-- Status Bar -->
-		<div class="alfred-status-bar">
-			<div class="alfred-agent-status">
-				<span :class="['alfred-status-dot', `alfred-dot-${statusState}`]"></span>
-				<span class="alfred-status-text">{{ statusText }}</span>
-				<span v-if="elapsedTime" class="alfred-elapsed-time text-muted text-xs">({{ elapsedTime }}s)</span>
-				<span v-if="pipelineMode === 'lite'" class="alfred-mode-badge alfred-mode-lite" :title="liteBadgeTooltip">
+		<!-- Flow Strip: one bar that shows EITHER the idle "Ready"
+		     state OR the live agentic pipeline. Replaces the cramped
+		     status-bar + phase-pipeline split with a single breathing
+		     row that reads from across the room. -->
+		<div class="alfred-flow-strip" :data-state="statusState">
+			<!-- Idle / Completed / Error: hero pulse dot + label + elapsed + badges -->
+			<div v-if="!isProcessing || pipelineMode === 'lite'" class="alfred-flow-ready">
+				<span :class="['alfred-flow-pulse', `alfred-flow-pulse--${statusState}`]" aria-hidden="true"></span>
+				<span class="alfred-flow-status">{{ statusText }}</span>
+				<span v-if="elapsedTime" class="alfred-flow-elapsed">{{ elapsedTime }}s</span>
+				<span v-if="pipelineMode === 'lite'" class="alfred-chip alfred-chip--plan alfred-flow-mode-chip" :title="liteBadgeTooltip">
 					{{ __("Basic") }}
 				</span>
 			</div>
+
+			<!-- Processing (Full pipeline): horizontal step trail -->
 			<PhasePipeline
-				v-if="pipelineMode !== 'lite'"
+				v-else
 				:current-phase="currentPhase"
 				:completed-phases="completedPhases"
 				:active-agent="activeAgent"
@@ -57,21 +63,13 @@
 							>
 								<span class="alfred-btn-glyph" aria-hidden="true">&#8592;</span>
 							</button>
-							<!-- Brand + breadcrumb: small gradient mark plus
-							     "Alfred > <conversation title>" crumb. The
-							     "Alfred" segment acts as a secondary back
-							     affordance to the conversation list. -->
+							<!-- Brand: small gradient mark + the conversation
+							     title. The back button already gives nav
+							     affordance, so the breadcrumb is gone - the
+							     title alone anchors the left zone. -->
 							<div class="alfred-brand">
 								<div class="alfred-mark alfred-mark--chat alfred-mark--sm" aria-hidden="true">A</div>
-								<nav class="alfred-breadcrumb" :aria-label="__('Breadcrumb')">
-									<button
-										type="button"
-										class="alfred-breadcrumb-root"
-										@click="goBack"
-									>{{ __("Alfred") }}</button>
-									<span class="alfred-breadcrumb-sep" aria-hidden="true">&rsaquo;</span>
-									<span class="alfred-chat-title" :title="conversationSummary">{{ conversationSummary }}</span>
-								</nav>
+								<h1 class="alfred-chat-title" :title="conversationSummary">{{ conversationSummary }}</h1>
 							</div>
 						</div>
 
@@ -247,20 +245,23 @@
 							></textarea>
 							<button
 								v-if="isProcessing"
-								class="btn btn-default btn-sm alfred-stop-btn"
+								class="alfred-btn-ghost alfred-btn-ghost--danger alfred-stop-btn"
 								:disabled="cancelInFlight"
 								:title="__('Stop the running agent gracefully; the current phase will finish.')"
 								@click="cancelRun"
 							>
-								{{ cancelInFlight ? __("Stopping...") : __("Stop") }}
+								<span v-if="cancelInFlight" class="alfred-btn-spinner" aria-hidden="true"></span>
+								<span v-else class="alfred-stop-glyph" aria-hidden="true">&#9632;</span>
+								<span>{{ cancelInFlight ? __("Stopping...") : __("Stop") }}</span>
 							</button>
 							<button
 								v-else
-								class="btn btn-primary btn-sm alfred-send-btn"
+								class="alfred-btn-primary alfred-send-btn"
 								:disabled="inputDisabled || !inputText.trim()"
 								@click="sendMessage(inputText)"
 							>
-								{{ __("Send") }}
+								<span>{{ __("Send") }}</span>
+								<span class="alfred-send-glyph" aria-hidden="true">&rarr;</span>
 							</button>
 						</div>
 						<span class="alfred-input-hint text-muted text-xs">

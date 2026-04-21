@@ -1,28 +1,49 @@
 <template>
-	<div class="alfred-phase-pipeline">
-		<template v-for="(phase, idx) in phases" :key="phase.key">
-			<span v-if="idx > 0" class="alfred-phase-arrow">&rsaquo;</span>
-			<span :class="['alfred-phase', phaseClass(phase.key)]" :data-phase="phase.key">
-				<span class="alfred-phase-step">
-					<span v-if="currentPhase === phase.key" class="alfred-phase-pulse" aria-hidden="true"></span>
-					<template v-else-if="isCompleted(phase.key)">&#10003;</template>
-					<template v-else>{{ idx + 1 }}</template>
-				</span>
-				<span class="alfred-phase-label">
+	<div class="alfred-pipeline" role="progressbar" :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100">
+		<!-- Progress rail: a single line the step markers sit on. The
+		     filled portion grows as phases complete so the eye has a
+		     smooth percentage anchor even when six chips are compressed. -->
+		<div class="alfred-pipeline-rail" aria-hidden="true">
+			<div class="alfred-pipeline-rail-fill" :style="{ width: `${progress}%` }"></div>
+		</div>
+		<div class="alfred-pipeline-steps">
+			<div
+				v-for="(phase, idx) in phases"
+				:key="phase.key"
+				:class="[
+					'alfred-pipeline-step',
+					isDone(phase.key) && 'alfred-pipeline-step--done',
+					currentPhase === phase.key && 'alfred-pipeline-step--current',
+				]"
+				:data-phase="phase.key"
+			>
+				<span class="alfred-pipeline-marker" aria-hidden="true">
 					<template v-if="currentPhase === phase.key">
-						<span class="alfred-phase-agent">{{ activeAgent || phase.label }}</span>
-						<span class="alfred-phase-activity">&middot; {{ STEP_LABELS[phase.key] }}</span>
+						<span class="alfred-pipeline-marker-ring"></span>
+						<span class="alfred-pipeline-marker-core"></span>
+					</template>
+					<template v-else-if="isDone(phase.key)">
+						&#10003;
 					</template>
 					<template v-else>
-						{{ phase.label }}
+						{{ idx + 1 }}
 					</template>
 				</span>
-			</span>
-		</template>
+				<span class="alfred-pipeline-label">
+					<template v-if="currentPhase === phase.key">
+						<span class="alfred-pipeline-agent">{{ activeAgent || phase.label }}</span>
+						<span class="alfred-pipeline-activity">{{ STEP_LABELS[phase.key] }}</span>
+					</template>
+					<template v-else>{{ phase.label }}</template>
+				</span>
+			</div>
+		</div>
 	</div>
 </template>
 
 <script setup>
+import { computed } from "vue";
+
 const props = defineProps({
 	currentPhase: { type: String, default: null },
 	completedPhases: { type: Array, default: () => [] },
@@ -43,10 +64,8 @@ const phases = [
 	{ key: "deployment", label: "Deployment" },
 ];
 
-// Short activity phrases per phase - these are written in present-
-// participle form so they read as "what is happening right now"
-// (e.g. "Developer - generating code"). The pipeline uses them as
-// the trailing fragment on the active pill.
+// Short activity phrases per phase - present-participle so they read as
+// "what is happening right now" next to the live agent name.
 const STEP_LABELS = {
 	requirement: "gathering requirements",
 	assessment: "checking feasibility",
@@ -56,13 +75,17 @@ const STEP_LABELS = {
 	deployment: "preparing deployment",
 };
 
-function isCompleted(key) {
+function isDone(key) {
 	return props.completedPhases.includes(key);
 }
 
-function phaseClass(key) {
-	if (props.currentPhase === key) return "alfred-phase-active";
-	if (isCompleted(key)) return "alfred-phase-done";
-	return "";
-}
+// Overall progress percentage for the rail fill. Counts completed
+// phases plus a half-step credit for the current one so the bar never
+// sits exactly on a step boundary (it always looks like we're moving).
+const progress = computed(() => {
+	const total = phases.length;
+	const done = props.completedPhases.length;
+	const mid = props.currentPhase ? 0.5 : 0;
+	return Math.min(100, Math.round(((done + mid) / total) * 100));
+});
 </script>
