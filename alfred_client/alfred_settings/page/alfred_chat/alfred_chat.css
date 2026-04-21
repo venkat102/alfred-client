@@ -6,8 +6,263 @@
    bursting out and producing a body-level scrollbar (which is what made
    the chat and preview "scroll together" on pages with taller Frappe
    toolbars). */
-.alfred-page { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+.alfred-page {
+	display: flex; flex-direction: column; height: 100%;
+	min-height: 0; overflow: hidden;
+
+	/* ── Design tokens (scoped to .alfred-page so they never leak into
+	 *    Frappe Desk). All downstream surfaces read these. Keeping them
+	 *    here means switching a shade or gradient is a single edit. */
+
+	/* Marks (hero glyphs on EMPTY / WORKING / banners / toolbar) */
+	--alfred-mark-chat: linear-gradient(135deg, var(--blue-500, #2490ef), var(--purple-600, #7c3aed));
+	--alfred-mark-preview: linear-gradient(135deg, #14b8a6, var(--purple-600, #7c3aed));
+
+	/* Mode palette (mirrors ModeSwitcher active states) - fg / bg / border */
+	--alfred-mode-auto-fg: var(--green-700, #15803d);
+	--alfred-mode-auto-bg: var(--green-50, #f0fdf4);
+	--alfred-mode-auto-border: var(--green-200, #bbf7d0);
+	--alfred-mode-dev-fg: var(--blue-700, #1d4ed8);
+	--alfred-mode-dev-bg: var(--blue-50, #eff6ff);
+	--alfred-mode-dev-border: var(--blue-200, #bfdbfe);
+	--alfred-mode-plan-fg: #4338ca;
+	--alfred-mode-plan-bg: #eef2ff;
+	--alfred-mode-plan-border: #c7d2fe;
+	--alfred-mode-insights-fg: #0e7490;
+	--alfred-mode-insights-bg: #ecfeff;
+	--alfred-mode-insights-border: #a5f3fc;
+
+	/* Tones (banners, chips, cards, step states) - 50 / 200 / 500 / 700 */
+	--alfred-tone-info-50: var(--blue-50, #eff6ff);
+	--alfred-tone-info-200: var(--blue-200, #bfdbfe);
+	--alfred-tone-info-500: var(--blue-500, #2490ef);
+	--alfred-tone-info-700: var(--blue-700, #1d4ed8);
+	--alfred-tone-success-50: var(--green-50, #f0fdf4);
+	--alfred-tone-success-200: var(--green-200, #bbf7d0);
+	--alfred-tone-success-500: var(--green-500, #28a745);
+	--alfred-tone-success-700: var(--green-700, #15803d);
+	--alfred-tone-warn-50: var(--orange-50, #fff7ed);
+	--alfred-tone-warn-200: var(--orange-200, #fed7aa);
+	--alfred-tone-warn-500: var(--orange-500, #f59e0b);
+	--alfred-tone-warn-700: var(--orange-700, #c2410c);
+	--alfred-tone-danger-50: var(--red-50, #fef2f2);
+	--alfred-tone-danger-200: var(--red-200, #fecaca);
+	--alfred-tone-danger-500: var(--red-500, #e24c4c);
+	--alfred-tone-danger-700: var(--red-700, #b91c1c);
+	--alfred-tone-neutral-50: var(--gray-50, #f9fafb);
+	--alfred-tone-neutral-200: var(--gray-200, #e5e7eb);
+	--alfred-tone-neutral-500: var(--gray-500, #6b7280);
+	--alfred-tone-neutral-700: var(--gray-700, #374151);
+
+	/* Surface tokens used by every card / chip / banner */
+	--alfred-card-radius: 10px;
+	--alfred-chip-radius: 999px;
+	--alfred-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+	--alfred-card-hover-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
 .alfred-main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+/* ── Design primitives (shared vocabulary) ────────────────────────
+ * Every surface (chat transcript, preview states, sidebar, toolbar
+ * chrome) composes from these. If you find yourself copy-pasting a
+ * gradient, a radius, or a tone set, add a modifier here instead.
+ */
+
+/* Gradient mark: the 56x56 rounded glyph used in hero states and the
+ * small toolbar brand. Modifiers pick hue; `--sm` picks size. */
+.alfred-mark {
+	display: inline-flex; align-items: center; justify-content: center;
+	flex-shrink: 0;
+	width: 56px; height: 56px; border-radius: 16px;
+	font-size: 26px; font-weight: 700; color: white;
+	box-shadow: 0 6px 18px rgba(20, 184, 166, 0.22);
+	line-height: 1; letter-spacing: 0.5px;
+}
+.alfred-mark--chat {
+	background: var(--alfred-mark-chat);
+	box-shadow: 0 6px 18px rgba(36, 144, 239, 0.25);
+}
+.alfred-mark--preview { background: var(--alfred-mark-preview); }
+.alfred-mark--sm {
+	width: 28px; height: 28px; border-radius: 9px;
+	font-size: 13px; box-shadow: none;
+}
+.alfred-mark-pulse { animation: alfred-preview-pulse 1.6s ease-in-out infinite; }
+@keyframes alfred-preview-pulse {
+	0%, 100% { box-shadow: 0 6px 18px rgba(20, 184, 166, 0.22); transform: scale(1); }
+	50%      { box-shadow: 0 8px 26px rgba(124, 58, 237, 0.38); transform: scale(1.05); }
+}
+
+/* Card surface: bg + radius + subtle shadow + hover lift. The workhorse
+ * container for hint rows, conv items, preview blocks, plan steps. */
+.alfred-card {
+	background: var(--bg-color, white);
+	border: 1px solid var(--border-color, #e2e2e2);
+	border-radius: var(--alfred-card-radius);
+	box-shadow: var(--alfred-card-shadow);
+	transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+.alfred-card--hover:hover,
+.alfred-card--choice:hover {
+	border-color: var(--alfred-tone-info-200);
+	box-shadow: var(--alfred-card-hover-shadow);
+	background: var(--alfred-tone-info-50);
+}
+.alfred-card--choice { cursor: pointer; text-align: left; width: 100%; }
+.alfred-card--choice:active { transform: translateY(1px); }
+.alfred-card--muted { background: var(--subtle-fg, #f8f8f8); opacity: 0.85; }
+.alfred-card--warn {
+	background: var(--alfred-tone-warn-50);
+	border-color: var(--alfred-tone-warn-200);
+	border-left: 3px solid var(--alfred-tone-warn-500);
+}
+.alfred-card--info {
+	background: var(--alfred-tone-info-50);
+	border-color: var(--alfred-tone-info-200);
+	border-left: 3px solid var(--alfred-tone-info-500);
+}
+
+/* Chip: the pill for role / mode / tone / status indicators. */
+.alfred-chip {
+	display: inline-flex; align-items: center; gap: 4px;
+	padding: 2px 10px; border-radius: var(--alfred-chip-radius);
+	font-size: 11px; font-weight: 600; line-height: 1.4;
+	letter-spacing: 0.2px; white-space: nowrap;
+	border: 1px solid transparent;
+}
+.alfred-chip--neutral {
+	background: var(--alfred-tone-neutral-50);
+	color: var(--alfred-tone-neutral-700);
+	border-color: var(--alfred-tone-neutral-200);
+}
+.alfred-chip--info {
+	background: var(--alfred-tone-info-50);
+	color: var(--alfred-tone-info-700);
+	border-color: var(--alfred-tone-info-200);
+}
+.alfred-chip--success {
+	background: var(--alfred-tone-success-50);
+	color: var(--alfred-tone-success-700);
+	border-color: var(--alfred-tone-success-200);
+}
+.alfred-chip--warn {
+	background: var(--alfred-tone-warn-50);
+	color: var(--alfred-tone-warn-700);
+	border-color: var(--alfred-tone-warn-200);
+}
+.alfred-chip--danger {
+	background: var(--alfred-tone-danger-50);
+	color: var(--alfred-tone-danger-700);
+	border-color: var(--alfred-tone-danger-200);
+}
+.alfred-chip--auto {
+	background: var(--alfred-mode-auto-bg);
+	color: var(--alfred-mode-auto-fg);
+	border-color: var(--alfred-mode-auto-border);
+}
+.alfred-chip--dev {
+	background: var(--alfred-mode-dev-bg);
+	color: var(--alfred-mode-dev-fg);
+	border-color: var(--alfred-mode-dev-border);
+}
+.alfred-chip--plan {
+	background: var(--alfred-mode-plan-bg);
+	color: var(--alfred-mode-plan-fg);
+	border-color: var(--alfred-mode-plan-border);
+}
+.alfred-chip--insights {
+	background: var(--alfred-mode-insights-bg);
+	color: var(--alfred-mode-insights-fg);
+	border-color: var(--alfred-mode-insights-border);
+}
+
+/* Banner: one class with tone modifiers replaces validation-ok / warn,
+ * deploy-success, status-rolled-back / rejected, saturation-amber / red. */
+.alfred-banner {
+	display: flex; align-items: flex-start; gap: 10px;
+	padding: 10px 14px; margin-bottom: 12px;
+	border-radius: 8px; font-size: 13px; line-height: 1.5;
+	border: 1px solid transparent; border-left-width: 3px;
+	animation: alfred-ticker-in 0.25s ease-out;
+}
+.alfred-banner__icon {
+	flex-shrink: 0; font-size: 15px; line-height: 1.4;
+}
+.alfred-banner__body { flex: 1; min-width: 0; }
+.alfred-banner__list {
+	margin: 6px 0 0; padding-left: 18px;
+	font-size: 12px; max-height: 160px; overflow-y: auto;
+}
+.alfred-banner--info {
+	background: var(--alfred-tone-info-50);
+	color: var(--alfred-tone-info-700);
+	border-color: var(--alfred-tone-info-200);
+	border-left-color: var(--alfred-tone-info-500);
+}
+.alfred-banner--success {
+	background: var(--alfred-tone-success-50);
+	color: var(--alfred-tone-success-700);
+	border-color: var(--alfred-tone-success-200);
+	border-left-color: var(--alfred-tone-success-500);
+}
+.alfred-banner--warn {
+	background: var(--alfred-tone-warn-50);
+	color: var(--alfred-tone-warn-700);
+	border-color: var(--alfred-tone-warn-200);
+	border-left-color: var(--alfred-tone-warn-500);
+}
+.alfred-banner--danger {
+	background: var(--alfred-tone-danger-50);
+	color: var(--alfred-tone-danger-700);
+	border-color: var(--alfred-tone-danger-200);
+	border-left-color: var(--alfred-tone-danger-500);
+}
+.alfred-banner--neutral {
+	background: var(--alfred-tone-neutral-50);
+	color: var(--alfred-tone-neutral-700);
+	border-color: var(--alfred-tone-neutral-200);
+	border-left-color: var(--alfred-tone-neutral-500);
+}
+
+/* Step row: the vocabulary pulled out of the WORKING-state pipeline so
+ * transcript agent-step rows, preview DEPLOYING rows, and PhasePipeline
+ * all speak the same visual language. */
+.alfred-step {
+	display: flex; align-items: center; gap: 10px;
+	padding: 8px 12px; border-radius: 8px;
+	font-size: 13px; color: var(--text-muted, #9ca3af);
+	background: transparent;
+	transition: background 0.2s, color 0.2s;
+}
+.alfred-step-dot {
+	display: inline-flex; align-items: center; justify-content: center;
+	width: 18px; height: 18px; font-size: 11px; flex-shrink: 0;
+	line-height: 1;
+}
+.alfred-step--done { color: var(--alfred-tone-success-700); }
+.alfred-step--done .alfred-step-dot { color: var(--alfred-tone-success-500); }
+.alfred-step--current {
+	color: var(--text-color, #111827); font-weight: 600;
+	background: var(--alfred-tone-info-50);
+}
+.alfred-step--current .alfred-step-dot {
+	color: var(--alfred-tone-info-500);
+	animation: alfred-step-pulse 1.2s ease-in-out infinite;
+}
+.alfred-step--failed { color: var(--alfred-tone-danger-700); }
+.alfred-step--failed .alfred-step-dot { color: var(--alfred-tone-danger-500); }
+@keyframes alfred-step-pulse {
+	0%, 100% { opacity: 1; transform: scale(1); }
+	50%      { opacity: 0.6; transform: scale(1.15); }
+}
+
+/* Eyebrow: tiny uppercase section label. Used by empty-state prompt
+ * groups, activity log toggle, live ticker prefix, etc. */
+.alfred-eyebrow {
+	font-size: 11px; text-transform: uppercase;
+	letter-spacing: 0.6px; font-weight: 600;
+	color: var(--text-muted, #9ca3af);
+}
 
 /* ── Status Bar ────────────────────────────────────────────────── */
 .alfred-status-bar {
