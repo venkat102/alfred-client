@@ -1,26 +1,21 @@
 <template>
-	<div class="alfred-app">
+	<div class="alfred-app" :class="{ 'alfred-app--drawer-open': drawerOpen && currentConversation }">
 		<!-- Flow Strip retired: the agent state now lives in the floating
 		     status pill inside .alfred-transcript (see AgentStatusPill). -->
 
-		<div
-			ref="panelsEl"
-			class="alfred-panels"
-		>
-			<!-- Left Panel -->
-			<div class="alfred-left-panel">
-				<!-- Conversation List -->
-				<ConversationList
-					v-if="!currentConversation"
-					:conversations="conversations"
-					@select="openConversation"
-					@new-conversation="newConversation"
-					@new-with-prompt="newConversationWithPrompt"
-					@delete="deleteConversationFromList"
-					@share="shareConversation"
-				/>
+		<!-- Conversation List: shown when no conversation is open. No
+		     topbar, no drawer, no composer - just the sidebar hero. -->
+		<ConversationList
+			v-if="!currentConversation"
+			:conversations="conversations"
+			@select="openConversation"
+			@new-conversation="newConversation"
+			@new-with-prompt="newConversationWithPrompt"
+			@delete="deleteConversationFromList"
+			@share="shareConversation"
+		/>
 
-				<!-- Chat Area -->
+		<!-- Chat Area -->
 				<div v-else class="alfred-chat-area">
 					<!-- Topbar: frosted, 48px sticky header. Three zones -
 					     left (back + mark + title), center (mode switcher),
@@ -60,6 +55,21 @@
 								<span>{{ __("New") }}</span>
 							</button>
 
+							<button
+								type="button"
+								class="alfred-icon-btn alfred-topbar-preview-toggle"
+								:class="{
+									'alfred-icon-btn-pressed': drawerOpen,
+									'alfred-topbar-preview-toggle--unseen': unseenChanges,
+								}"
+								:aria-label="drawerOpen ? __('Close preview') : __('Open preview')"
+								:title="drawerOpen ? __('Close preview') : __('Open preview')"
+								:aria-expanded="drawerOpen"
+								aria-controls="alfred-drawer-title"
+								@click="toggleDrawer"
+							>
+								<span class="alfred-btn-glyph" aria-hidden="true">&#9776;</span>
+							</button>
 							<div class="alfred-menu-wrapper" ref="menuWrapperEl">
 								<button
 									type="button"
@@ -257,38 +267,48 @@
 						</div>
 					</div>
 				</div>
-			</div>
 
-			<!-- Splitter: drag to resize the left / right split. Writes to
-			     --alfred-left-width on .alfred-panels and persists the
-			     latest value to localStorage. Hidden on mobile. -->
-			<div
-				class="alfred-splitter"
-				:class="{ 'alfred-splitter-active': splitterDragging }"
-				role="separator"
-				aria-orientation="vertical"
-				:aria-label="__('Resize chat and preview panels')"
-				@mousedown.prevent="startSplitterDrag"
-			></div>
+		<!-- Preview drawer: slide-in overlay on the right. Only renders
+		     when a conversation is open. Auto-opens when a non-empty
+		     changeset exists (see autoOpenOnChangeset watcher). -->
+		<PreviewDrawer
+			v-if="currentConversation"
+			:model-value="drawerOpen"
+			:changeset="changeset"
+			:current-phase="currentPhase"
+			:deploy-steps="deploySteps"
+			:deployed="isDeployed"
+			:is-processing="isProcessing"
+			:conversation-status="conversationStatus"
+			:validating="validatingChangeset"
+			:rollback-in-flight="rollbackInFlight"
+			@update:model-value="setDrawerOpen($event)"
+			@minimize="minimizeDrawer"
+			@approve="approveChangeset"
+			@modify="startModify"
+			@reject="rejectChangeset"
+			@rollback="rollbackChangeset"
+		/>
 
-			<!-- Right Panel: Preview -->
-			<div class="alfred-right-panel">
-				<PreviewPanel
-					:changeset="changeset"
-					:current-phase="currentPhase"
-					:deploy-steps="deploySteps"
-					:deployed="isDeployed"
-					:is-processing="isProcessing"
-					:conversation-status="conversationStatus"
-					:validating="validatingChangeset"
-					:rollback-in-flight="rollbackInFlight"
-					@approve="approveChangeset"
-					@modify="startModify"
-					@reject="rejectChangeset"
-					@rollback="rollbackChangeset"
-				/>
-			</div>
-		</div>
+		<!-- Floating pill: when drawer is closed AND a changeset exists,
+		     show a tiny "Preview: N changes" chip at bottom-right that
+		     reopens the drawer. -->
+		<button
+			v-if="currentConversation && !drawerOpen && previewChangeCount > 0"
+			type="button"
+			class="alfred-preview-minimized-pill"
+			:class="{ 'alfred-preview-minimized-pill--unseen': unseenChanges }"
+			@click="openDrawer"
+			:aria-label="__('Reopen preview drawer')"
+		>
+			<span class="alfred-mark alfred-mark--preview alfred-mark--sm" aria-hidden="true">&#9670;</span>
+			<span class="alfred-preview-minimized-pill-label">
+				{{ __("Preview") }}
+			</span>
+			<span class="alfred-chip alfred-chip--neutral alfred-preview-minimized-pill-count">
+				{{ previewChangeCount }}
+			</span>
+		</button>
 	</div>
 </template>
 
@@ -298,7 +318,7 @@ import ConversationList from "./ConversationList.vue";
 import MessageBubble from "./MessageBubble.vue";
 import TypingIndicator from "./TypingIndicator.vue";
 import AgentStatusPill from "./AgentStatusPill.vue";
-import PreviewPanel from "./PreviewPanel.vue";
+import PreviewDrawer from "./PreviewDrawer.vue";
 import ModeSwitcher from "./ModeSwitcher.vue";
 
 // ── State ──────────────────────────────────────────────────────
@@ -324,15 +344,27 @@ const validatingChangeset = ref(false);
 // True while a user-initiated Rollback call is in flight. PreviewPanel
 // shows "Rolling back..." on the button and disables it.
 const rollbackInFlight = ref(false);
-// The draggable splitter between left (chat) and right (preview) panels.
-// splitterDragging drives a hover-style highlight on the handle while the
-// user is actively dragging. panelsEl is the .alfred-panels container -
-// drag math reads its bounding rect to convert the mouse X into a percentage.
-const panelsEl = ref(null);
-const splitterDragging = ref(false);
-const SPLITTER_LS_KEY = "alfred_chat_left_width";
-const SPLITTER_MIN_PX = 320;
-const SPLITTER_MIN_RIGHT_PX = 360;
+
+// Preview drawer state. Persisted in localStorage so the drawer restores
+// across reloads. unseenChanges lights up the toolbar toggle's red dot
+// whenever a changeset appears while the drawer is closed; cleared on
+// open. previewChangeCount drives the minimized-pill badge.
+const DRAWER_LS_KEY = "alfred_chat_drawer_open";
+const drawerOpen = ref(_readDrawerOpenFromStorage());
+const unseenChanges = ref(false);
+
+function _readDrawerOpenFromStorage() {
+	try {
+		return window.localStorage.getItem(DRAWER_LS_KEY) === "true";
+	} catch { return false; }
+}
+
+function _writeDrawerOpenToStorage(value) {
+	try {
+		window.localStorage.setItem(DRAWER_LS_KEY, value ? "true" : "false");
+	} catch { /* storage disabled; in-memory state still works */ }
+}
+
 const statusState = ref("disconnected");
 const currentPhase = ref(null);
 const completedPhases = ref([]);
@@ -346,6 +378,53 @@ const changeset = ref(null);
 const deploySteps = ref([]);
 const isDeployed = ref(false);
 const elapsedTime = ref(null);
+
+// Count of changes in the current changeset, used by the minimized pill
+// badge and to gate whether the pill renders at all. Defensive: changes
+// can be an array (already parsed) or a JSON string (raw from the wire).
+const previewChangeCount = computed(() => {
+	const raw = changeset.value?.changes;
+	if (!raw) return 0;
+	try {
+		const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+		return Array.isArray(arr) ? arr.length : 0;
+	} catch { return 0; }
+});
+
+// Drawer toggle helpers. Write-through to localStorage, clear unseen
+// flag on open. Also toggle a body class so page-level CSS can shove
+// the chat-area aside on desktop (non-modal drawer mode).
+function setDrawerOpen(value) {
+	drawerOpen.value = !!value;
+	if (value) unseenChanges.value = false;
+	_writeDrawerOpenToStorage(drawerOpen.value);
+	document.body.classList.toggle("alfred-drawer-open", drawerOpen.value);
+}
+function openDrawer() { setDrawerOpen(true); }
+function closeDrawer() { setDrawerOpen(false); }
+function toggleDrawer() { setDrawerOpen(!drawerOpen.value); }
+function minimizeDrawer() { setDrawerOpen(false); }
+
+// Auto-open drawer when a meaningful changeset arrives while the drawer
+// is closed, so the user sees the review panel without extra clicks. We
+// only trigger on the edge from "no changeset" to "has changeset" to
+// avoid reopening the drawer every time the user manually closes it
+// during an active changeset's lifecycle.
+watch(previewChangeCount, (now, was) => {
+	if (now > 0 && (was === 0 || was === undefined)) {
+		if (!drawerOpen.value) {
+			unseenChanges.value = true;
+			if (currentConversation.value) {
+				setDrawerOpen(true);
+			}
+		}
+	}
+	if (now === 0) {
+		// Changeset cleared (new prompt, rejection resolved, etc.).
+		// Drop the unseen flag so a future changeset can set it again.
+		unseenChanges.value = false;
+	}
+});
 
 // Three-mode chat (Phase D): user's per-conversation mode preference.
 // "auto" lets the orchestrator decide; "dev"/"plan"/"insights" force a
@@ -559,13 +638,18 @@ function handleDocumentClick(e) {
 
 function handleDocumentKey(e) {
 	if (e.key !== "Escape") return;
-	// Precedence: menu -> pill popover. Only close one layer per press.
+	// Precedence: menu -> pill popover -> drawer. Only close one layer
+	// per press so the user can escape nested surfaces step by step.
 	if (menuOpen.value) {
 		menuOpen.value = false;
 		return;
 	}
 	if (pillPopoverOpen.value) {
 		pillPopoverOpen.value = false;
+		return;
+	}
+	if (drawerOpen.value) {
+		closeDrawer();
 	}
 }
 
@@ -579,12 +663,14 @@ onMounted(() => {
 	setupRealtime();
 	document.addEventListener("click", handleDocumentClick);
 	document.addEventListener("keydown", handleDocumentKey);
-	restoreSplitterWidth();
 	// Mark the body while the chat page is mounted so our scoped CSS can
-	// hide Frappe's empty .navbar-breadcrumbs strip (we render our own
-	// breadcrumb inside the toolbar). Purely additive: the class is
+	// hide Frappe's empty .navbar-breadcrumbs strip. Purely additive:
 	// removed on unmount so every other Desk page is unaffected.
 	document.body.classList.add("alfred-page-active");
+	// Restore the drawer-open body class if localStorage says so. The
+	// drawer itself suppresses the slide animation on initial paint via
+	// a `ready` flag inside PreviewDrawer.vue.
+	if (drawerOpen.value) document.body.classList.add("alfred-drawer-open");
 	// Restore conversation from URL on page load / refresh
 	const convId = getConversationFromRoute();
 	if (convId) {
@@ -602,57 +688,16 @@ onUnmounted(() => {
 	}
 	document.removeEventListener("click", handleDocumentClick);
 	document.removeEventListener("keydown", handleDocumentKey);
-	document.removeEventListener("mousemove", handleSplitterMove);
-	document.removeEventListener("mouseup", endSplitterDrag);
 	document.body.classList.remove("alfred-page-active");
+	document.body.classList.remove("alfred-drawer-open");
 	// Listeners persist on frappe.realtime - they're global and idempotent
 });
 
 // ── Splitter drag handlers ─────────────────────────────────────
-// Drag math: convert the mouse X into a pixel offset from the left edge
-// of .alfred-panels, clamp between SPLITTER_MIN_PX and (panels_width -
-// SPLITTER_MIN_RIGHT_PX), write back as a px value on --alfred-left-width.
-// On mouseup, persist to localStorage so the same split restores next load.
-function restoreSplitterWidth() {
-	try {
-		const stored = localStorage.getItem(SPLITTER_LS_KEY);
-		if (stored && panelsEl.value) {
-			panelsEl.value.style.setProperty("--alfred-left-width", stored);
-		}
-	} catch (e) { /* localStorage may be unavailable in sandbox */ }
-}
-
-function startSplitterDrag(evt) {
-	if (!panelsEl.value) return;
-	splitterDragging.value = true;
-	document.body.style.userSelect = "none";
-	document.body.style.cursor = "col-resize";
-	document.addEventListener("mousemove", handleSplitterMove);
-	document.addEventListener("mouseup", endSplitterDrag);
-}
-
-function handleSplitterMove(evt) {
-	if (!splitterDragging.value || !panelsEl.value) return;
-	const rect = panelsEl.value.getBoundingClientRect();
-	let leftPx = evt.clientX - rect.left;
-	const maxLeft = rect.width - SPLITTER_MIN_RIGHT_PX;
-	if (leftPx < SPLITTER_MIN_PX) leftPx = SPLITTER_MIN_PX;
-	if (leftPx > maxLeft) leftPx = maxLeft;
-	panelsEl.value.style.setProperty("--alfred-left-width", `${leftPx}px`);
-}
-
-function endSplitterDrag() {
-	if (!splitterDragging.value) return;
-	splitterDragging.value = false;
-	document.body.style.userSelect = "";
-	document.body.style.cursor = "";
-	document.removeEventListener("mousemove", handleSplitterMove);
-	document.removeEventListener("mouseup", endSplitterDrag);
-	try {
-		const width = panelsEl.value?.style.getPropertyValue("--alfred-left-width");
-		if (width) localStorage.setItem(SPLITTER_LS_KEY, width);
-	} catch (e) { /* ignore */ }
-}
+// Splitter retired with the conversation-first shell. The legacy
+// localStorage key "alfred_chat_left_width" is no longer read or
+// written; stale values linger harmlessly until the browser clears
+// them on its own schedule.
 
 // Auto-scroll when messages change
 watch(messages, () => nextTick(scrollToBottom), { deep: true });

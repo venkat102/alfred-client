@@ -74,6 +74,25 @@
  * default strip is redundant vertical space. */
 body.alfred-page-active .navbar-breadcrumbs { display: none; }
 
+/* Desktop "shove not overlay": when the drawer is open, push the chat
+ * area left by the drawer width so the transcript remains visible and
+ * interactive. Animated so the reflow feels smooth, not janky. Mobile
+ * drops this (drawer becomes a full-screen modal). */
+body.alfred-drawer-open .alfred-app .alfred-chat-area {
+	padding-right: 420px;
+}
+.alfred-app .alfred-chat-area {
+	transition: padding-right 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Conversation-first shell: when a chat is open, the page is a single
+ * column (no left/right panels). The chat-area fills the viewport. */
+.alfred-app .alfred-chat-area {
+	flex: 1 1 auto; min-height: 0;
+	display: flex; flex-direction: column;
+	overflow: hidden;
+}
+
 /* ── Design primitives (shared vocabulary) ────────────────────────
  * Every surface (chat transcript, preview states, sidebar, toolbar
  * chrome) composes from these. If you find yourself copy-pasting a
@@ -1663,21 +1682,113 @@ body.alfred-page-active .navbar-breadcrumbs { display: none; }
 .alfred-issue-warning { color: var(--alfred-tone-warn-700); }
 .alfred-issue-info { color: var(--alfred-tone-info-700); }
 
+/* ── Preview Drawer ──────────────────────────────────────────────
+ * Slide-in overlay from the right edge. Auto-opens when a changeset
+ * arrives. Desktop: shoves the chat-area aside via the
+ * body.alfred-drawer-open class. Mobile: becomes a full-screen modal
+ * with a dimming scrim. */
+.alfred-drawer {
+	position: fixed; top: 0; right: 0; bottom: 0;
+	width: 420px; max-width: 100vw;
+	z-index: 41;
+	background: var(--bg-color, #ffffff);
+	border-left: 1px solid var(--border-color, #e2e2e2);
+	box-shadow: -16px 0 40px -16px rgba(16, 24, 40, 0.22);
+	transform: translateX(100%);
+	transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+	display: flex; flex-direction: column;
+}
+.alfred-drawer--open { transform: translateX(0); }
+/* First-paint fix: when the drawer mounts already open (from
+ * localStorage), skip the slide so it doesn't flash in. PreviewDrawer
+ * removes this class on the next tick. */
+.alfred-drawer--no-anim { transition: none !important; }
+
+.alfred-drawer-head {
+	display: flex; align-items: center; justify-content: space-between;
+	padding: 10px 14px; min-height: 48px;
+	border-bottom: 1px solid var(--border-color, #e5e7eb);
+	flex-shrink: 0;
+	background: rgba(255, 255, 255, 0.86);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+}
+.alfred-drawer-head-left {
+	display: flex; align-items: center; gap: 10px; min-width: 0;
+}
+.alfred-drawer-head-right {
+	display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+}
+.alfred-drawer-title {
+	margin: 0; font-size: 14px; font-weight: 600;
+	color: var(--text-color, #111827);
+}
+.alfred-drawer-count { margin-left: 2px; }
+.alfred-drawer-body {
+	flex: 1 1 auto; min-height: 0; overflow-y: auto;
+}
+
+.alfred-drawer-scrim {
+	position: fixed; inset: 0;
+	background: rgba(16, 24, 40, 0.3);
+	backdrop-filter: blur(2px);
+	-webkit-backdrop-filter: blur(2px);
+	z-index: 40;
+	opacity: 0; pointer-events: none;
+	transition: opacity 220ms ease;
+	display: none;
+}
+.alfred-drawer-scrim--open { opacity: 1; pointer-events: auto; }
+
+/* Minimized pill: bottom-right chip shown when the drawer is closed
+ * and a changeset exists. Click reopens. Red dot when unseen. */
+.alfred-preview-minimized-pill {
+	position: fixed; right: 20px; bottom: 20px;
+	z-index: 30;
+	display: inline-flex; align-items: center; gap: 8px;
+	padding: 8px 12px;
+	background: rgba(255, 255, 255, 0.96);
+	border: 1px solid rgba(16, 24, 40, 0.1);
+	border-radius: 999px;
+	box-shadow: 0 10px 28px -10px rgba(16, 24, 40, 0.28);
+	font-size: 12.5px; font-weight: 600;
+	color: var(--text-color, #111827);
+	cursor: pointer;
+	transition: transform 0.15s, box-shadow 0.15s;
+}
+.alfred-preview-minimized-pill:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 14px 36px -12px rgba(16, 24, 40, 0.32);
+}
+.alfred-preview-minimized-pill-label { font-weight: 600; }
+.alfred-preview-minimized-pill-count { margin-left: 0; }
+.alfred-preview-minimized-pill--unseen::after {
+	content: ""; position: absolute;
+	top: -2px; right: -2px;
+	width: 10px; height: 10px; border-radius: 50%;
+	background: var(--alfred-tone-danger-500);
+	border: 2px solid var(--bg-color, white);
+	animation: alfred-pulse 1.5s ease-in-out infinite;
+}
+
+/* Toolbar preview-toggle unseen dot */
+.alfred-topbar-preview-toggle { position: relative; }
+.alfred-topbar-preview-toggle--unseen::after {
+	content: ""; position: absolute;
+	top: 4px; right: 4px;
+	width: 8px; height: 8px; border-radius: 50%;
+	background: var(--alfred-tone-danger-500);
+	border: 2px solid var(--bg-color, white);
+}
+
 /* ── Mobile ────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-	.alfred-panels { flex-direction: column; }
-	.alfred-left-panel {
-		flex: 0 0 60vh;
-		width: 100%; min-width: auto; border-right: none;
-		border-bottom: 1px solid var(--border-color, #e2e2e2);
-	}
-	.alfred-right-panel {
-		flex: 0 0 40vh;
-		width: 100%; max-width: none; min-width: 0; border-left: none;
-	}
-	.alfred-splitter { display: none; }
-	.alfred-phase-pipeline { display: flex; overflow-x: auto; }
-	.alfred-phase-label { display: none; }
-	.alfred-phase { padding: 2px 6px; }
+	.alfred-drawer { width: 100vw; }
+	.alfred-drawer-scrim { display: block; }
+	/* Drawer is modal on mobile; no body shove (it overlays). */
+	body.alfred-drawer-open .alfred-app .alfred-chat-area { padding-right: 0; }
+	.alfred-composer-wrap { padding: 0 12px; bottom: 8px; }
+	.alfred-topbar { padding: 6px 10px; }
 	.alfred-message { max-width: 95%; }
+	.alfred-preview-minimized-pill { right: 12px; bottom: 12px; }
 }
