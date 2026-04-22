@@ -24,7 +24,7 @@
 │  └──────────────────────────┬────────────────────────────────────┘  │
 │  ┌──────────┐  ┌────────────┴───────────────┐  ┌────────────────┐  │
 │  │ Pipeline │→ │  AgentPipeline state       │←→│  MCP Client    │  │
-│  │ Context  │  │  machine (12 phases)        │  │  (tools/call    │  │
+│  │ Context  │  │  machine (15 phases)        │  │  (tools/call    │  │
 │  │          │  │                             │  │   over same WS) │  │
 │  └──────────┘  └────────────┬───────────────┘  └────────────────┘  │
 │                             │                                       │
@@ -90,19 +90,60 @@ User prompt
 ┌─────────────┐   Three-mode chat orchestrator (Phase A+B+C+D).
 │ orchestrate │   Classifies the prompt into dev / plan / insights / chat.
 │             │   Uses a fast-path for obvious cases (greetings,
-│             │   imperative build verbs, read-only query prefixes)
-│             │   then falls through to a short LLM call. Respects a
-│             │   manual override from the UI switcher (Phase D
-│             │   ModeSwitcher + Alfred Conversation.mode). Chat,
-│             │   Insights, and Plan modes short-circuit here: their
-│             │   handler runs inline and emits chat_reply /
-│             │   insights_reply / plan_doc. Dev mode continues
-│             │   through the rest of the pipeline. Phase C also adds
-│             │   Plan -> Dev handoff via ConversationMemory.active_plan
-│             │   (approved plans are injected into _phase_enhance as
-│             │   an explicit spec). Gated by ALFRED_ORCHESTRATOR_ENABLED
-│             │   - when off the phase is a no-op and the pipeline
-│             │   behaves as pre-feature.
+│             │   imperative build verbs, read-only query prefixes,
+│             │   analytics verbs "show top N" / "list the top" /
+│             │   "count of" / "summary of" / "report on" -> insights;
+│             │   deploy verbs "build a report" / "create a report"
+│             │   still beat analytics and route to dev) then falls
+│             │   through to a short LLM call. Respects a manual
+│             │   override from the UI switcher (Phase D ModeSwitcher
+│             │   + Alfred Conversation.mode). Chat, Insights, and Plan
+│             │   modes short-circuit here: their handler runs inline
+│             │   and emits chat_reply / insights_reply / plan_doc. Dev
+│             │   mode continues through the rest of the pipeline. Phase
+│             │   C also adds Plan -> Dev handoff via ConversationMemory
+│             │   .active_plan (approved plans are injected into
+│             │   _phase_enhance as an explicit spec). Gated by
+│             │   ALFRED_ORCHESTRATOR_ENABLED - when off the phase is a
+│             │   no-op and the pipeline behaves as pre-feature.
+│             │   Insights handler returns an InsightsResult with an
+│             │   optional ReportCandidate that the client uses to
+│             │   render a "Save as Report" button
+│             │   (ALFRED_REPORT_HANDOFF).
+└──────┬──────┘
+       ▼
+┌─────────────┐   Dev-mode intent classifier (V1). Classifies the
+│classify_    │   dev-mode prompt into a known intent (create_doctype,
+│intent       │   create_report, ...) or "unknown". Two paths:
+│             │   (a) Handoff short-circuit: if the prompt carries a
+│             │       __report_candidate__ JSON trailer (user clicked
+│             │       "Save as Report" on an Insights reply), force-
+│             │       classify intent=create_report, source=handoff,
+│             │       no LLM call. ctx.report_candidate carries the
+│             │       structured spec for downstream phases.
+│             │   (b) Normal path: heuristic pattern matcher first
+│             │       (e.g. "create a doctype" -> create_doctype;
+│             │       "save as report" -> create_report), LLM fallback
+│             │       constrained to the supported intent list.
+│             │   Gated by ALFRED_PER_INTENT_BUILDERS. When off, phase
+│             │   is a no-op and the generic Developer runs downstream.
+└──────┬──────┘
+       ▼
+┌─────────────┐   Dev-mode module classifier (V2/V3). Picks the target
+│classify_    │   ERPNext module (Accounts, HR, Stock, ...) so the
+│module       │   Developer specialist gets module-specific context
+│             │   injected into its prompt and its changeset validated
+│             │   against module conventions. Heuristic first
+│             │   (ModuleRegistry.detect or .detect_all when
+│             │   ALFRED_MULTI_MODULE is on): target_doctype matches
+│             │   the registry -> high confidence; keyword hits ->
+│             │   medium. V3 additionally returns up to 2 secondary
+│             │   modules for cross-domain prompts ("Sales Invoice that
+│             │   auto-creates a project task" -> primary=accounts,
+│             │   secondaries=[projects]). LLM fallback is primary-only
+│             │   to cap token budget. Gated by
+│             │   ALFRED_MODULE_SPECIALISTS (V2) and ALFRED_MULTI_MODULE
+│             │   (V3). Both off -> no-op.
 └──────┬──────┘
        ▼
 ┌─────────────┐   Prompt enhancer - one focused LLM call rewrites the
@@ -147,9 +188,30 @@ User prompt
 │resolve_mode │     plan override > site config > default "full"
 └──────┬──────┘
        ▼
+┌─────────────┐   Module specialist provides domain context (V2/V3).
+│provide_     │   For the classified primary module, calls
+│module_      │   provide_context which returns a prompt snippet of
+│context      │   relevant conventions/roles/gotchas; result cached
+│             │   (Redis preferred, process-local fallback, 5-min
+│             │   TTL). V3 fans out to secondaries in parallel and
+│             │   merges into a single context block with clear
+│             │   PRIMARY MODULE / SECONDARY MODULE CONTEXT headers.
+│             │   Silent failure per module so one specialist down
+│             │   doesn't block the pipeline. No-op when
+│             │   ALFRED_MODULE_SPECIALISTS off or module=None.
+└──────┬──────┘
+       ▼
 ┌─────────────┐   Build the CrewAI crew with MCP-backed tools +
 │ build_crew  │   per-run tracking state (budget, dedup cache,
 │             │   failure counter - Phase 1 tool hardening).
+│             │   When ALFRED_PER_INTENT_BUILDERS is on and the
+│             │   classified intent has a specialist, the generic
+│             │   Developer is swapped for that specialist
+│             │   (DocType Builder for create_doctype, Report Builder
+│             │   for create_report) and the generate_changeset task
+│             │   description gains a registry-driven checklist of
+│             │   shape-defining fields plus the module context
+│             │   snippet assembled in provide_module_context.
 └──────┬──────┘
        ▼
 ┌─────────────┐
@@ -172,6 +234,25 @@ User prompt
 │             │        LLM call from the original prompt)
 │             │          │
 │             │          ▼
+│             │     backfill_defaults_raw (V1/V2/V3) - fills missing
+│             │        registry fields from the intent registry
+│             │        defaults, layers primary module's
+│             │        permissions_add_roles and naming pattern on
+│             │        top, plus each secondary module's permissions
+│             │        when V3 is on. Every defaulted field records
+│             │        field_defaults_meta with source + rationale so
+│             │        the preview can render "default" pills.
+│             │          │
+│             │          ▼
+│             │     module specialist validate_output (V2) - primary
+│             │        module's validation notes keep full severity
+│             │        and blockers gate deploy. V3 fans out to
+│             │        secondaries and caps their blockers to warning.
+│             │        Notes (deterministic rules + LLM pass, deduped
+│             │        by normalised issue text) surface in the
+│             │        preview panel grouped by source module.
+│             │          │
+│             │          ▼
 │             │     reflect_minimality (Phase 3 #13, feature-flagged
 │             │        via ALFRED_REFLECTION_ENABLED) - small LLM call
 │             │        drops items that are NOT strictly needed.
@@ -182,7 +263,10 @@ User prompt
 │             │        self-heal retry with just the Developer agent)
 │             │          │
 │             │          ▼
-│             │     Save conversation memory, send changeset to UI.
+│             │     Save conversation memory, send changeset to UI
+│             │     (payload carries changes + field_defaults_meta +
+│             │     module_validation_notes + detected_module +
+│             │     detected_module_secondaries).
 └─────────────┘
 ```
 
@@ -437,6 +521,194 @@ always wins over local setting. Single-agent mode trades cross-agent validation
 for ~5x lower LLM cost and ~5x faster completion. The pre-preview dry-run +
 approve-time safety net still catch insert-time errors, so broken changesets
 are blocked regardless of mode.
+
+## Specialist Stack (V1-V4)
+
+Four layered feature flags progressively specialise Dev mode's Developer
+agent. Each flag is a strict extension of the one below; when off, the
+pipeline path matches the layer underneath exactly. All four are additive
+and regression-safe - turning them off at any time reverts behaviour to the
+pre-feature Developer.
+
+### V1 Per-intent Builder specialists (`ALFRED_PER_INTENT_BUILDERS`)
+
+The generic Developer agent is swapped for an intent-specific specialist
+when the classified intent has a Builder registered.
+
+```
+Dev-mode prompt
+    │
+    ▼
+classify_intent → "create_doctype" | "create_report" | "unknown"
+    │
+    ▼
+build_alfred_crew:
+  if intent has specialist:
+      agents["developer"] = build_<intent>_builder_agent(...)
+      task description += render_registry_checklist(intent_schema)
+  else:
+      agents["developer"] = generic Developer (pre-V1)
+    │
+    ▼
+crew runs → ChangesetItem
+    │
+    ▼
+backfill_defaults_raw: intent-registry defaults layered with
+  field_defaults_meta tagging source=user|default per field
+```
+
+**Registry**: `alfred/registry/intents/<intent>.json` declares shape-defining
+fields (required / default / rationale). Two intents ship today:
+`create_doctype` (module, is_submittable, autoname, istable, issingle,
+permissions) and `create_report` (ref_doctype, report_type, is_standard,
+module). Adding a new intent is one JSON file plus a builder module.
+
+**Client impact**: the preview panel renders `field_defaults_meta` as
+"default" pills next to each registry field, with the rationale surfaced
+as a hover tooltip.
+
+### V2 Module specialists (`ALFRED_MODULE_SPECIALISTS`)
+
+Module specialists are cross-cutting advisers - one Agent per ERPNext
+module (Accounts, HR, Stock, ...). They are invoked twice per build:
+
+```
+... V1 path ...
+    │
+    ▼
+classify_module → target module from prompt + target DocType
+    │
+    ▼
+provide_module_context (PRE-PASS):
+  specialist's LLM call returns a prompt snippet of conventions,
+  typical roles, gotchas. Cached in Redis (falls back to in-memory,
+  5-min TTL) keyed by (module, intent, target_doctype).
+    │
+    ▼
+build_alfred_crew: specialist task description gains the module
+  context as a MODULE CONTEXT section alongside the V1 checklist
+    │
+    ▼
+crew runs → ChangesetItem
+    │
+    ▼
+backfill_defaults_raw: V1 intent defaults + module's
+  permissions_add_roles (deduped) + module's naming pattern
+  (overrides intent default when intent default was applied)
+    │
+    ▼
+module specialist validate_output (POST-PASS):
+  deterministic rules (KB's validation_rules) + LLM pass, merged
+  and deduped by normalised issue text. Returns a list of
+  ValidationNote (severity, source, issue, field, fix).
+```
+
+**Module KBs** at `alfred/registry/modules/*.json`. 11 ship today:
+accounts, custom, hr, stock, selling, buying, manufacturing, projects,
+assets, crm, payroll. Adding a new module is one JSON file. Spec at
+`alfred-processing/docs/specs/2026-04-22-module-specialists.md`.
+
+**Client impact**: a **Module context** badge at the top of the preview
+showing the detected module. Validation notes render in a dedicated banner
+grouped by source module; blocker-severity notes from the primary module
+disable the Deploy button until addressed.
+
+### V3 Multi-module classification (`ALFRED_MULTI_MODULE`)
+
+Cross-domain prompts get one primary + up to two secondary modules. Primary
+keeps full severity; secondaries contribute context + advisory-only notes.
+
+```
+classify_module (V3 path):
+  ModuleRegistry.detect_all → (primary, [secondary...])
+  e.g. "Sales Invoice that auto-creates a project task"
+       → primary=accounts, secondaries=[projects]
+    │
+    ▼
+provide_module_context: fans out in parallel -
+  primary specialist -> PRIMARY MODULE section
+  each secondary -> SECONDARY MODULE CONTEXT section
+  (failure-isolated: one specialist down doesn't block the pipeline)
+    │
+    ▼
+backfill: primary's naming pattern wins; permissions are merged
+  UNION across primary + secondaries, deduped by role
+    │
+    ▼
+validate_output:
+  primary returns notes as-is
+  each secondary's notes pass through cap_secondary_severity:
+    blocker -> warning (secondary modules cannot gate deploy)
+```
+
+LLM fallback for the classifier is primary-only to cap token budget.
+Secondaries only come from the heuristic path. Spec at
+`alfred-processing/docs/specs/2026-04-22-multi-module-classification.md`.
+
+**Client impact**: badge extends to *"Module context: Accounts (with
+Projects)"*. Validation notes group by source module; secondary groups get
+an *(advisory only)* marker.
+
+### V4 Insights → Report handoff (`ALFRED_REPORT_HANDOFF`)
+
+Analytics prompts that used to get misrouted to Dev ("show top 10 customers
+by revenue this quarter" → hallucinated Server Script) now route cleanly
+to Insights, and the user can one-click-promote to a Dev-mode Report DocType
+build.
+
+```
+"show top 10 customers by revenue this quarter"
+    │
+    ▼
+classify_mode fast-path: analytics-verb pattern ("show top N", "list
+  the top", "count of", "summary of") routes to insights BEFORE any
+  LLM call. Explicit deploy verbs ("build a report", "create a
+  report") still beat analytics and route to dev.
+    │
+    ▼
+Insights handler → InsightsResult(reply, report_candidate):
+  reply: natural-language answer
+  report_candidate: heuristic extraction from the prompt -
+    target_doctype, limit, time_range, suggested_name
+  (None when prompt is scalar / metadata / error-reply)
+    │
+    ▼
+ws emit insights_reply { reply, report_candidate }
+    │
+    ▼
+Preview panel: chat bubble + [Save as Report] button when
+  report_candidate present
+    │
+    ▼
+--- user clicks [Save as Report] ---
+    │
+    ▼
+Client sends Dev-mode prompt: human-readable header + trailing
+  __report_candidate__: {json} marker
+    │
+    ▼
+classify_intent short-circuits on marker:
+  intent=create_report, source=handoff, confidence=high
+  (skips heuristic + LLM classifier - no re-interpretation)
+    │
+    ▼
+build_alfred_crew (V1 dispatch) → Report Builder specialist
+    │
+    ▼
+Changeset preview → user approves → Report DocType deployed
+```
+
+Spec at `alfred-processing/docs/specs/2026-04-22-insights-to-report-handoff.md`.
+
+### Flag matrix
+
+| Flags on | Behaviour |
+|---|---|
+| none | Pre-V1 Alfred (generic Developer, no specialists) |
+| V1 | Intent specialist dispatch + default pills in preview |
+| V1 + V2 | + module context injection, module validation notes, Deploy-gating blockers |
+| V1 + V2 + V3 | + primary + secondary modules, cross-domain permissions merge |
+| V1 + V4 | + Insights→Report handoff button + structured `create_report` classification |
 
 ## Knowledge Architecture (three layers)
 
