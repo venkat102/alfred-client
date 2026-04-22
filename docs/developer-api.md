@@ -51,6 +51,32 @@ Codes: AUTH_MISSING, AUTH_INVALID, RATE_LIMIT, TASK_NOT_FOUND, REDIS_UNAVAILABLE
        PIPELINE_ERROR, PIPELINE_FAILED, EMPTY_CHANGESET
 ```
 
+`EMPTY_CHANGESET` fires when the crew completed but neither extraction
+nor the rescue-regeneration path produced a deployable changeset
+(usually a capability gap: no pattern covers the request, so the
+Developer falls back to plain text). The payload carries extra fields
+so the client can render a rich failure state instead of a silent red
+dot:
+
+- `code`: `"EMPTY_CHANGESET"`.
+- `error`: user-facing message. Capability-gap wording for the
+  non-drift path, drift-specific wording when `drift_reason` is set.
+- `reason`: machine slug. `"drift_detected"` when the Developer's
+  output matched the drift heuristic (e.g. regurgitated Sales Order
+  docs); `"agent_returned_text"` otherwise.
+- `drift_reason`: free-text reason from `_detect_drift` when drift
+  fired; empty string otherwise.
+- `agent_output_preview`: first 400 characters of `ctx.result_text`,
+  stripped. Lets the client surface what the agent actually produced
+  so the user can see why rephrasing (or filing a capability gap)
+  is appropriate.
+
+The client special-cases this code alongside `PIPELINE_BUSY` and
+`OLLAMA_UNHEALTHY`: a persistent red toast, the status pill flips to
+"Failed", and the error bubble in the transcript includes a
+collapsible "Technical details" section carrying the `reason` slug
+and the agent output preview.
+
 ---
 
 ## WebSocket Protocol
@@ -231,7 +257,7 @@ template to the user's target doctype. The 5 MVP patterns are:
 
 - `approval_notification`, `post_approval_notification`,
   `validation_server_script`, `custom_field_on_existing_doctype`,
-  `audit_log_server_script`.
+  `audit_log_server_script`, `create_role_with_permissions`.
 
 ### Insights mode tool subset (Phase B)
 
@@ -350,6 +376,40 @@ switcher UI:
   the processing app's WebSocket handler can thread it into
   `PipelineContext.manual_mode_override`.
 
+### `alfred_chat.get_conversations()`
+
+Returns up to 50 of the user's most recently modified conversations
+(own + shared, gated by the permission query hook). Each row carries
+enough at-a-glance context for the list UI to render without N+1
+fetches. Two extra batched SQL queries (one COUNT GROUP BY on
+`tabAlfred Message`, one self-join on `tabAlfred Changeset` for the
+latest per conversation) keep the list at 3 total DB hits.
+
+Fields per row:
+
+- `name`, `status`, `current_agent`, `summary`, `user`, `mode`,
+  `creation`, `modified` - standard `Alfred Conversation` fields.
+- `first_message` - `summary` or `name` fallback.
+- `is_owner` - `True` if the session user owns the conversation.
+- `message_count` - integer count of `Alfred Message` rows on the
+  conversation.
+- `is_running` - `bool(current_agent)`. True exactly while a pipeline
+  is mid-flight; the processing app clears `current_agent` on
+  terminal states.
+- `latest_changeset_state` - snake_case slug of the most recent
+  `Alfred Changeset.status`: one of `"pending"`, `"approved"`,
+  `"deploying"`, `"rejected"`, `"deployed"`, `"rolled_back"`, or
+  `""` if no changeset exists.
+- `latest_changeset_summary` - one-line human tag derived from the
+  changeset's `changes` JSON. Single-item changesets return
+  `"{doctype}: {name}"` (falling back through `data.name` /
+  `role_name` / `fieldname` so role and custom-field changesets
+  summarise cleanly). Multi-item changesets return `"N changes"`.
+  Empty string if no changeset or the JSON is malformed.
+
+Frontend consumers are free to ignore any field; additions are
+additive and backwards-compatible.
+
 ### `dry_run_changeset` details
 
 Validates a changeset **without** risking any write to the database. Routes
@@ -371,7 +431,8 @@ each item by doctype to one of two paths:
    implicitly commits on DDL, breaking savepoint rollback.
 
 **Savepoint-safe doctypes** (`Notification`, `Server Script`, `Client Script`,
-`Print Format`, `Letter Head`, `Report`, `Dashboard`, `Role`, `Translation`,
+`Print Format`, `Letter Head`, `Report`, `Dashboard`, `Role`, `Custom DocPerm`,
+`Translation`,
 ...) go through `_savepoint_dry_run`, which:
 
 1. `frappe.db.savepoint("dry_run")`

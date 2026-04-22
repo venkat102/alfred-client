@@ -174,9 +174,13 @@ Agents query via `lookup_doctype(name, layer="framework|site|both")`.
 
 **Pattern library** (`alfred_client/data/customization_patterns.yaml`) answers
 *what does a canonical <idiom> look like*. Hand-written recipes for common
-customization shapes: approval_notification, validation_server_script,
-custom_field_on_existing_doctype. Each has when_to_use / when_not_to_use /
-template / anti_patterns. Agents query via `lookup_pattern(name, kind)`.
+customization shapes: approval_notification, post_approval_notification,
+validation_server_script, custom_field_on_existing_doctype,
+audit_log_server_script, create_role_with_permissions. Each has
+when_to_use / when_not_to_use / template / anti_patterns. Agents query
+via `lookup_pattern(name, kind)`. Multi-item templates (e.g.
+`create_role_with_permissions` emits a Role plus one Custom DocPerm per
+target DocType) are supported.
 
 **Frappe Knowledge Base (FKB)** (`alfred_client/data/frappe_kb/*.yaml`) answers
 *what are the rules that constrain what I generate*. Four kinds:

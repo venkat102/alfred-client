@@ -153,8 +153,14 @@ all rebuild from the server. What you see after a refresh:
   in the same conversation.
 
 ### Conversation list (no-chat route)
-- Shows your past conversations with the first message as a summary, a mode chip, a status chip, and relative time. Click to open.
-- When you open a conversation, the list is replaced by the single-column chat shell (topbar + transcript + composer).
+- Frosted topbar at the top: brand mark + "Conversations" title, search input in the center, gradient **+ New** on the right. Typing in search filters the rows in place.
+- Rows are grouped by time: **Today**, **Yesterday**, **Last 7 days**, **Last 30 days**, **Older**. Empty buckets are hidden.
+- Each row is a single line: a colored mode dot, a live-run pulse (when a pipeline is currently running on that conversation), the first message as the title, then a meta zone on the right carrying:
+  - A built-summary tag pulled from the latest changeset (e.g. "DocType: Book" for a single item, "3 changes" for multiples).
+  - A changeset-state chip (**Pending approval**, **Approved**, **Deploying**, **Deployed**, **Rejected**, **Rolled back**). If the conversation has no changeset yet, a fallback chip appears only when the conversation status needs your attention (**Awaiting Input**, **Failed**, **Escalated**).
+  - A "Shared" badge if the conversation was shared with you (not owned).
+  - The pretty date plus message count (e.g. "2h ago · 12 msgs").
+- Hover a row to reveal **Share** and **Delete** icons at the right edge (owner only). Clicking a row opens the chat shell (topbar + transcript + composer) in place of the list.
 
 ### Preview drawer
 - Auto-opens when Alfred has something to show (during VALIDATING, DEPLOYING, PENDING review, DEPLOYED, ROLLED_BACK, FAILED, REJECTED, CANCELLED). Stays closed during early-phase EMPTY / WORKING states (the pill popover carries progress detail instead).
@@ -168,7 +174,7 @@ all rebuild from the server. What you see after a refresh:
 
 ### Step 1: Start
 
-Open `/app/alfred-chat`. If this is your first time, you'll see a welcome screen with three example prompts. Click one, or click **"Start a Conversation"** and type your own request.
+Open `/app/alfred-chat`. If this is your first time, you'll see a welcome screen with a brand mark, a short one-line greeting, three example prompts, and a **Start a conversation** button. Click a starter to jump straight into that prompt, or click **Start a conversation** to type your own.
 
 **Good prompts are specific:**
 > "Create a DocType called Training Program with fields: program_name (Data, required), duration_days (Int), trainer (Link to Employee), and status (Select: Draft/Active/Completed)"
@@ -392,10 +398,16 @@ Your customization is live. You can:
 
 ### Conversation List
 
-Your past conversations are listed with:
-- **Summary** - First message you sent (truncated to 80 characters)
-- **Status badge** - Color-coded current status
-- **Time** - When last active ("2 minutes ago", "Yesterday at 3:15 PM")
+Your past conversations are grouped by time bucket (**Today**, **Yesterday**, **Last 7 days**, **Last 30 days**, **Older**) and filtered in place by the search input in the topbar. Each row shows:
+
+- **Mode dot** - Colored circle on the left keyed to the conversation's mode (Auto / Dev / Plan / Insights).
+- **Live pulse** - A small pulsing blue dot when a pipeline is currently running on the conversation.
+- **Title** - The first message you sent (or the conversation name as fallback).
+- **Built-summary tag** - What the latest changeset created or touched ("DocType: Book" for single-item, "3 changes" for multi-item). Hidden until a changeset exists.
+- **Changeset-state chip** - Color-coded stage of the latest changeset (**Pending approval**, **Approved**, **Deploying**, **Deployed**, **Rejected**, **Rolled back**). Falls back to a conversation-status chip only when there is no changeset yet and the conversation needs your attention (**Awaiting Input**, **Failed**, **Escalated**).
+- **Shared badge** - A small chip shown when the conversation was shared with you rather than owned by you.
+- **Time + message count** - Pretty date of last activity with the message count inline (e.g. "2h ago · 12 msgs"). Singular at 1; suffix omitted at 0.
+- **Hover actions** - Share and Delete icons fade in at the right edge on hover (owner only).
 
 ### Conversation Statuses
 

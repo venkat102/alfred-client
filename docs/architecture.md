@@ -254,10 +254,18 @@ variant can render mode-specific copy ("Run cancelled", "Conversation
 complete", "The previous run failed"). The transcript and the preview
 drawer scroll independently; on desktop the drawer shoves the
 transcript left via `body.alfred-drawer-open` (see "Shell layout"
-below), and the root `.alfred-app` fills whatever bounded height the
-Frappe page wrapper gives it (no more `calc(100vh - 80px)`) with
-`min-height: 0` cascading through the flex children so overflow never
-escapes to the body.
+below). The root `.alfred-app` is clamped to
+`calc(100vh - var(--navbar-height, 60px))` scoped to
+`body.alfred-page-active` so the chat page becomes a single scroll
+boundary: `.alfred-transcript-scroll` handles the message scroll and
+everything outside it (topbar, status pill, composer) stays pinned.
+Without that clamp, `.alfred-app` would inherit auto-height from
+Desk's `.layout-main-section` and a long conversation would scroll
+the entire page, dragging the pinned surfaces off-screen. A scroll
+listener on the transcript toggles
+`.alfred-status-pill-anchor--scrolled` past 8px, which collapses the
+pill's activity text into a tight "agent + elapsed" chip via CSS
+descendant rules (no prop-drill into `AgentStatusPill`).
 
 ### Frontend design system
 
@@ -459,7 +467,7 @@ get pasted into agent backstories any more.
 │  Retrieved via lookup_pattern(query, kind).                      │
 │  Starter set: approval_notification, post_approval_notification, │
 │  validation_server_script, custom_field_on_existing_doctype,     │
-│  audit_log_server_script.                                        │
+│  audit_log_server_script, create_role_with_permissions.          │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
