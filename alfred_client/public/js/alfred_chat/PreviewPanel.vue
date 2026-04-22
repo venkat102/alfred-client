@@ -110,6 +110,13 @@
 		<!-- PENDING / DEPLOYED / ROLLED_BACK / FAILED / REJECTED / CANCELLED
 		     all render the changeset body with a state-specific banner. -->
 		<div v-else-if="changeset" class="alfred-preview-content">
+			<!-- V2: Module context badge when alfred-processing detected a module -->
+			<div v-if="detectedModuleDisplay" class="alfred-module-badge">
+				<span class="alfred-module-badge__icon" aria-hidden="true">&#9675;</span>
+				<span class="alfred-module-badge__label">
+					{{ __("Module context:") }} <strong>{{ detectedModuleDisplay }}</strong>
+				</span>
+			</div>
 			<!-- PENDING: validation banners (success if dry-run passed,
 			     warn with issue list if not) -->
 			<div v-if="previewState === 'PENDING' && changeset.dry_run_valid === 1" class="alfred-banner alfred-banner--success">
@@ -125,6 +132,32 @@
 							<strong>{{ (issue.severity || 'warning').toUpperCase() }}:</strong>
 							<span v-if="issue.doctype"> {{ issue.doctype }}<span v-if="issue.name"> ({{ issue.name }})</span> - </span>
 							{{ issue.issue || issue.message }}
+						</li>
+					</ul>
+				</div>
+			</div>
+			<!-- V2: Module specialist validation notes -->
+			<div
+				v-if="previewState === 'PENDING' && moduleValidationNotes.length"
+				class="alfred-banner alfred-banner--module-notes"
+			>
+				<span class="alfred-banner__icon" aria-hidden="true">&#9873;</span>
+				<div class="alfred-banner__body">
+					<strong>{{ __("{0} module convention note(s)", [moduleValidationNotes.length]) }}</strong>
+					<ul class="alfred-banner__list">
+						<li
+							v-for="(note, i) in moduleValidationNotes"
+							:key="i"
+							:class="`alfred-module-note alfred-module-note--${note.severity || 'advisory'}`"
+						>
+							<strong>{{ (note.severity || 'advisory').toUpperCase() }}:</strong>
+							{{ note.issue }}
+							<span v-if="note.fix" class="alfred-module-note__fix">
+								&#8594; {{ note.fix }}
+							</span>
+							<small class="alfred-module-note__source" v-if="note.source">
+								({{ note.source }})
+							</small>
 						</li>
 					</ul>
 				</div>
@@ -598,6 +631,24 @@ const dryRunIssues = computed(() => {
 	return [];
 });
 
+// V2: module specialist validation notes. Only populated when
+// alfred-processing runs with ALFRED_MODULE_SPECIALISTS=1 and a module was
+// detected for the prompt. Shape mirrors dry_run_issues plus source/fix
+// fields. Empty when flag off or no module.
+const moduleValidationNotes = computed(() => {
+	const raw = props.changeset?.module_validation_notes;
+	if (!raw) return [];
+	if (Array.isArray(raw)) return raw;
+	if (typeof raw === "string") {
+		try { return JSON.parse(raw); } catch { return []; }
+	}
+	return [];
+});
+
+const detectedModuleDisplay = computed(() => {
+	return props.changeset?.detected_module || "";
+});
+
 const groupedChanges = computed(() => {
 	const groups = {};
 	changes.value.forEach((c) => {
@@ -1055,6 +1106,38 @@ function stepColor(status) {
 	vertical-align: middle;
 }
 .alfred-default-pill:hover { background: #dde; }
+
+/* V2 Module Specialists: module badge + validation notes */
+.alfred-module-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	margin: 6px 0 10px;
+	background: #f5f7fb;
+	border: 1px solid #d7dde9;
+	border-radius: 12px;
+	font-size: 12px;
+	color: #334;
+}
+.alfred-banner--module-notes {
+	background: #fff7e6;
+	border: 1px solid #ffdfa3;
+}
+.alfred-module-note--advisory { color: #444; }
+.alfred-module-note--warning { color: #8a5a00; }
+.alfred-module-note--blocker { color: #a11; font-weight: 500; }
+.alfred-module-note__fix {
+	display: block;
+	margin-top: 2px;
+	color: #556;
+	font-size: 11px;
+}
+.alfred-module-note__source {
+	margin-left: 6px;
+	color: #889;
+	font-size: 10px;
+}
 
 /* ── Empty / Working hero states ───────────────────────────────────
  * Matches the chat-side empty-state language: gradient mark, centered
