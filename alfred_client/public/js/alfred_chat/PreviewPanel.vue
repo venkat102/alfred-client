@@ -435,12 +435,16 @@
 			<div v-if="previewState === 'PENDING'" class="alfred-preview-actions">
 				<button
 					:class="[
-						changeset.dry_run_valid === 1
+						changeset.dry_run_valid === 1 && !hasModuleBlocker
 							? 'alfred-btn-primary alfred-btn-primary--success'
 							: 'alfred-btn-primary alfred-btn-primary--warn',
 					]"
+					:disabled="hasModuleBlocker"
+					:title="hasModuleBlocker ? __('Blocker-severity module note prevents deploy - address or rephrase and retry.') : ''"
 					@click="$emit('approve')">
-					{{ changeset.dry_run_valid === 1 ? __("Approve & Deploy") : __("Deploy Anyway") }}
+					{{ hasModuleBlocker
+						? __("Deploy blocked")
+						: (changeset.dry_run_valid === 1 ? __("Approve & Deploy") : __("Deploy Anyway")) }}
 				</button>
 				<button class="alfred-btn-ghost" @click="$emit('modify')">{{ __("Request Changes") }}</button>
 				<button class="alfred-btn-ghost alfred-btn-ghost--danger" @click="$emit('reject')">{{ __("Reject") }}</button>
@@ -648,6 +652,16 @@ const moduleValidationNotes = computed(() => {
 const detectedModuleDisplay = computed(() => {
 	return props.changeset?.detected_module || "";
 });
+
+// V2: any blocker-severity module note gates the Deploy button. This is
+// the "load-bearing" severity - blockers describe something that will
+// break at deploy time (invalid hook wiring, missing required module
+// field, etc). User must either edit the prompt to address the blocker
+// or explicitly override by choosing to deploy anyway (button disabled
+// by default; reject/modify still available).
+const hasModuleBlocker = computed(() =>
+	moduleValidationNotes.value.some((n) => (n.severity || "") === "blocker")
+);
 
 const groupedChanges = computed(() => {
 	const groups = {};
