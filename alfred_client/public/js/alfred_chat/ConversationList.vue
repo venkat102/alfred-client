@@ -11,30 +11,6 @@
 					{{ __("I build Frappe customizations through conversation. Tell me what you need and I'll prepare a reviewable changeset.") }}
 				</p>
 			</div>
-			<div class="alfred-conv-empty-hints">
-				<div class="alfred-eyebrow alfred-conv-empty-hints-label">{{ __("How it works") }}</div>
-				<div class="alfred-card alfred-conv-empty-hint">
-					<span class="alfred-conv-empty-hint-icon alfred-chip alfred-chip--info" aria-hidden="true">1</span>
-					<div>
-						<strong>{{ __("Describe what you want") }}</strong>
-						<p>{{ __("DocTypes, fields, notifications, scripts, workflows - plain English.") }}</p>
-					</div>
-				</div>
-				<div class="alfred-card alfred-conv-empty-hint">
-					<span class="alfred-conv-empty-hint-icon alfred-chip alfred-chip--info" aria-hidden="true">2</span>
-					<div>
-						<strong>{{ __("Review the changeset") }}</strong>
-						<p>{{ __("Every proposed change shows up in the preview panel with a plain-English summary.") }}</p>
-					</div>
-				</div>
-				<div class="alfred-card alfred-conv-empty-hint">
-					<span class="alfred-conv-empty-hint-icon alfred-chip alfred-chip--info" aria-hidden="true">3</span>
-					<div>
-						<strong>{{ __("Approve and deploy") }}</strong>
-						<p>{{ __("Nothing touches your site until you click Approve. Roll back anytime.") }}</p>
-					</div>
-				</div>
-			</div>
 			<div class="alfred-conv-empty-starters">
 				<div class="alfred-eyebrow alfred-conv-empty-starters-label">{{ __("Try one of these") }}</div>
 				<button

@@ -699,12 +699,14 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	.alfred-conv-row-shared { display: none; }
 }
 
-/* Conversation list empty state: mirrors the chat-side welcome
- * (mark + hero title + hints cards + starter prompts + primary CTA). */
+/* Conversation list empty state: slim welcome that leads with the
+ * hero, offers three starter prompts, and a primary CTA. The old
+ * 3-step "How it works" explainer was retired; the chat side teaches
+ * those steps in-situ. */
 .alfred-conv-empty-state {
 	display: flex; flex-direction: column; align-items: center;
-	justify-content: flex-start; gap: 22px;
-	padding: 32px 20px; min-height: 100%; text-align: center;
+	justify-content: flex-start; gap: 16px;
+	padding: 40px 20px 32px; min-height: 100%; text-align: center;
 	overflow-y: auto;
 }
 .alfred-conv-empty-hero { display: flex; flex-direction: column; align-items: center; gap: 10px; }
@@ -716,23 +718,11 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	margin: 0; max-width: 400px; font-size: 13px;
 	color: var(--text-muted, #6b7280); line-height: 1.5;
 }
-.alfred-conv-empty-hints,
 .alfred-conv-empty-starters {
 	display: flex; flex-direction: column; gap: 8px;
 	width: 100%; max-width: 420px; text-align: left;
 }
-.alfred-conv-empty-hints-label,
 .alfred-conv-empty-starters-label { padding-left: 4px; }
-.alfred-conv-empty-hint {
-	display: flex; gap: 12px; padding: 12px 14px;
-	font-size: 13px; line-height: 1.5;
-}
-.alfred-conv-empty-hint-icon {
-	flex-shrink: 0; width: 28px; height: 28px; padding: 0;
-	border-radius: 8px; justify-content: center;
-}
-.alfred-conv-empty-hint strong { display: block; color: var(--text-color, #333); margin-bottom: 2px; }
-.alfred-conv-empty-hint p { margin: 0; color: var(--text-muted, #6b7280); font-size: 12px; }
 .alfred-conv-empty-starter {
 	display: flex; align-items: center; gap: 10px;
 	padding: 11px 14px; font-size: 13px;
