@@ -74,6 +74,19 @@
  * default strip is redundant vertical space. */
 body.alfred-page-active .navbar-breadcrumbs { display: none; }
 
+/* Clamp the chat page to the viewport so .alfred-transcript-scroll is
+ * the single scroll container. Without this clamp, .alfred-app grows
+ * with its children (Desk's .layout-main-section is auto-height), the
+ * document scrolls at the page level, and the topbar + floating pill +
+ * composer all drag off-screen during long conversations. Strip Desk's
+ * inner padding on the chat page too so the shell fills the canvas.
+ * Scoped to body.alfred-page-active so nothing leaks to other Desk
+ * pages. */
+body.alfred-page-active .layout-main-section { padding: 0; }
+body.alfred-page-active .alfred-app {
+	height: calc(100vh - var(--navbar-height, 60px));
+}
+
 /* Desktop "shove not overlay": when the drawer is open, push the chat
  * area left by the drawer width so the transcript remains visible and
  * interactive. Animated so the reflow feels smooth, not janky. Mobile
