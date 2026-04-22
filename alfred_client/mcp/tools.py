@@ -457,6 +457,103 @@ def check_has_records(doctype):
 	}
 
 
+_GET_LIST_MAX_ROWS = 500
+
+
+@_safe_execute
+def get_list(
+	doctype,
+	filters=None,
+	fields=None,
+	limit=50,
+	order_by=None,
+):
+	"""Read records from a DocType, respecting the session user's permissions.
+
+	Used by Insights mode to answer simple data questions like
+	"list of active customers" or "count of pending invoices". Frappe's
+	permission layer runs automatically via ignore_permissions=False, so
+	a user without read access gets an empty list rather than a leak.
+
+	Args:
+		doctype: DocType name, e.g. "Customer".
+		filters: dict (``{"disabled": 0}``) or list-of-triples
+			(``[["modified", ">=", "2026-01-01"]]``). Raw SQL strings are
+			rejected. None means "no filter".
+		fields: list of field names to return. Unknown fields are dropped
+			with a warning rather than raising. Defaults to ``["name"]``.
+		limit: max rows. Clamped to ``[1, 500]``.
+		order_by: optional Frappe order-by clause, e.g. ``"modified desc"``.
+
+	Returns:
+		``{"doctype": ..., "rows": [...], "count": N, "truncated": bool,
+		   "fields": [...], "dropped_fields": [...]}``
+	"""
+	if not isinstance(doctype, str) or not doctype.strip():
+		return {"error": "invalid_argument", "message": "doctype must be a non-empty string"}
+
+	if not frappe.db.exists("DocType", doctype):
+		return {"error": "unknown_doctype", "message": f"DocType {doctype!r} not found"}
+
+	if isinstance(filters, str):
+		return {
+			"error": "invalid_filters",
+			"message": "Raw SQL filter strings are not accepted. Pass a dict or list of triples.",
+		}
+	if filters is not None and not isinstance(filters, (dict, list)):
+		return {
+			"error": "invalid_filters",
+			"message": "filters must be a dict, list of triples, or None.",
+		}
+
+	try:
+		limit = int(limit)
+	except (TypeError, ValueError):
+		limit = 50
+	limit = max(1, min(limit, _GET_LIST_MAX_ROWS))
+
+	meta = frappe.get_meta(doctype)
+	standard_fields = {"name", "owner", "creation", "modified", "modified_by", "docstatus", "idx"}
+
+	requested = fields if fields else ["name"]
+	if not isinstance(requested, list):
+		return {"error": "invalid_argument", "message": "fields must be a list of strings or None"}
+
+	resolved_fields = []
+	dropped_fields = []
+	for f in requested:
+		if not isinstance(f, str) or not f.strip():
+			dropped_fields.append(f)
+			continue
+		if f in standard_fields or meta.get_field(f) is not None:
+			resolved_fields.append(f)
+		else:
+			dropped_fields.append(f)
+	if not resolved_fields:
+		resolved_fields = ["name"]
+
+	try:
+		rows = frappe.get_list(
+			doctype,
+			filters=filters or None,
+			fields=resolved_fields,
+			limit_page_length=limit,
+			order_by=order_by or None,
+			ignore_permissions=False,
+		)
+	except frappe.PermissionError as e:
+		return {"error": "permission_denied", "message": str(e)}
+
+	return {
+		"doctype": doctype,
+		"rows": rows,
+		"count": len(rows),
+		"truncated": len(rows) == limit,
+		"fields": resolved_fields,
+		"dropped_fields": dropped_fields,
+	}
+
+
 # ── Tier 3: Validation Tools (Tester Agent / Pipeline) ───────────
 
 @_safe_execute
@@ -668,6 +765,7 @@ TOOL_REGISTRY = {
 	"validate_name_available": validate_name_available,
 	"has_active_workflow": has_active_workflow,
 	"check_has_records": check_has_records,
+	"get_list": get_list,
 	"dry_run_changeset": dry_run_changeset,
 	# Consolidated tools from the Framework KG (Tier 1b)
 	"lookup_doctype": lookup_doctype,
