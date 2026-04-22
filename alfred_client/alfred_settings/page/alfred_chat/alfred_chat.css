@@ -1812,3 +1812,28 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	.alfred-message { max-width: 95%; }
 	.alfred-preview-minimized-pill { right: 12px; bottom: 12px; }
 }
+
+/* V4 Insights -> Report handoff: button that appears under Insights replies
+ * when the backend attached a report_candidate. Clicking fires a Dev-mode
+ * turn with a structured handoff so the pipeline routes to the Report
+ * Builder specialist without re-interpreting the English. */
+.alfred-insights-reply { display: flex; flex-direction: column; gap: 8px; }
+.alfred-save-as-report-btn {
+	align-self: flex-start;
+	padding: 6px 12px;
+	background: #eef4ff;
+	border: 1px solid #c7d9f5;
+	border-radius: 6px;
+	font-size: 12px;
+	color: #2b4a7a;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.alfred-save-as-report-btn:hover { background: #dce6fa; }
+.alfred-save-as-report-btn__name {
+	color: #556;
+	font-weight: 500;
+	margin-left: 4px;
+}

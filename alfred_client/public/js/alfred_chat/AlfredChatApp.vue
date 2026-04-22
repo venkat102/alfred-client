@@ -178,6 +178,7 @@
 									@retry="retryLastMessage"
 									@plan-refine="onPlanRefine"
 									@plan-approve="onPlanApprove"
+									@save-as-report="onSaveAsReport"
 								/>
 								<TypingIndicator v-if="isProcessing && !currentActivity" />
 							</div>
@@ -1725,6 +1726,10 @@ function setupRealtime() {
 			message_type: "insights_reply",
 			content: data.reply || "",
 			mode: "insights",
+			// V4: when Alfred detected a report-shaped query, the server
+			// attaches a candidate the UI can turn into a one-click Dev
+			// handoff via the "Save as Report" button in MessageBubble.
+			report_candidate: data.report_candidate || null,
 			creation: new Date().toISOString(),
 		});
 	});
@@ -1800,6 +1805,30 @@ function onPlanApprove(message) {
 		? `Approve and build the plan: ${title}`
 		: "Approve and build the plan";
 	sendMessage(canned, "dev");
+}
+
+// V4 Insights -> Report handoff. User clicked "Save as Report" on an
+// Insights reply. Fire a Dev-mode turn with a prompt that is
+// human-readable at the top and carries the candidate as a machine-
+// parseable __report_candidate__ JSON trailer. The pipeline's
+// _parse_report_candidate_marker strips the trailer and short-circuits
+// intent classification to create_report with source=handoff, so the
+// Report Builder specialist runs against the already-resolved query
+// shape.
+function onSaveAsReport(candidate) {
+	if (!candidate || typeof candidate !== "object") return;
+	const lines = ["Save as Report:"];
+	if (candidate.target_doctype) lines.push(`Source DocType: ${candidate.target_doctype}`);
+	if (candidate.report_type) lines.push(`Report type: ${candidate.report_type}`);
+	if (candidate.suggested_name) lines.push(`Suggested name: ${candidate.suggested_name}`);
+	if (candidate.limit) lines.push(`Limit: ${candidate.limit}`);
+	if (candidate.time_range) {
+		const r = candidate.time_range;
+		lines.push(`Time range: ${r.field || "date"} in ${r.preset || r.value || ""}`);
+	}
+	lines.push("");
+	lines.push(`__report_candidate__: ${JSON.stringify(candidate)}`);
+	sendMessage(lines.join("\n"), "dev");
 }
 
 // ── Agent Status / Phase Pipeline ──────────────────────────────
