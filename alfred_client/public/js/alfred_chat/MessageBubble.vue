@@ -72,7 +72,24 @@
 			<div v-else-if="message.message_type === 'chat_reply'" class="alfred-chat-reply-msg" v-html="renderedContent"></div>
 
 			<!-- Insights reply (read-only Q&A mode, markdown) -->
-			<div v-else-if="message.message_type === 'insights_reply'" class="alfred-insights-reply-msg" v-html="renderedContent"></div>
+			<div v-else-if="message.message_type === 'insights_reply'" class="alfred-insights-reply">
+				<div class="alfred-insights-reply-msg" v-html="renderedContent"></div>
+				<!-- V4: "Save as Report" button when the server attached a
+				     report_candidate to the Insights reply. Clicking it fires a
+				     Dev-mode turn with the candidate as a structured handoff,
+				     so the pipeline can route to the Report Builder specialist
+				     without re-interpreting the English. -->
+				<button
+					v-if="reportCandidate"
+					class="alfred-save-as-report-btn"
+					@click="$emit('save-as-report', reportCandidate)"
+				>
+					&#128190; {{ __("Save as Report") }}
+					<span v-if="reportCandidate.suggested_name" class="alfred-save-as-report-btn__name">
+						"{{ reportCandidate.suggested_name }}"
+					</span>
+				</button>
+			</div>
 
 			<!-- Plan doc (Phase C plan mode, structured panel) -->
 			<PlanDocPanel
@@ -96,7 +113,9 @@ const props = defineProps({
 	message: { type: Object, required: true },
 });
 
-defineEmits(["option-click", "retry", "plan-refine", "plan-approve"]);
+defineEmits(["option-click", "retry", "plan-refine", "plan-approve", "save-as-report"]);
+
+const reportCandidate = computed(() => props.message?.report_candidate || null);
 
 const formattedTime = computed(() => {
 	if (!props.message.creation) return "";

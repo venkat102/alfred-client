@@ -110,6 +110,14 @@
 		<!-- PENDING / DEPLOYED / ROLLED_BACK / FAILED / REJECTED / CANCELLED
 		     all render the changeset body with a state-specific banner. -->
 		<div v-else-if="changeset" class="alfred-preview-content">
+			<!-- V2 / V3: Module context badge. V3 appends "(with X, Y)" when
+			     secondary modules were detected. -->
+			<div v-if="detectedModuleDisplay" class="alfred-module-badge">
+				<span class="alfred-module-badge__icon" aria-hidden="true">&#9675;</span>
+				<span class="alfred-module-badge__label">
+					{{ __("Module context:") }} <strong>{{ moduleBadgeLabel }}</strong>
+				</span>
+			</div>
 			<!-- PENDING: validation banners (success if dry-run passed,
 			     warn with issue list if not) -->
 			<div v-if="previewState === 'PENDING' && changeset.dry_run_valid === 1" class="alfred-banner alfred-banner--success">
@@ -127,6 +135,39 @@
 							{{ issue.issue || issue.message }}
 						</li>
 					</ul>
+				</div>
+			</div>
+			<!-- V2 / V3: Module specialist validation notes, grouped by source
+			     module. V3 secondary-module groups are flagged advisory-only
+			     because their blockers are capped to warning at the server. -->
+			<div
+				v-if="previewState === 'PENDING' && moduleValidationNotes.length"
+				class="alfred-banner alfred-banner--module-notes"
+			>
+				<span class="alfred-banner__icon" aria-hidden="true">&#9873;</span>
+				<div class="alfred-banner__body">
+					<strong>{{ __("{0} module convention note(s)", [moduleValidationNotes.length]) }}</strong>
+					<div v-for="(notes, moduleKey) in notesGroupedBySource" :key="moduleKey" class="alfred-module-note-group">
+						<div class="alfred-module-note-group__header">
+							<strong>{{ moduleKey }}</strong>
+							<em v-if="detectedSecondaryModules.includes(moduleKey)" class="alfred-module-note-group__flag">
+								{{ __("(secondary - advisory only)") }}
+							</em>
+						</div>
+						<ul class="alfred-banner__list">
+							<li
+								v-for="(note, i) in notes"
+								:key="i"
+								:class="`alfred-module-note alfred-module-note--${note.severity || 'advisory'}`"
+							>
+								<strong>{{ (note.severity || 'advisory').toUpperCase() }}:</strong>
+								{{ note.issue }}
+								<span v-if="note.fix" class="alfred-module-note__fix">
+									&#8594; {{ note.fix }}
+								</span>
+							</li>
+						</ul>
+					</div>
 				</div>
 			</div>
 
@@ -211,7 +252,40 @@
 						<summary class="alfred-details-summary">{{ __("Technical details") }}</summary>
 
 					<!-- Fields table for DocTypes -->
-					<table v-if="type === 'DocType' && item.data" class="table table-sm alfred-detail-table">
+					<!--
+						When Alfred's per-intent DocType Builder has populated
+						field_defaults_meta, render every shape-defining field
+						unconditionally with a "default" pill on rows the LLM
+						(or the defaults-backfill post-processor) sourced from
+						the registry. Hover the pill for the rationale.
+
+						If field_defaults_meta is absent, fall back to the
+						legacy v-if-on-truthy rendering - keeps non-DocType-
+						Builder changesets displaying the same way.
+					-->
+					<div v-if="type === 'DocType' && item.field_defaults_meta" class="alfred-defaults-banner">
+						{{ __("Alfred filled the fields below using sensible defaults where you didn't specify one. If any look wrong, say so in your next message.") }}
+					</div>
+					<table v-if="type === 'DocType' && item.data && item.field_defaults_meta" class="table table-sm alfred-detail-table">
+						<tbody>
+							<tr v-for="key in DOCTYPE_REGISTRY_KEYS" :key="key">
+								<td class="text-muted">
+									{{ DOCTYPE_REGISTRY_LABELS[key] }}
+									<span
+										v-if="isDefaulted(item, key)"
+										class="alfred-default-pill"
+										:title="defaultRationale(item, key) || ''"
+									>{{ __("default") }}</span>
+								</td>
+								<td>
+									<span v-if="key === 'permissions'">{{ permissionsSummary(item.data[key]) }}</span>
+									<code v-else-if="key === 'autoname'">{{ item.data[key] }}</code>
+									<span v-else>{{ fieldDisplayValue(item.data[key], key) }}</span>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+					<table v-else-if="type === 'DocType' && item.data" class="table table-sm alfred-detail-table">
 						<tbody>
 							<tr v-if="item.data.module"><td class="text-muted">Module</td><td>{{ item.data.module }}</td></tr>
 							<tr v-if="item.data.naming_rule"><td class="text-muted">Naming Rule</td><td>{{ item.data.naming_rule }}</td></tr>
@@ -369,12 +443,16 @@
 			<div v-if="previewState === 'PENDING'" class="alfred-preview-actions">
 				<button
 					:class="[
-						changeset.dry_run_valid === 1
+						changeset.dry_run_valid === 1 && !hasModuleBlocker
 							? 'alfred-btn-primary alfred-btn-primary--success'
 							: 'alfred-btn-primary alfred-btn-primary--warn',
 					]"
+					:disabled="hasModuleBlocker"
+					:title="hasModuleBlocker ? __('Blocker-severity module note prevents deploy - address or rephrase and retry.') : ''"
 					@click="$emit('approve')">
-					{{ changeset.dry_run_valid === 1 ? __("Approve & Deploy") : __("Deploy Anyway") }}
+					{{ hasModuleBlocker
+						? __("Deploy blocked")
+						: (changeset.dry_run_valid === 1 ? __("Approve & Deploy") : __("Deploy Anyway")) }}
 				</button>
 				<button class="alfred-btn-ghost" @click="$emit('modify')">{{ __("Request Changes") }}</button>
 				<button class="alfred-btn-ghost alfred-btn-ghost--danger" @click="$emit('reject')">{{ __("Reject") }}</button>
@@ -565,6 +643,71 @@ const dryRunIssues = computed(() => {
 	return [];
 });
 
+// V2: module specialist validation notes. Only populated when
+// alfred-processing runs with ALFRED_MODULE_SPECIALISTS=1 and a module was
+// detected for the prompt. Shape mirrors dry_run_issues plus source/fix
+// fields. Empty when flag off or no module.
+const moduleValidationNotes = computed(() => {
+	const raw = props.changeset?.module_validation_notes;
+	if (!raw) return [];
+	if (Array.isArray(raw)) return raw;
+	if (typeof raw === "string") {
+		try { return JSON.parse(raw); } catch { return []; }
+	}
+	return [];
+});
+
+const detectedModuleDisplay = computed(() => {
+	return props.changeset?.detected_module || "";
+});
+
+// V3: secondary modules detected alongside the primary.
+const detectedSecondaryModules = computed(() => {
+	const raw = props.changeset?.detected_module_secondaries;
+	if (!Array.isArray(raw)) return [];
+	return raw;
+});
+
+// Badge label: "Accounts" for V2 / single-module, "Accounts (with Projects)"
+// for V3 multi-module cases.
+const moduleBadgeLabel = computed(() => {
+	if (!detectedModuleDisplay.value) return "";
+	if (!detectedSecondaryModules.value.length) return detectedModuleDisplay.value;
+	const joined = detectedSecondaryModules.value.join(", ");
+	return `${detectedModuleDisplay.value} (with ${joined})`;
+});
+
+// Group validation notes by source module so the UI can label each group
+// and mark secondary-module groups as advisory-only. Source strings are
+// either "module_rule:<rule_id>" (rule id prefixed with its module, e.g.
+// "accounts_submittable_needs_gl") or "module_specialist:<module>".
+const notesGroupedBySource = computed(() => {
+	const groups = {};
+	for (const n of moduleValidationNotes.value) {
+		const src = n.source || "";
+		let moduleKey = "unknown";
+		if (src.startsWith("module_specialist:")) {
+			moduleKey = src.slice("module_specialist:".length);
+		} else if (src.startsWith("module_rule:")) {
+			const ruleId = src.slice("module_rule:".length);
+			moduleKey = ruleId.split("_")[0];
+		}
+		if (!groups[moduleKey]) groups[moduleKey] = [];
+		groups[moduleKey].push(n);
+	}
+	return groups;
+});
+
+// V2: any blocker-severity module note gates the Deploy button. This is
+// the "load-bearing" severity - blockers describe something that will
+// break at deploy time (invalid hook wiring, missing required module
+// field, etc). User must either edit the prompt to address the blocker
+// or explicitly override by choosing to deploy anyway (button disabled
+// by default; reject/modify still available).
+const hasModuleBlocker = computed(() =>
+	moduleValidationNotes.value.some((n) => (n.severity || "") === "blocker")
+);
+
 const groupedChanges = computed(() => {
 	const groups = {};
 	changes.value.forEach((c) => {
@@ -574,6 +717,58 @@ const groupedChanges = computed(() => {
 	});
 	return groups;
 });
+
+// ── Per-intent Builder defaults review (DocType) ──────────────────
+//
+// When alfred-processing runs with ALFRED_PER_INTENT_BUILDERS=1 and the
+// prompt is classified as create_doctype, each ChangesetItem gains a
+// field_defaults_meta dict recording which shape-defining fields were
+// sourced from the user vs. from the intent registry (with a rationale
+// for each defaulted field). See
+// docs/specs/2026-04-21-doctype-builder-specialist.md in the
+// alfred-processing repo for the full shape.
+//
+// The registry lives in alfred-processing; these arrays mirror the
+// create_doctype registry's `fields[].key` / `.label` so the UI can
+// render the table order and labels without fetching the registry.
+const DOCTYPE_REGISTRY_KEYS = [
+	"module",
+	"is_submittable",
+	"autoname",
+	"istable",
+	"issingle",
+	"permissions",
+];
+const DOCTYPE_REGISTRY_LABELS = {
+	module: __("Module"),
+	is_submittable: __("Submittable?"),
+	autoname: __("Naming rule"),
+	istable: __("Child table?"),
+	issingle: __("Singleton?"),
+	permissions: __("Permissions"),
+};
+
+function isDefaulted(item, key) {
+	return item?.field_defaults_meta?.[key]?.source === "default";
+}
+
+function defaultRationale(item, key) {
+	return item?.field_defaults_meta?.[key]?.rationale || "";
+}
+
+function fieldDisplayValue(value, key) {
+	if (value === null || value === undefined || value === "") return __("(empty)");
+	// check-typed registry fields store 0/1 in Frappe; show Yes/No for readability
+	if (["is_submittable", "istable", "issingle"].includes(key)) {
+		return value ? __("Yes") : __("No");
+	}
+	return String(value);
+}
+
+function permissionsSummary(perms) {
+	if (!Array.isArray(perms) || perms.length === 0) return __("(none)");
+	return perms.map((p) => p.role || "(unnamed)").join(", ");
+}
 
 // Fields to hide in generic key-value display (internal/noisy fields)
 const HIDDEN_FIELDS = new Set(["doctype", "name", "owner", "creation", "modified", "modified_by", "idx", "docstatus"]);
@@ -941,6 +1136,82 @@ function stepColor(status) {
 </script>
 
 <style scoped>
+/* ── Per-intent Builder defaults review ───────────────────────────
+ * When alfred-processing annotates a DocType changeset item with
+ * field_defaults_meta, the technical-details table renders every
+ * shape-defining field with a "default" pill on rows whose value was
+ * filled from the intent registry rather than the user. Hover the pill
+ * to see the registry rationale. */
+.alfred-defaults-banner {
+	background: #f0f7ff;
+	border: 1px solid #cfe3ff;
+	border-radius: 4px;
+	padding: 8px 12px;
+	margin: 8px 0;
+	font-size: 12px;
+	color: #334;
+}
+.alfred-default-pill {
+	display: inline-block;
+	background: #eef;
+	color: #334;
+	font-size: 10px;
+	font-weight: 500;
+	text-transform: lowercase;
+	padding: 1px 6px;
+	border-radius: 10px;
+	margin-left: 6px;
+	cursor: help;
+	vertical-align: middle;
+}
+.alfred-default-pill:hover { background: #dde; }
+
+/* V2 Module Specialists: module badge + validation notes */
+.alfred-module-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	margin: 6px 0 10px;
+	background: #f5f7fb;
+	border: 1px solid #d7dde9;
+	border-radius: 12px;
+	font-size: 12px;
+	color: #334;
+}
+.alfred-banner--module-notes {
+	background: #fff7e6;
+	border: 1px solid #ffdfa3;
+}
+.alfred-module-note--advisory { color: #444; }
+.alfred-module-note--warning { color: #8a5a00; }
+.alfred-module-note--blocker { color: #a11; font-weight: 500; }
+.alfred-module-note__fix {
+	display: block;
+	margin-top: 2px;
+	color: #556;
+	font-size: 11px;
+}
+.alfred-module-note__source {
+	margin-left: 6px;
+	color: #889;
+	font-size: 10px;
+}
+
+/* V3: grouped notes by source module */
+.alfred-module-note-group { margin-top: 6px; }
+.alfred-module-note-group__header {
+	font-size: 11px;
+	color: #334;
+	margin-bottom: 2px;
+}
+.alfred-module-note-group__flag {
+	margin-left: 8px;
+	color: #889;
+	font-style: italic;
+	font-size: 10px;
+}
+
 /* ── Empty / Working hero states ───────────────────────────────────
  * Matches the chat-side empty-state language: gradient mark, centered
  * title + subtitle. Different hue (teal -> violet) so the two panels
