@@ -272,9 +272,22 @@ def send_message(conversation, message, mode="auto"):
 	return {"name": msg.name, "status": "sent", "mode": normalized_mode}
 
 
+_DELETE_BLOCKING_STATUSES = ("In Progress",)
+
+
 @frappe.whitelist()
 def delete_conversation(conversation):
-	"""Delete a conversation and all its linked records. Only the owner can delete."""
+	"""Delete a conversation and all its linked records. Only the owner can delete.
+
+	Refuses to delete conversations currently being processed by the
+	agent pipeline. The processing app streams ``current_agent`` /
+	``current_activity`` updates into the Alfred Conversation row during
+	every agent transition, which holds a row lock that blocks Frappe's
+	``for_update`` acquire in ``delete_doc``. Racing against that lock
+	surfaces as a 1205 Lock wait timeout to the user ~50 seconds later.
+	Fail fast instead with an actionable message so the user cancels the
+	run first (Stop button) and then retries the delete.
+	"""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
@@ -282,6 +295,15 @@ def delete_conversation(conversation):
 	conv = frappe.get_doc("Alfred Conversation", conversation)
 	if conv.user != frappe.session.user and "System Manager" not in frappe.get_roles():
 		frappe.throw(frappe._("Only the conversation owner can delete it."), frappe.PermissionError)
+
+	if conv.status in _DELETE_BLOCKING_STATUSES:
+		frappe.throw(
+			frappe._(
+				"Can't delete this conversation while a run is in progress. "
+				"Click Stop to cancel the run, then try deleting again."
+			),
+			title=frappe._("Run in progress"),
+		)
 
 	# Delete linked records first
 	frappe.db.delete("Alfred Message", {"conversation": conversation})
