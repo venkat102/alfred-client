@@ -242,9 +242,15 @@ crew ran, so no LLM tokens were spent on retries.
 4. Check `/metrics` for the counter trend:
    ```
    alfred_llm_errors_total{tier="warmup", error_type="OLLAMA_UNHEALTHY"}
+   alfred_llm_errors_total{tier="warmup", error_type="probe_retry"}
    ```
-   A sustained rise here is the strongest leading indicator that the
-   Ollama box needs attention.
+   The first counter rises only when both probe attempts fail (real
+   outage or persistent unhealth). The second rises whenever the
+   first probe attempt fails but the second-attempt retry succeeds -
+   a steady trickle here usually means Ollama is reloading models
+   between prompts (harmless, absorbed by the retry + 120s warmup
+   cache). A sustained rise in the first counter is the strongest
+   leading indicator that the Ollama box needs attention.
 
 ### Pipeline hangs at "Step N/6 - ... is working..." for more than 10 minutes
 

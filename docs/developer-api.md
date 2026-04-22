@@ -175,7 +175,7 @@ thread executor would lose the thread-local and run calls as Administrator.
 
 ---
 
-## MCP Tools Reference (14 tools)
+## MCP Tools Reference (16 tools)
 
 All tools callable via JSON-RPC 2.0 over WebSocket. Tool count + descriptions
 must stay in sync with `alfred_client/mcp/tools.py::TOOL_REGISTRY` - adding or
@@ -207,6 +207,8 @@ Response: {"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "t
 | `validate_name_available` | 3 | doctype, name | {available: bool} |
 | `has_active_workflow` | 3 | doctype | {has_active_workflow: bool} |
 | `check_has_records` | 3 | doctype | {has_records: bool, count: int} |
+| `get_list` | 2 | doctype, filters?, fields?, limit?, order_by? | {doctype, rows: [...], count, truncated, fields, dropped_fields} - permission-aware via `ignore_permissions=False`, 500-row hard cap |
+| `run_query` | 2 | spec (JSON string or dict) | {rows: [...], count, truncated, doctypes: [...]} - structured aggregation/join, per-doctype `has_permission` gate + `permission_query_conditions` injection + sensitive-table blocklist |
 | `dry_run_changeset` | 3 | changes (list or JSON string) | {valid: bool, issues: [...], validated: [...]} |
 | `lookup_doctype` | 1b | name, layer | Merged framework/site view of a doctype |
 | `lookup_pattern` | 1b | query, kind | Curated customization pattern(s) |
@@ -259,32 +261,186 @@ template to the user's target doctype. The 5 MVP patterns are:
   `validation_server_script`, `custom_field_on_existing_doctype`,
   `audit_log_server_script`, `create_role_with_permissions`.
 
+### `get_list` details
+
+Permission-aware wrapper around `frappe.get_list`. Primary tool for
+Insights-mode "list / count / recent" prompts.
+
+Signature (MCP arg shapes):
+
+- `doctype` (required): DocType name. Existence checked via
+  `frappe.db.exists("DocType", ...)`; unknown doctypes return
+  `{"error": "unknown_doctype"}`.
+- `filters`: dict form (`{"disabled": 0}`) or list-of-triples
+  (`[["modified", ">=", "2026-01-01"]]`). Raw SQL strings are rejected
+  with `{"error": "invalid_filters"}`.
+- `fields`: list of field names. Validated against `frappe.get_meta`;
+  unknown fields are silently dropped and returned in
+  `dropped_fields` so the agent can self-correct. Defaults to
+  `["name"]`.
+- `limit`: clamped to `[1, 500]`.
+- `order_by`: Frappe order-by string, e.g. `"modified desc"`.
+
+Executes `frappe.get_list(doctype, ..., ignore_permissions=False)` so
+the session user's read permissions and `permission_query_conditions`
+hooks apply automatically. An empty result may mean "no matches" OR
+"no read access" - the agent is instructed to surface both
+possibilities in its reply.
+
+Response:
+
+```json
+{
+  "doctype": "Customer",
+  "rows": [...],
+  "count": 50,
+  "truncated": true,
+  "fields": ["name", "customer_name"],
+  "dropped_fields": []
+}
+```
+
+### `run_query` details
+
+Structured aggregation / join tool for Insights mode. The LLM emits a
+JSON spec; the tool validates it against a strict schema, builds SQL
+via `frappe.query_builder` (pypika-backed, structurally SELECT-only),
+and executes with `read_only=True`.
+
+Spec shape (full):
+
+```json
+{
+  "from_doctype": "Sales Invoice",
+  "select": [
+    {"field": "customer"},
+    {"field": "grand_total", "agg": "sum", "alias": "total"}
+  ],
+  "joins": [
+    {"type": "left", "to": "Customer", "on_local": "customer", "on_foreign": "name"}
+  ],
+  "where": [
+    {"field": "status", "op": "=", "value": "Paid"},
+    {"field": "posting_date", "op": ">=", "value": "2026-01-01"}
+  ],
+  "group_by": ["customer"],
+  "having": [
+    {"field": "total", "op": ">", "value": 10000}
+  ],
+  "order_by": [{"field": "total", "dir": "desc"}],
+  "limit": 10
+}
+```
+
+Enums:
+
+- `select[*].agg`: `count | sum | avg | min | max | count_distinct` or
+  omitted for a plain field reference.
+- `where[*].op` / `having[*].op`: `= | != | < | <= | > | >= | like |
+  not_like | in | not_in | is | is_not`. `in` / `not_in` require a
+  list value; `is` / `is_not` require the sentinel `"null"` or
+  `null`.
+- `joins[*].type`: `left | inner`.
+- `order_by[*].dir`: `asc | desc`. `field` may reference a
+  `select[*].alias` or a valid field reference.
+
+Field references use `"fieldname"` (resolved on `from_doctype`) or
+`"DocType.fieldname"` when multiple doctypes are in scope (joins).
+The validator checks every reference against `frappe.get_meta` so
+typos fail loudly.
+
+Limit clamped to `[1, 500]`.
+
+**Security boundary (three layers):**
+
+1. **Sensitive-table blocklist** (`_BLOCKED_DOCTYPES` in
+   `query_builder.py`): `Access Log`, `Activity Log`,
+   `OAuth Bearer Token`, `OAuth Authorization Code`,
+   `Integration Request`, `Error Log`, `Scheduled Job Log`,
+   `Token Cache`. Any query referencing these returns
+   `{"error": "blocked_doctype", "doctype": ...}` regardless of the
+   session user's Frappe permissions.
+2. **Per-doctype `has_permission` check**: every referenced doctype
+   (from + each join target) is probed with
+   `frappe.has_permission(dt, "read")`. Any miss rejects the whole
+   query with `{"error": "permission_denied", "doctype": ...}` - rows
+   are not silently filtered.
+3. **Row-level permission hook injection**: for each referenced
+   doctype, `frappe.get_hooks("permission_query_conditions", {})` is
+   consulted and each hooked function's returned SQL fragment (or
+   pypika `Criterion`) is ANDed into the WHERE clause. This preserves
+   admin-written row-level rules (e.g. ToDo own-items-only, User
+   Permission scoping).
+
+**Structurally SELECT-only.** pypika's `QueryBuilder` doesn't expose
+INSERT / UPDATE / DELETE / DDL / multi-statement / comment-smuggling.
+The entire `can-this-be-turned-into-DML?` attack surface evaporates
+by construction.
+
+**Out of scope (returns "refuse + suggest Dev mode"):** window
+functions, recursive CTEs, subqueries in WHERE / HAVING,
+`UNION` / `UNION ALL`, raw SQL expressions. These are not expressible
+in the spec and the Insights prompt teaches the agent to refuse them
+explicitly rather than fabricate from schema.
+
+Response:
+
+```json
+{
+  "rows": [...],
+  "count": 10,
+  "truncated": false,
+  "doctypes": ["Customer", "Sales Invoice"]
+}
+```
+
+Error shapes: `invalid_spec` (with `issues` list),
+`blocked_doctype`, `permission_denied`, `query_failed`.
+
 ### Insights mode tool subset (Phase B)
 
 When the orchestrator routes a prompt to Insights mode, the single-agent
 crew is bound to a **read-only subset** of the MCP tools. The subset is
 returned by `build_mcp_tools(...)["insights"]` in
-`alfred_processing/alfred/tools/mcp_tools.py` and covers exactly these
-10 tools:
+`alfred_processing/alfred/tools/mcp_tools.py` and covers these 12 tools:
 
-- `lookup_doctype` — primary DocType schema lookup (framework / site / both layers)
-- `lookup_pattern` — curated customization pattern browser
-- `get_site_info` — Frappe version, installed apps
-- `get_doctypes` — browse DocTypes by module
-- `get_existing_customizations` — custom fields, scripts, workflows on the site
-- `get_user_context` — current user, roles, permitted modules
-- `check_permission` — *"can I read/write this?"*
-- `has_active_workflow` — workflow presence check
-- `check_has_records` — does a DocType have data
-- `validate_name_available` — name availability probe
+- `lookup_doctype` - primary DocType schema lookup (framework / site / both layers)
+- `lookup_pattern` - curated customization pattern browser
+- `lookup_frappe_knowledge` - platform rules / APIs / idioms
+- `get_site_info` - Frappe version, installed apps
+- `get_doctypes` - browse DocTypes by module
+- `get_existing_customizations` - custom fields, scripts, workflows on the site
+- `get_site_customization_detail` - deep per-DocType recon
+- `get_user_context` - current user, roles, permitted modules
+- `check_permission` - *"can I read/write this?"*
+- `has_active_workflow` - workflow presence check
+- `check_has_records` - does a DocType have data
+- `get_list` - read actual records, permission-scoped (handles "list of active customers", "recent projects", simple filters)
+- `run_query` - structured aggregation + joins, permission-scoped (handles "top N X by Y", "average X per Y", "count of X by Y", "X joined with Y")
+- `validate_name_available` - name availability probe
+
+**Prompt-shape to tool mapping** (see `INSIGHTS_TASK_DESCRIPTION` in
+`alfred/agents/crew.py` for the canonical prompt the Insights agent
+sees):
+
+- Schema questions ("explain the Customer doctype", "what fields are
+  on X") -> `lookup_doctype`.
+- Simple record questions ("list of active customers", "count of
+  pending invoices") -> `get_list`.
+- Aggregation / join questions ("top 5 customers by total sales",
+  "average invoice value per territory") -> `run_query`.
+- Window functions, CTEs, subqueries, UNION, or raw SQL -> refused
+  with a scripted message pointing at Dev mode ("I can aggregate and
+  join across doctypes but this needs [op] which isn't supported.
+  Rephrase or switch to Dev mode and build a saved Report").
 
 **Excluded on purpose:**
 
-- `dry_run_changeset` — deploy-shaped; Insights mode never produces
+- `dry_run_changeset` - deploy-shaped; Insights mode never produces
   changesets so the tool has no legitimate use.
-- `get_doctype_schema` — deprecated in favor of `lookup_doctype`.
+- `get_doctype_schema` - deprecated in favor of `lookup_doctype`.
 - `ask_user_stub`, `validate_python_syntax_stub`, `validate_js_syntax_stub`
-  — local stubs meant for the dev-mode agents, not for read-only Q&A.
+  - local stubs meant for the dev-mode agents, not for read-only Q&A.
 
 **Tool budget:** Insights runs under a tight `_INSIGHTS_TOOL_BUDGET = 5`
 call cap (defined in `alfred/handlers/insights.py`). If the agent hits

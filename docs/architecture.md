@@ -75,12 +75,21 @@ User prompt
 ┌─────────────┐   Pre-warm + strict health gate. Fires a 1-token
 │   warmup    │   /api/generate against each distinct Ollama tier
 │             │   model with keep_alive=10m so everything is loaded
-│             │   before the crew runs. Doubles as a health probe:
-│             │   any failure (connection refused, timeout, HTTP 500
-│             │   from a dead model runner) stops the pipeline with
-│             │   OLLAMA_UNHEALTHY rather than letting the crew burn
-│             │   2-3 minutes of retries per agent. Cloud providers
-│             │   (no ollama/ prefix) are skipped.
+│             │   before the crew runs. Doubles as a health probe.
+│             │   Resilience: a process-local _WARMUP_CACHE stamps
+│             │   (model, base_url) with monotonic-time on success;
+│             │   follow-up prompts within 120s skip the probe
+│             │   entirely. Each probe has 2 attempts with a 3s
+│             │   backoff between, which absorbs the 3-8s window
+│             │   Ollama takes to swap a tier model back into VRAM
+│             │   after an idle gap. Failures evict the cached entry
+│             │   so the next prompt re-probes. A genuinely unhealthy
+│             │   Ollama still surfaces OLLAMA_UNHEALTHY with all
+│             │   failing models listed; the failure count feeds
+│             │   llm_errors_total{tier="warmup", error_type=
+│             │   "OLLAMA_UNHEALTHY" | "probe_retry"} so you can
+│             │   distinguish "real outage" from "transient reload".
+│             │   Cloud providers (no ollama/ prefix) are skipped.
 └──────┬──────┘
        ▼
 ┌─────────────┐   Admin-portal plan check. Returns allowed, remaining
