@@ -93,12 +93,27 @@
 								:title="modeLabel(conv.mode)"
 								aria-hidden="true"
 							></span>
+							<span
+								v-if="conv.is_running"
+								class="alfred-conv-row-live"
+								:title="__('Pipeline running')"
+								aria-hidden="true"
+							></span>
 							<div class="alfred-conv-row-title">
 								{{ conv.first_message || conv.name }}
 							</div>
 							<div class="alfred-conv-row-meta">
 								<span
-									v-if="statusVisible(conv.status)"
+									v-if="conv.latest_changeset_summary"
+									class="alfred-conv-row-built"
+									:title="conv.latest_changeset_summary"
+								>{{ conv.latest_changeset_summary }}</span>
+								<span
+									v-if="conv.latest_changeset_state"
+									:class="['alfred-chip', changesetChipClass(conv.latest_changeset_state), 'alfred-conv-row-state-chip']"
+								>{{ changesetChipLabel(conv.latest_changeset_state) }}</span>
+								<span
+									v-else-if="statusVisible(conv.status)"
 									:class="['alfred-chip', `alfred-chip--${statusTone(conv.status)}`, 'alfred-conv-row-status-chip']"
 								>{{ conv.status }}</span>
 								<span
@@ -106,7 +121,7 @@
 									class="alfred-chip alfred-chip--info alfred-conv-row-shared"
 									:title="__('Shared by') + ' ' + conv.user"
 								>{{ __("Shared") }}</span>
-								<span class="alfred-conv-row-time">{{ frappe.datetime.prettyDate(conv.modified) }}</span>
+								<span class="alfred-conv-row-time">{{ formatTimeAndCount(conv.modified, conv.message_count) }}</span>
 							</div>
 							<div class="alfred-conv-row-actions">
 								<button
@@ -212,10 +227,42 @@ function statusTone(status) {
 
 // Most statuses (Open / In Progress / Completed / Cancelled / Stale) are
 // the normal lifecycle and would clutter every row if shown. Surface a
-// chip only for the ones that need the user's attention.
+// chip only for the ones that need the user's attention, and only when
+// there's no changeset state to show (the changeset chip wins since it
+// carries more useful signal per row).
 const VISIBLE_STATUSES = new Set(["Awaiting Input", "Failed", "Escalated"]);
 function statusVisible(status) {
 	return VISIBLE_STATUSES.has(status);
+}
+
+// Changeset state slug -> chip label + tone. The backend normalises
+// Alfred Changeset.status to a snake_case slug before returning it.
+const CHANGESET_CHIP = {
+	pending:     { label: "Pending approval", tone: "warn" },
+	approved:    { label: "Approved",         tone: "info" },
+	deploying:   { label: "Deploying",        tone: "info" },
+	deployed:    { label: "Deployed",         tone: "success" },
+	rejected:    { label: "Rejected",         tone: "neutral" },
+	rolled_back: { label: "Rolled back",      tone: "neutral" },
+};
+
+function changesetChipClass(state) {
+	const tone = (CHANGESET_CHIP[state] || {}).tone || "neutral";
+	return `alfred-chip--${tone}`;
+}
+
+function changesetChipLabel(state) {
+	const entry = CHANGESET_CHIP[state];
+	return entry ? __(entry.label) : state;
+}
+
+// "2h ago · 12 msgs". Singular "msg" at 1, suffix omitted at 0 so
+// brand-new conversations don't read as "0 msgs".
+function formatTimeAndCount(modified, count) {
+	const t = frappe.datetime.prettyDate(modified);
+	if (!count) return t;
+	if (count === 1) return `${t} · 1 msg`;
+	return `${t} · ${count} msgs`;
 }
 
 // Map conversation.mode to a chip modifier class; fallback to auto.

@@ -632,6 +632,29 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 .alfred-conv-row-dot--plan { background: var(--alfred-mode-plan-fg); }
 .alfred-conv-row-dot--insights { background: var(--alfred-mode-insights-fg); }
 
+/* Live-run pulse: small blue dot that nestles beside the mode dot
+ * when a pipeline is actively running on the conversation. Reuses
+ * the alfred-pulse keyframe so we don't introduce a new animation. */
+.alfred-conv-row-live {
+	flex-shrink: 0;
+	width: 7px; height: 7px; border-radius: 50%;
+	background: var(--alfred-mode-dev-fg);
+	animation: alfred-pulse 1.6s ease-in-out infinite;
+	margin-left: -2px;
+}
+
+/* Built-summary tag: what the latest changeset created, short enough
+ * to live inline with the row meta. Hides on narrow mobile to keep
+ * the row readable. */
+.alfred-conv-row-built {
+	font-size: 11px; color: var(--text-muted, #6b7280);
+	padding: 2px 7px; border-radius: 6px;
+	background: rgba(15, 23, 42, 0.04);
+	max-width: 22ch;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+
 .alfred-conv-row-title {
 	flex: 1 1 auto; min-width: 0;
 	font-size: 13.5px; font-weight: 500;
@@ -697,6 +720,7 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	}
 	.alfred-conv-search { max-width: none; }
 	.alfred-conv-row-shared { display: none; }
+	.alfred-conv-row-built { display: none; }
 }
 
 /* Conversation list empty state: slim welcome that leads with the
