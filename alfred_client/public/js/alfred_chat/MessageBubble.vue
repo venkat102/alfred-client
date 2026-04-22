@@ -187,6 +187,10 @@ const friendlyError = computed(() => {
 });
 
 const technicalError = computed(() => {
+	// If the backend attached a structured details blob (reason slug +
+	// agent output preview for EMPTY_CHANGESET, etc.), surface it in the
+	// collapsible section directly.
+	if (props.message.details) return props.message.details;
 	const raw = props.message.content || "";
 	return friendlyError.value !== raw ? raw : "";
 });

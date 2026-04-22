@@ -1539,6 +1539,41 @@ function setupRealtime() {
 			addActivity(__("Ollama health check failed - contact your admin"), "error");
 			return;
 		}
+		// EMPTY_CHANGESET is the "crew finished but produced no deployable
+		// change" terminal state. The pipeline attaches a reason slug and
+		// an agent_output_preview so the user can see what the agent tried
+		// to do. Surface a persistent red toast so the failure is loud,
+		// and pack the structured details into the error bubble so the
+		// user can inspect the agent's output in place.
+		if (data.code === "EMPTY_CHANGESET") {
+			isProcessing.value = false;
+			inputDisabled.value = false;
+			stopTimer();
+			stopPolling();
+			statusText.value = __("No deployable change");
+			statusState.value = "error";
+			currentActivity.value = null;
+			const userMsg = data.error || data.message || __("Alfred couldn't produce a deployable change.");
+			frappe.show_alert(
+				{ message: userMsg, indicator: "red" },
+				10,
+			);
+			addActivity(__("Pipeline stopped: no deployable change produced"), "error");
+			const detailsParts = [];
+			if (data.reason) detailsParts.push(`Reason: ${data.reason}`);
+			if (data.drift_reason) detailsParts.push(`Drift: ${data.drift_reason}`);
+			if (data.agent_output_preview) {
+				detailsParts.push("");
+				detailsParts.push("Agent output preview:");
+				detailsParts.push(data.agent_output_preview);
+			}
+			messages.value.push({
+				_id: Date.now(), role: "system", message_type: "error",
+				content: userMsg,
+				details: detailsParts.length ? detailsParts.join("\n") : "",
+			});
+			return;
+		}
 		isProcessing.value = false;
 		inputDisabled.value = false;
 		stopTimer();
