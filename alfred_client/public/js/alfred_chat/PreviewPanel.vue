@@ -110,11 +110,12 @@
 		<!-- PENDING / DEPLOYED / ROLLED_BACK / FAILED / REJECTED / CANCELLED
 		     all render the changeset body with a state-specific banner. -->
 		<div v-else-if="changeset" class="alfred-preview-content">
-			<!-- V2: Module context badge when alfred-processing detected a module -->
+			<!-- V2 / V3: Module context badge. V3 appends "(with X, Y)" when
+			     secondary modules were detected. -->
 			<div v-if="detectedModuleDisplay" class="alfred-module-badge">
 				<span class="alfred-module-badge__icon" aria-hidden="true">&#9675;</span>
 				<span class="alfred-module-badge__label">
-					{{ __("Module context:") }} <strong>{{ detectedModuleDisplay }}</strong>
+					{{ __("Module context:") }} <strong>{{ moduleBadgeLabel }}</strong>
 				</span>
 			</div>
 			<!-- PENDING: validation banners (success if dry-run passed,
@@ -136,7 +137,9 @@
 					</ul>
 				</div>
 			</div>
-			<!-- V2: Module specialist validation notes -->
+			<!-- V2 / V3: Module specialist validation notes, grouped by source
+			     module. V3 secondary-module groups are flagged advisory-only
+			     because their blockers are capped to warning at the server. -->
 			<div
 				v-if="previewState === 'PENDING' && moduleValidationNotes.length"
 				class="alfred-banner alfred-banner--module-notes"
@@ -144,22 +147,27 @@
 				<span class="alfred-banner__icon" aria-hidden="true">&#9873;</span>
 				<div class="alfred-banner__body">
 					<strong>{{ __("{0} module convention note(s)", [moduleValidationNotes.length]) }}</strong>
-					<ul class="alfred-banner__list">
-						<li
-							v-for="(note, i) in moduleValidationNotes"
-							:key="i"
-							:class="`alfred-module-note alfred-module-note--${note.severity || 'advisory'}`"
-						>
-							<strong>{{ (note.severity || 'advisory').toUpperCase() }}:</strong>
-							{{ note.issue }}
-							<span v-if="note.fix" class="alfred-module-note__fix">
-								&#8594; {{ note.fix }}
-							</span>
-							<small class="alfred-module-note__source" v-if="note.source">
-								({{ note.source }})
-							</small>
-						</li>
-					</ul>
+					<div v-for="(notes, moduleKey) in notesGroupedBySource" :key="moduleKey" class="alfred-module-note-group">
+						<div class="alfred-module-note-group__header">
+							<strong>{{ moduleKey }}</strong>
+							<em v-if="detectedSecondaryModules.includes(moduleKey)" class="alfred-module-note-group__flag">
+								{{ __("(secondary - advisory only)") }}
+							</em>
+						</div>
+						<ul class="alfred-banner__list">
+							<li
+								v-for="(note, i) in notes"
+								:key="i"
+								:class="`alfred-module-note alfred-module-note--${note.severity || 'advisory'}`"
+							>
+								<strong>{{ (note.severity || 'advisory').toUpperCase() }}:</strong>
+								{{ note.issue }}
+								<span v-if="note.fix" class="alfred-module-note__fix">
+									&#8594; {{ note.fix }}
+								</span>
+							</li>
+						</ul>
+					</div>
 				</div>
 			</div>
 
@@ -651,6 +659,43 @@ const moduleValidationNotes = computed(() => {
 
 const detectedModuleDisplay = computed(() => {
 	return props.changeset?.detected_module || "";
+});
+
+// V3: secondary modules detected alongside the primary.
+const detectedSecondaryModules = computed(() => {
+	const raw = props.changeset?.detected_module_secondaries;
+	if (!Array.isArray(raw)) return [];
+	return raw;
+});
+
+// Badge label: "Accounts" for V2 / single-module, "Accounts (with Projects)"
+// for V3 multi-module cases.
+const moduleBadgeLabel = computed(() => {
+	if (!detectedModuleDisplay.value) return "";
+	if (!detectedSecondaryModules.value.length) return detectedModuleDisplay.value;
+	const joined = detectedSecondaryModules.value.join(", ");
+	return `${detectedModuleDisplay.value} (with ${joined})`;
+});
+
+// Group validation notes by source module so the UI can label each group
+// and mark secondary-module groups as advisory-only. Source strings are
+// either "module_rule:<rule_id>" (rule id prefixed with its module, e.g.
+// "accounts_submittable_needs_gl") or "module_specialist:<module>".
+const notesGroupedBySource = computed(() => {
+	const groups = {};
+	for (const n of moduleValidationNotes.value) {
+		const src = n.source || "";
+		let moduleKey = "unknown";
+		if (src.startsWith("module_specialist:")) {
+			moduleKey = src.slice("module_specialist:".length);
+		} else if (src.startsWith("module_rule:")) {
+			const ruleId = src.slice("module_rule:".length);
+			moduleKey = ruleId.split("_")[0];
+		}
+		if (!groups[moduleKey]) groups[moduleKey] = [];
+		groups[moduleKey].push(n);
+	}
+	return groups;
 });
 
 // V2: any blocker-severity module note gates the Deploy button. This is
@@ -1150,6 +1195,20 @@ function stepColor(status) {
 .alfred-module-note__source {
 	margin-left: 6px;
 	color: #889;
+	font-size: 10px;
+}
+
+/* V3: grouped notes by source module */
+.alfred-module-note-group { margin-top: 6px; }
+.alfred-module-note-group__header {
+	font-size: 11px;
+	color: #334;
+	margin-bottom: 2px;
+}
+.alfred-module-note-group__flag {
+	margin-left: 8px;
+	color: #889;
+	font-style: italic;
 	font-size: 10px;
 }
 
