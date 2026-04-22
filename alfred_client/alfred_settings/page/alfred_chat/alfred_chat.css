@@ -507,67 +507,197 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 }
 .alfred-empty-prompt-text { flex: 1; }
 
-/* ── Conversation List ─────────────────────────────────────────── */
-.alfred-conversation-list { flex: 1; overflow-y: auto; padding: 8px; }
-.alfred-conv-list-header {
-	display: flex; align-items: center; justify-content: space-between;
-	padding: 10px 12px; border-bottom: 1px solid var(--border-color, #e2e2e2);
-	position: sticky; top: 0; background: white; z-index: 1;
+/* ── Conversation List ───────────────────────────────────────────
+ * Conversation-first shell for the list view: frosted topbar mirrors
+ * the chat-side .alfred-topbar (48px, backdrop blur, three zones),
+ * then time-grouped single-line rows below. Search filter is
+ * client-side. Rows hover-reveal Share + Delete icons so the normal
+ * state stays quiet. */
+.alfred-conversation-list {
+	flex: 1 1 auto; min-height: 0;
+	display: flex; flex-direction: column;
+	overflow: hidden;
 }
-.alfred-conv-list-title {
-	font-weight: 600; font-size: var(--text-base, 14px);
-	color: var(--text-color, #333);
-}
-.alfred-conv-list-new { padding: 5px 10px; font-size: 11px; }
-.alfred-conv-items {
-	display: flex; flex-direction: column; gap: 8px; padding: 8px;
+.alfred-conv-view {
+	flex: 1 1 auto; min-height: 0;
+	display: flex; flex-direction: column;
+	overflow: hidden;
 }
 
-/* Conversation row: card treatment with mode chip, status chip,
- * preview line, footer with timestamp + hover action buttons. */
-.alfred-conv-item {
-	padding: 12px 14px; cursor: pointer;
+/* Frosted topbar: identical geometry to .alfred-topbar on the chat
+ * side so the two views feel like one app. Left = brand + title,
+ * center = search, right = + New. */
+.alfred-conv-topbar {
+	display: flex; align-items: center; gap: 12px;
+	padding: 8px 16px 8px 10px;
+	min-height: 48px; flex-shrink: 0;
+	position: sticky; top: 0; z-index: 10;
+	background: rgba(255, 255, 255, 0.72);
+	backdrop-filter: blur(14px) saturate(1.4);
+	-webkit-backdrop-filter: blur(14px) saturate(1.4);
+	border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
-.alfred-conv-item:hover, .alfred-conv-item:focus {
-	border-color: var(--alfred-tone-info-200);
-	box-shadow: var(--alfred-card-hover-shadow);
-	background: var(--bg-color, white);
-	outline: none; transform: translateY(-1px);
+.alfred-conv-topbar-zone { display: flex; align-items: center; gap: 10px; }
+.alfred-conv-topbar-zone--left { flex: 0 0 auto; min-width: 0; }
+.alfred-conv-topbar-zone--center {
+	flex: 1 1 auto; min-width: 0; justify-content: center;
 }
-.alfred-conv-header {
-	display: flex; justify-content: space-between; align-items: flex-start;
-	gap: 6px; margin-bottom: 8px;
+.alfred-conv-topbar-zone--right { flex: 0 0 auto; }
+.alfred-conv-topbar-title {
+	margin: 0; font-size: 14px; font-weight: 600;
+	color: var(--text-color, #111827);
+	white-space: nowrap;
 }
-.alfred-conv-header-left {
-	display: flex; align-items: center; gap: 6px;
-	flex-wrap: wrap; min-width: 0;
+.alfred-conv-search {
+	width: 100%; max-width: 420px;
+	padding: 7px 12px;
+	background: rgba(15, 23, 42, 0.04);
+	border: 1px solid transparent;
+	border-radius: 999px;
+	font-size: 12.5px;
+	color: var(--text-color, #111827);
+	transition: background 150ms, border-color 150ms, box-shadow 150ms;
 }
-.alfred-conv-header-right { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
-.alfred-conv-action {
-	opacity: 0; width: 22px; height: 22px; line-height: 1; font-size: 12px;
-	color: var(--text-muted, #9ca3af);
-	background: none; border: none; border-radius: 6px; cursor: pointer;
-	display: inline-flex; align-items: center; justify-content: center;
-	transition: opacity 0.15s, color 0.15s, background 0.15s;
+.alfred-conv-search::placeholder { color: var(--text-muted, #9ca3af); }
+.alfred-conv-search:focus {
+	outline: none;
+	background: rgba(255, 255, 255, 0.96);
+	border-color: rgba(36, 144, 239, 0.35);
+	box-shadow: 0 0 0 3px rgba(36, 144, 239, 0.12);
 }
-.alfred-conv-action:hover { background: var(--subtle-fg, #f3f4f6); }
-.alfred-conv-item:hover .alfred-conv-action,
-.alfred-conv-item:focus .alfred-conv-action { opacity: 1; }
-.alfred-conv-delete:hover { color: var(--alfred-tone-danger-500); background: var(--alfred-tone-danger-50); }
-.alfred-conv-shared-badge { margin-left: auto; }
-.alfred-conv-preview {
-	color: var(--text-color, #374151); font-size: 13px;
-	line-height: 1.45;
-	display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-	overflow: hidden; text-overflow: ellipsis;
-	margin-bottom: 8px;
+.alfred-conv-list-new { padding: 6px 12px; font-size: 12px; }
+
+/* Scroll area holds the time-grouped rows. The topbar sits above as
+ * a sibling so it never scrolls with the rows. */
+.alfred-conv-scroll {
+	flex: 1 1 auto; overflow-y: auto; min-height: 0;
+	padding: 8px 12px 24px;
 }
-.alfred-conv-footer {
+.alfred-conv-noresults {
+	display: flex; align-items: center; gap: 10px;
+	padding: 14px 8px; font-size: 12.5px;
+	color: var(--text-muted, #6b7280);
+}
+.alfred-conv-noresults-clear {
+	background: none; border: 1px solid var(--border-color, #e5e7eb);
+	border-radius: 6px;
+	padding: 4px 10px; font-size: 12px; cursor: pointer;
+	color: var(--text-color, #374151);
+}
+.alfred-conv-noresults-clear:hover { background: var(--subtle-fg, #f3f4f6); }
+
+/* Time-grouped sections: tiny eyebrow label above each group, then a
+ * tight stack of rows. Empty buckets are skipped in the computed. */
+.alfred-conv-group { margin-top: 10px; }
+.alfred-conv-group:first-child { margin-top: 2px; }
+.alfred-conv-group-label {
+	padding: 6px 12px 4px;
+	color: var(--text-muted, #6b7280);
+	font-size: 10.5px; font-weight: 600;
+	letter-spacing: 0.08em; text-transform: uppercase;
+}
+.alfred-conv-rows {
+	display: flex; flex-direction: column; gap: 1px;
+}
+
+/* Single-line row: mode dot + title + meta zone, with hover-reveal
+ * action icons overlaying the meta zone so nothing shifts on hover. */
+.alfred-conv-row {
+	position: relative;
+	display: flex; align-items: center; gap: 10px;
+	padding: 9px 12px;
+	border-radius: 8px;
+	cursor: pointer;
+	transition: background 120ms;
+}
+.alfred-conv-row:hover,
+.alfred-conv-row:focus-within {
+	background: var(--subtle-fg, #f3f4f6);
+	outline: none;
+}
+.alfred-conv-row:focus-visible {
+	box-shadow: 0 0 0 2px rgba(36, 144, 239, 0.35);
+}
+
+/* Mode dot: 8px solid circle on the left, colored by mode via the
+ * existing mode-palette tokens. Subtle visual cue without stealing
+ * the row. */
+.alfred-conv-row-dot {
+	flex-shrink: 0;
+	width: 8px; height: 8px; border-radius: 50%;
+	background: var(--alfred-mode-auto-fg);
+}
+.alfred-conv-row-dot--auto { background: var(--alfred-mode-auto-fg); }
+.alfred-conv-row-dot--dev { background: var(--alfred-mode-dev-fg); }
+.alfred-conv-row-dot--plan { background: var(--alfred-mode-plan-fg); }
+.alfred-conv-row-dot--insights { background: var(--alfred-mode-insights-fg); }
+
+.alfred-conv-row-title {
+	flex: 1 1 auto; min-width: 0;
+	font-size: 13.5px; font-weight: 500;
+	color: var(--text-color, #111827);
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Meta zone: status chip (only if non-idle), shared badge, time.
+ * Actions overlay this zone on hover via absolute positioning. */
+.alfred-conv-row-meta {
 	display: flex; align-items: center; gap: 8px;
-	font-size: 11px; color: var(--text-muted, #9ca3af);
+	flex-shrink: 0;
+	font-size: 11px; color: var(--text-muted, #6b7280);
+	transition: opacity 120ms;
 }
-.alfred-conv-time { font-variant-numeric: tabular-nums; }
-.alfred-conv-user { margin-left: auto; font-size: 11px; }
+.alfred-conv-row:hover .alfred-conv-row-meta,
+.alfred-conv-row:focus-within .alfred-conv-row-meta {
+	opacity: 0;
+}
+.alfred-conv-row-status-chip { padding: 2px 8px; font-size: 10.5px; }
+.alfred-conv-row-shared { padding: 2px 8px; font-size: 10.5px; }
+.alfred-conv-row-time {
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.alfred-conv-row-actions {
+	position: absolute;
+	right: 10px; top: 50%;
+	transform: translateY(-50%);
+	display: flex; align-items: center; gap: 2px;
+	opacity: 0; pointer-events: none;
+	transition: opacity 120ms;
+}
+.alfred-conv-row:hover .alfred-conv-row-actions,
+.alfred-conv-row:focus-within .alfred-conv-row-actions {
+	opacity: 1; pointer-events: auto;
+}
+.alfred-conv-row-action {
+	width: 26px; height: 26px; font-size: 12px; line-height: 1;
+	display: inline-flex; align-items: center; justify-content: center;
+	color: var(--text-muted, #6b7280);
+	background: none; border: none; border-radius: 6px; cursor: pointer;
+	transition: background 120ms, color 120ms;
+}
+.alfred-conv-row-action:hover {
+	background: rgba(16, 24, 40, 0.08);
+	color: var(--text-color, #111827);
+}
+.alfred-conv-row-action--delete:hover {
+	color: var(--alfred-tone-danger-500);
+	background: var(--alfred-tone-danger-50);
+}
+
+/* Mobile: topbar wraps into two rows (brand + New on top, search
+ * below) so the search input gets enough width. Row meta hides the
+ * Shared badge to save horizontal space. */
+@media (max-width: 640px) {
+	.alfred-conv-topbar { flex-wrap: wrap; padding: 8px 12px; }
+	.alfred-conv-topbar-zone--center {
+		order: 3; flex-basis: 100%;
+		justify-content: stretch;
+	}
+	.alfred-conv-search { max-width: none; }
+	.alfred-conv-row-shared { display: none; }
+}
 
 /* Conversation list empty state: mirrors the chat-side welcome
  * (mark + hero title + hints cards + starter prompts + primary CTA). */

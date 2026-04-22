@@ -57,56 +57,100 @@
 			</button>
 		</div>
 
-		<!-- Conversation list with header -->
-		<div v-else>
-			<div class="alfred-conv-list-header">
-				<span class="alfred-conv-list-title">{{ __("Conversations") }}</span>
-				<button class="alfred-primary-btn alfred-primary-btn--gradient alfred-conv-list-new" @click="$emit('new-conversation')">
-					<span class="alfred-btn-glyph" aria-hidden="true">+</span>
-					<span>{{ __("New") }}</span>
-				</button>
+		<!-- Populated list: frosted topbar + time-grouped one-line rows.
+		     Shares vocabulary with the chat shell (48px topbar, backdrop
+		     blur, gradient + New). Search filters client-side; groups
+		     are computed from conv.modified relative to now. -->
+		<div v-else class="alfred-conv-view">
+			<div class="alfred-conv-topbar">
+				<div class="alfred-conv-topbar-zone alfred-conv-topbar-zone--left">
+					<div class="alfred-mark alfred-mark--sm alfred-mark--chat" aria-hidden="true">A</div>
+					<h2 class="alfred-conv-topbar-title">{{ __("Conversations") }}</h2>
+				</div>
+				<div class="alfred-conv-topbar-zone alfred-conv-topbar-zone--center">
+					<input
+						v-model.trim="searchQuery"
+						type="search"
+						class="alfred-conv-search"
+						:placeholder="__('Search conversations...')"
+						:aria-label="__('Search conversations')"
+					/>
+				</div>
+				<div class="alfred-conv-topbar-zone alfred-conv-topbar-zone--right">
+					<button
+						class="alfred-primary-btn alfred-primary-btn--gradient alfred-conv-list-new"
+						@click="$emit('new-conversation')"
+					>
+						<span class="alfred-btn-glyph" aria-hidden="true">+</span>
+						<span>{{ __("New") }}</span>
+					</button>
+				</div>
 			</div>
-			<div class="alfred-conv-items">
+			<div class="alfred-conv-scroll">
 				<div
-					v-for="conv in conversations"
-					:key="conv.name"
-					class="alfred-card alfred-conv-item"
-					tabindex="0"
-					role="button"
-					@click="$emit('select', conv.name)"
-					@keydown.enter="$emit('select', conv.name)"
+					v-if="searchQuery && !filteredConversations.length"
+					class="alfred-conv-noresults"
 				>
-					<div class="alfred-conv-header">
-						<div class="alfred-conv-header-left">
-							<span :class="['alfred-chip', `alfred-chip--${modeChip(conv.mode)}`]">{{ modeLabel(conv.mode) }}</span>
-							<span :class="['alfred-chip', `alfred-chip--${statusTone(conv.status)}`]">{{ conv.status }}</span>
-							<span v-if="!conv.is_owner" class="alfred-chip alfred-chip--info alfred-conv-shared-badge">{{ __("Shared") }}</span>
+					<span>{{ __("No conversations match") }} "{{ searchQuery }}".</span>
+					<button class="alfred-conv-noresults-clear" @click="searchQuery = ''">
+						{{ __("Clear search") }}
+					</button>
+				</div>
+				<div
+					v-for="group in groupedConversations"
+					:key="group.label"
+					class="alfred-conv-group"
+				>
+					<div class="alfred-eyebrow alfred-conv-group-label">{{ group.label }}</div>
+					<div class="alfred-conv-rows">
+						<div
+							v-for="conv in group.rows"
+							:key="conv.name"
+							class="alfred-conv-row"
+							tabindex="0"
+							role="button"
+							@click="$emit('select', conv.name)"
+							@keydown.enter="$emit('select', conv.name)"
+						>
+							<span
+								:class="['alfred-conv-row-dot', `alfred-conv-row-dot--${modeChip(conv.mode)}`]"
+								:title="modeLabel(conv.mode)"
+								aria-hidden="true"
+							></span>
+							<div class="alfred-conv-row-title">
+								{{ conv.first_message || conv.name }}
+							</div>
+							<div class="alfred-conv-row-meta">
+								<span
+									v-if="statusVisible(conv.status)"
+									:class="['alfred-chip', `alfred-chip--${statusTone(conv.status)}`, 'alfred-conv-row-status-chip']"
+								>{{ conv.status }}</span>
+								<span
+									v-if="!conv.is_owner"
+									class="alfred-chip alfred-chip--info alfred-conv-row-shared"
+									:title="__('Shared by') + ' ' + conv.user"
+								>{{ __("Shared") }}</span>
+								<span class="alfred-conv-row-time">{{ frappe.datetime.prettyDate(conv.modified) }}</span>
+							</div>
+							<div class="alfred-conv-row-actions">
+								<button
+									v-if="conv.is_owner"
+									class="alfred-conv-row-action"
+									:title="__('Share conversation')"
+									@click.stop="$emit('share', conv.name)"
+								>
+									&#x1F517;
+								</button>
+								<button
+									v-if="conv.is_owner"
+									class="alfred-conv-row-action alfred-conv-row-action--delete"
+									:title="__('Delete conversation')"
+									@click.stop="$emit('delete', conv.name)"
+								>
+									&#x2715;
+								</button>
+							</div>
 						</div>
-						<div class="alfred-conv-header-right">
-							<button
-								v-if="conv.is_owner"
-								class="alfred-conv-action"
-								:title="__('Share conversation')"
-								@click.stop="$emit('share', conv.name)"
-							>
-								&#x1F517;
-							</button>
-							<button
-								v-if="conv.is_owner"
-								class="alfred-conv-action alfred-conv-delete"
-								:title="__('Delete conversation')"
-								@click.stop="$emit('delete', conv.name)"
-							>
-								&#x2715;
-							</button>
-						</div>
-					</div>
-					<div class="alfred-conv-preview">
-						{{ conv.first_message || conv.name }}
-					</div>
-					<div class="alfred-conv-footer">
-						<span class="alfred-conv-time">{{ frappe.datetime.prettyDate(conv.modified) }}</span>
-						<span v-if="!conv.is_owner" class="alfred-conv-user text-muted">{{ conv.user }}</span>
 					</div>
 				</div>
 			</div>
@@ -115,7 +159,9 @@
 </template>
 
 <script setup>
-defineProps({
+import { ref, computed } from "vue";
+
+const props = defineProps({
 	conversations: { type: Array, default: () => [] },
 });
 
@@ -126,6 +172,49 @@ const examples = [
 	"Add an approval workflow to Leave Application with Draft, Pending, and Approved states",
 	"Create a notification that emails the manager when a new expense claim is submitted",
 ];
+
+const searchQuery = ref("");
+
+// Client-side search over first_message + name + user. Short enough that
+// even a few hundred rows filter instantly; no need for server-side or
+// debounce plumbing here.
+const filteredConversations = computed(() => {
+	const q = (searchQuery.value || "").toLowerCase().trim();
+	if (!q) return props.conversations;
+	return props.conversations.filter((c) => {
+		const hay = (
+			(c.first_message || "") + " " +
+			(c.name || "") + " " +
+			(c.user || "")
+		).toLowerCase();
+		return hay.includes(q);
+	});
+});
+
+// Time buckets keyed to "now". Bucket thresholds measured in days from
+// the start of today; "today" covers >= start-of-today, "yesterday" is
+// the 24h window before that, then rolling 7/30/older windows.
+const groupedConversations = computed(() => {
+	const now = new Date();
+	const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+	const dayMs = 86400000;
+	const buckets = {
+		today: { label: __("Today"), rows: [] },
+		yesterday: { label: __("Yesterday"), rows: [] },
+		last_7: { label: __("Last 7 days"), rows: [] },
+		last_30: { label: __("Last 30 days"), rows: [] },
+		older: { label: __("Older"), rows: [] },
+	};
+	for (const c of filteredConversations.value) {
+		const ts = c.modified ? new Date(c.modified).getTime() : 0;
+		if (ts >= startOfToday) buckets.today.rows.push(c);
+		else if (ts >= startOfToday - dayMs) buckets.yesterday.rows.push(c);
+		else if (ts >= startOfToday - 7 * dayMs) buckets.last_7.rows.push(c);
+		else if (ts >= startOfToday - 30 * dayMs) buckets.last_30.rows.push(c);
+		else buckets.older.rows.push(c);
+	}
+	return Object.values(buckets).filter((b) => b.rows.length > 0);
+});
 
 // Map Alfred Conversation.status to a tone chip class. Keeps the old
 // semantic meaning of each status but unifies the palette with the
@@ -143,6 +232,14 @@ const STATUS_TONES = {
 
 function statusTone(status) {
 	return STATUS_TONES[status] || "neutral";
+}
+
+// Most statuses (Open / In Progress / Completed / Cancelled / Stale) are
+// the normal lifecycle and would clutter every row if shown. Surface a
+// chip only for the ones that need the user's attention.
+const VISIBLE_STATUSES = new Set(["Awaiting Input", "Failed", "Escalated"]);
+function statusVisible(status) {
+	return VISIBLE_STATUSES.has(status);
 }
 
 // Map conversation.mode to a chip modifier class; fallback to auto.
