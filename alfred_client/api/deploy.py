@@ -533,6 +533,7 @@ _SAVEPOINT_SAFE_DOCTYPES = frozenset({
 	"Dashboard",
 	"Dashboard Chart",
 	"Role",
+	"Custom DocPerm",
 	"User Permission",
 	"Translation",
 	"Web Form",

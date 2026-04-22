@@ -283,3 +283,71 @@ audit_log_server_script:
       reason: "Users without read access to the target DocType should not be able to trigger log entries that expose its contents."
     - choice: "Logging from Before Save"
       reason: "Change may not persist if a later validation rejects the save. Log from After Save so you only record durable changes."
+
+create_role_with_permissions:
+  description: >
+    Create a new Role and grant it permissions on one or more existing
+    DocTypes in a single changeset. Emits a Role document plus one
+    Custom DocPerm row per (DocType, permlevel) the role should access.
+  category: permission
+  keywords: [role, permission, access, rbac, grant, allow, docperm, permit,
+    authorise, authorize, permit, role_keeper, can_read, can_write]
+  when_to_use: >
+    The user wants a NEW Role with specific rights on one or more existing
+    DocTypes. Example: "create a Book Keeper role that can manage the Book
+    doctype", "add an Auditor role with read-only access to Sales Invoice
+    and Purchase Invoice".
+  when_not_to_use: >
+    The user wants to modify permissions on an existing Role (different
+    change - add or edit Custom DocPerm rows without creating a Role).
+    Also not for per-user record-level restrictions - that is the User
+    Permission doctype, not DocPerm. Also not for permissions that should
+    live on the DocType itself at creation time (use the DocType's
+    `permissions` child table inline with the DocType create, not a
+    separate Custom DocPerm).
+  template:
+    - op: create
+      doctype: Role
+      data:
+        doctype: Role
+        role_name: "<Role Name>"
+        desk_access: 1
+        two_factor_auth: 0
+    - op: create
+      doctype: Custom DocPerm
+      data:
+        doctype: Custom DocPerm
+        parent: "<Target DocType>"
+        parenttype: DocType
+        parentfield: permissions
+        role: "<Role Name>"
+        permlevel: 0
+        read: 1
+        write: 1
+        create: 1
+        delete: 1
+        submit: 0
+        cancel: 0
+        amend: 0
+        print: 1
+        email: 1
+        export: 1
+        report: 1
+        share: 1
+  required_clarifications:
+    - "Which DocType(s) should the role have access to? If multiple, emit one Custom DocPerm item per DocType."
+    - "Which actions? Default grants read/write/create/delete/print/email/export/report/share. Leave submit/cancel/amend at 0 unless the target DocType is submittable and the role should approve."
+    - "What permlevel? Default 0 covers the whole document. Use a higher permlevel only if the target DocType defines field-level permlevels and the role should access those specific fields."
+    - "Should the role see Desk? Default desk_access=1. Use 0 only for portal-only roles (Customer, Supplier style)."
+    - "Does a role with that name already exist? Check via lookup_doctype on Role before creating - if it exists, skip the Role create and emit only the Custom DocPerm rows."
+  anti_patterns:
+    - choice: "Creating the Role with desk_access=0 when the role needs to see doctypes in the Desk UI"
+      reason: "desk_access=0 hides the role from Desk entirely. Portal users get desk_access=0; Desk users need desk_access=1. Defaulting to 1 matches almost every real business role."
+    - choice: "Setting write=1 with read=0"
+      reason: "Frappe requires read to be granted for write to take effect. The save will silently fail permission checks. Always grant read when granting any other action."
+    - choice: "Using DocPerm instead of Custom DocPerm for runtime permission adds"
+      reason: "DocPerm is the child table inside a DocType definition - inserting directly there mutates the DocType and fights the framework's app-update flow. Custom DocPerm is the standard runtime permission table and is what the Role Permissions Manager UI writes to."
+    - choice: "Hardcoding a Role creation without checking whether it already exists"
+      reason: "Duplicate Role inserts raise DuplicateEntryError and fail the entire changeset. Pattern consumers should verify via lookup_doctype whether the Role exists before emitting the Role item; if it exists, emit only the Custom DocPerm rows."
+    - choice: "Emitting only a Role with no Custom DocPerm rows when the user asked for permissions"
+      reason: "A Role without any DocPerm rows grants access to nothing. If the user requested permissions, the changeset MUST include the Custom DocPerm rows, otherwise the request is half-done."
