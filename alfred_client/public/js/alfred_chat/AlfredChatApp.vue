@@ -127,7 +127,7 @@
 					<div class="alfred-transcript">
 						<div
 							ref="pillWrapperEl"
-							class="alfred-status-pill-anchor"
+							:class="['alfred-status-pill-anchor', { 'alfred-status-pill-anchor--scrolled': transcriptScrolled }]"
 						>
 							<AgentStatusPill
 								:state="statusPillState"
@@ -471,6 +471,12 @@ let outcomeFadeTimer = null;
 const pillPopoverOpen = ref(false);
 const pillWrapperEl = ref(null);
 
+// True once the transcript has been scrolled down a few pixels. Drives a
+// condensed-pill style (hides the live activity phrase, keeps agent +
+// elapsed) so the floating chip feels less noisy over scrolled content.
+const transcriptScrolled = ref(false);
+let onTranscriptScroll = null;
+
 const statusPillState = computed(() => {
 	if (isProcessing.value) return "processing";
 	if (outcomeFlash.value === "success") return "outcome-success";
@@ -676,6 +682,38 @@ onMounted(() => {
 	if (convId) {
 		openConversation(convId);
 	}
+	// Condensed-pill trigger: watch .alfred-transcript-scroll and flip a
+	// boolean once the user scrolls a few pixels. The ref is only
+	// populated after a conversation is opened (v-else branch), so we
+	// wait a tick and re-attach whenever the scroll container remounts.
+	nextTick(() => attachTranscriptScrollListener());
+});
+
+function attachTranscriptScrollListener() {
+	const el = messagesContainer.value;
+	if (!el || onTranscriptScroll) return;
+	onTranscriptScroll = () => {
+		transcriptScrolled.value = el.scrollTop > 8;
+	};
+	el.addEventListener("scroll", onTranscriptScroll, { passive: true });
+}
+
+function detachTranscriptScrollListener() {
+	const el = messagesContainer.value;
+	if (el && onTranscriptScroll) {
+		el.removeEventListener("scroll", onTranscriptScroll);
+	}
+	onTranscriptScroll = null;
+	transcriptScrolled.value = false;
+}
+
+// Re-attach the listener whenever the scroll container remounts (e.g.,
+// switching between ConversationList and an open conversation). Vue
+// reuses the ref slot, so watching messagesContainer covers the mount
+// transition cleanly.
+watch(messagesContainer, (el) => {
+	detachTranscriptScrollListener();
+	if (el) nextTick(() => attachTranscriptScrollListener());
 });
 
 onUnmounted(() => {
@@ -686,6 +724,7 @@ onUnmounted(() => {
 		clearTimeout(outcomeFadeTimer);
 		outcomeFadeTimer = null;
 	}
+	detachTranscriptScrollListener();
 	document.removeEventListener("click", handleDocumentClick);
 	document.removeEventListener("keydown", handleDocumentKey);
 	document.body.classList.remove("alfred-page-active");

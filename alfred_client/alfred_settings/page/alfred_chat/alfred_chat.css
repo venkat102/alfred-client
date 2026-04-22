@@ -784,10 +784,29 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	font-size: 11.5px; color: var(--alfred-tone-info-700);
 	opacity: 0.85; max-width: 32ch;
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	transition: max-width 220ms cubic-bezier(0.4, 0, 0.2, 1),
+	            opacity 180ms ease-out,
+	            margin 220ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .alfred-status-pill-caret {
 	color: var(--text-muted, #9ca3af); font-size: 10px;
 	padding-left: 2px;
+}
+
+/* Condensed pill: when the transcript has been scrolled, the activity
+ * phrase collapses so the floating chip reads as a tight "agent + time"
+ * label over scrolled content. Agent name, mark, and elapsed timer
+ * stay visible. Applies via descendant selector so AgentStatusPill.vue
+ * itself stays prop-clean. */
+.alfred-status-pill {
+	transition: padding 200ms cubic-bezier(0.4, 0, 0.2, 1),
+	            min-height 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.alfred-status-pill-anchor--scrolled .alfred-status-pill {
+	padding: 4px 12px; min-height: 30px;
+}
+.alfred-status-pill-anchor--scrolled .alfred-status-pill-activity {
+	max-width: 0; opacity: 0; margin: 0;
 }
 
 /* Pill popover: click-to-expand details card. Shows the full six-step
