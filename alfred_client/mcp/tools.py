@@ -554,6 +554,44 @@ def get_list(
 	}
 
 
+@_safe_execute
+def run_query(spec):
+	"""Run a structured aggregation / join query against the live site.
+
+	Wraps :mod:`alfred_client.mcp.query_spec` + :mod:`alfred_client.mcp.query_builder`
+	so Insights mode can answer aggregation questions without seeing SQL.
+	The LLM emits a JSON spec; this tool validates it, checks
+	per-doctype read permissions, injects row-level permission hooks,
+	blocks a sensitive-table set, and executes via frappe.query_builder
+	(structurally SELECT-only).
+
+	Args:
+		spec: dict or JSON string. See query_spec.QuerySpec.
+
+	Returns:
+		``{"rows": [...], "count": N, "truncated": bool, "doctypes": [...]}``
+		on success, or a structured error dict
+		(``invalid_spec`` / ``blocked_doctype`` / ``permission_denied`` /
+		``query_failed``).
+	"""
+	from alfred_client.mcp.query_builder import run_query_spec
+	from alfred_client.mcp.query_spec import validate_spec
+
+	if isinstance(spec, str):
+		try:
+			spec = json.loads(spec)
+		except (ValueError, TypeError) as exc:
+			return {
+				"error": "invalid_spec",
+				"issues": [f"spec is not valid JSON: {exc}"],
+			}
+
+	validated = validate_spec(spec)
+	if isinstance(validated, dict):
+		return validated  # already an error dict from the validator
+	return run_query_spec(validated)
+
+
 # ── Tier 3: Validation Tools (Tester Agent / Pipeline) ───────────
 
 @_safe_execute
@@ -766,6 +804,7 @@ TOOL_REGISTRY = {
 	"has_active_workflow": has_active_workflow,
 	"check_has_records": check_has_records,
 	"get_list": get_list,
+	"run_query": run_query,
 	"dry_run_changeset": dry_run_changeset,
 	# Consolidated tools from the Framework KG (Tier 1b)
 	"lookup_doctype": lookup_doctype,
