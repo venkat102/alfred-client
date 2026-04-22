@@ -7,7 +7,23 @@ import frappe
 
 @frappe.whitelist()
 def get_conversations():
-	"""Get conversations the current user owns or that were shared with them."""
+	"""Get conversations the current user owns or that were shared with them.
+
+	Each row carries enough at-a-glance context for the list UI:
+	- `first_message`, `is_owner`: legacy row basics.
+	- `message_count`: total Alfred Messages on the conversation.
+	- `latest_changeset_state`: slug of the most recent Alfred Changeset
+	  status (pending / approved / deploying / rejected / deployed /
+	  rolled_back) or "" if no changeset.
+	- `latest_changeset_summary`: short human tag derived from the most
+	  recent changeset's `changes` JSON (e.g. "DocType: Book", "3 changes").
+	- `is_running`: truthy while a pipeline is mid-flight on this
+	  conversation. Derived from `current_agent` which the processing
+	  app clears on terminal states.
+
+	The message-count and latest-changeset lookups are batched into
+	two SQL queries so a 50-row list stays at 3 total DB hits.
+	"""
 	from alfred_client.api.permissions import validate_alfred_access
 
 	validate_alfred_access()
@@ -25,11 +41,82 @@ def get_conversations():
 		limit_page_length=50,
 	)
 
+	names = [c["name"] for c in conversations]
+	message_counts = {}
+	latest_changesets = {}
+	if names:
+		count_rows = frappe.db.sql(
+			"""
+			SELECT conversation, COUNT(*) AS cnt
+			FROM `tabAlfred Message`
+			WHERE conversation IN %(names)s
+			GROUP BY conversation
+			""",
+			{"names": names},
+			as_dict=True,
+		)
+		message_counts = {r["conversation"]: r["cnt"] for r in count_rows}
+
+		changeset_rows = frappe.db.sql(
+			"""
+			SELECT cs.conversation, cs.status, cs.changes
+			FROM `tabAlfred Changeset` cs
+			INNER JOIN (
+				SELECT conversation, MAX(creation) AS mc
+				FROM `tabAlfred Changeset`
+				WHERE conversation IN %(names)s
+				GROUP BY conversation
+			) latest
+				ON cs.conversation = latest.conversation
+				AND cs.creation = latest.mc
+			""",
+			{"names": names},
+			as_dict=True,
+		)
+		latest_changesets = {r["conversation"]: r for r in changeset_rows}
+
 	for conv in conversations:
 		conv["first_message"] = conv.get("summary") or conv["name"]
 		conv["is_owner"] = conv["user"] == frappe.session.user
+		conv["message_count"] = int(message_counts.get(conv["name"], 0))
+		conv["is_running"] = bool(conv.get("current_agent"))
+		cs = latest_changesets.get(conv["name"])
+		if cs:
+			conv["latest_changeset_state"] = (cs.get("status") or "").lower().replace(" ", "_")
+			conv["latest_changeset_summary"] = _summarise_changeset(cs.get("changes"))
+		else:
+			conv["latest_changeset_state"] = ""
+			conv["latest_changeset_summary"] = ""
 
 	return conversations
+
+
+def _summarise_changeset(changes_json):
+	"""Render a one-line tag like 'DocType: Book' or '3 changes'.
+
+	Parses the Alfred Changeset `changes` field (JSON string of a list
+	of {op, doctype, data} items). For a single item, tries
+	'doctype: data.name' and falls back to just doctype. For multiple
+	items, returns 'N changes'. Returns "" for empty or malformed
+	input.
+	"""
+	if not changes_json:
+		return ""
+	try:
+		items = json.loads(changes_json) if isinstance(changes_json, str) else changes_json
+	except (ValueError, TypeError):
+		return ""
+	if not isinstance(items, list) or not items:
+		return ""
+	if len(items) == 1:
+		item = items[0] or {}
+		doctype = item.get("doctype") or ""
+		data = item.get("data") or {}
+		name = data.get("name") or data.get("role_name") or data.get("fieldname") or ""
+		if doctype and name:
+			return f"{doctype}: {name}"
+		return doctype or "1 change"
+	return f"{len(items)} changes"
 
 
 _VALID_CONVERSATION_MODES = {"Auto", "Dev", "Plan", "Insights"}
