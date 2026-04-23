@@ -122,7 +122,7 @@ User prompt
 └──────┬──────┘
        ▼
 ┌─────────────┐   Dev-mode intent classifier (V1). Classifies the
-│classify_    │   dev-mode prompt into one of 15 intents across four
+│classify_    │   dev-mode prompt into one of 22 intents across four
 │intent       │   family builders (Schema, Reports, Automation,
 │             │   Presentation) or "unknown". Two paths:
 │             │   (a) Handoff short-circuit: if the prompt carries a
@@ -554,7 +554,7 @@ when the classified intent has a Builder registered.
 Dev-mode prompt
     │
     ▼
-classify_intent → one of 15 intents across four families, or "unknown"
+classify_intent → one of 22 intents across four families, or "unknown"
     │
     ▼
 build_alfred_crew:
@@ -583,20 +583,49 @@ backfill_defaults_raw: intent-registry defaults layered with
 a shared family backstory that teaches controller-enforced Frappe
 invariants once instead of re-explaining them per prompt:
 
-- **Schema & Access** (`alfred_processing/alfred/agents/builders/schema_builder.py`) - `create_doctype`, `create_custom_field`, `create_role_with_permissions`.
-- **Reports & Insights** (`reports_builder.py`) - `create_report`, `create_dashboard`, `create_dashboard_chart`, `create_number_card`.
-- **Automation & Behavior** (`automation_builder.py`) - `create_server_script`, `create_client_script`, `create_notification`, `create_workflow`.
-- **Presentation** (`presentation_builder.py`) - `create_print_format`, `create_letter_head`, `create_email_template`, `create_web_form`.
+- **Schema & Access** (`alfred_processing/alfred/agents/builders/schema_builder.py`) - `create_doctype`, `create_custom_field`, `create_role_with_permissions`, `create_property_setter`, `create_user_permission`.
+- **Reports & Insights** (`reports_builder.py`) - `create_report`, `create_dashboard`, `create_dashboard_chart`, `create_number_card`, `create_auto_email_report`.
+- **Automation & Behavior** (`automation_builder.py`) - `create_server_script`, `create_client_script`, `create_notification`, `create_workflow`, `create_webhook`, `create_auto_repeat`, `create_assignment_rule`.
+- **Presentation** (`presentation_builder.py`) - `create_print_format`, `create_letter_head`, `create_email_template`, `create_web_form`, `update_print_settings`.
 
 `doctype_builder.py` and `report_builder.py` remain as thin compat shims
 that re-export the family APIs bound to their single intent, so crew.py's
 dispatcher branches and any older call sites keep working.
 
 **Registry**: `alfred/registry/intents/<intent>.json` declares shape-defining
-fields (required / default / rationale). Fifteen intent JSONs ship
-today; each family owns 3-4 of them. Adding a new intent is one JSON
+fields (required / default / rationale). Twenty-two intent JSONs ship
+today; each family owns 5-7 of them. Adding a new intent is one JSON
 plus an entry in the owning family builder module (backstory fragment,
-role, goal, dispatcher clause).
+role, goal, dispatcher clause). Registry fields mirror the canonical
+Frappe DocType fields with controller-enforced invariants captured in
+the `rationale` strings so the specialist knows which defaults are safe
+and which are load-bearing.
+
+**Critical cross-family distinctions** the family backstories embed to
+prevent the generic Developer's most common drift:
+
+- *Property Setter vs Custom Field* (Schema): Property Setter TWEAKS
+  an existing DocField's properties (reqd / label / hidden / options);
+  Custom Field ADDS a new field. Emitting a Custom Field to alter an
+  existing property silently creates a duplicate.
+- *User Permission vs DocPerm* (Schema): User Permission is
+  DOCUMENT-LEVEL per user (which records); DocPerm is DOCTYPE-LEVEL
+  per role (which DocTypes). Orthogonal - both needed.
+- *DocPerm `select` vs `read`* (Schema): `read` gates OPEN; `select`
+  gates LIST / dropdown visibility. Granting read without select
+  hides records from every list.
+- *Webhook vs Server Script API* (Automation): Webhook is OUTBOUND
+  (Frappe -> external URL) on a document event; Server Script API is
+  INBOUND (external caller -> Frappe endpoint).
+- *Assignment Rule vs Workflow* (Automation): Assignment Rule ROUTES
+  documents to users via ToDos; Workflow TRACKS state on documents
+  via docstatus transitions. Complementary, not substitutes.
+- *Auto Repeat stale-snapshot* (Automation): generated copies reflect
+  the template's CURRENT state, not setup-time state; mid-schedule
+  edits propagate to future copies.
+- *Print Settings singleton* (Presentation): Print Settings is a
+  SINGLE DocType - the intent is `update_print_settings` with
+  op=update targeting the document name 'Print Settings', not create.
 
 **Ask, don't assume.** Every family backstory carries an explicit
 contract: when a critical field is ambiguous in the prompt, the
