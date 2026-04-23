@@ -402,7 +402,7 @@ Error shapes: `invalid_spec` (with `issues` list),
 When the orchestrator routes a prompt to Insights mode, the single-agent
 crew is bound to a **read-only subset** of the MCP tools. The subset is
 returned by `build_mcp_tools(...)["insights"]` in
-`alfred_processing/alfred/tools/mcp_tools.py` and covers these 12 tools:
+`alfred_processing/alfred/tools/mcp_tools.py` and covers these 14 tools:
 
 - `lookup_doctype` - primary DocType schema lookup (framework / site / both layers)
 - `lookup_pattern` - curated customization pattern browser

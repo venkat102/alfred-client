@@ -122,18 +122,24 @@ User prompt
 └──────┬──────┘
        ▼
 ┌─────────────┐   Dev-mode intent classifier (V1). Classifies the
-│classify_    │   dev-mode prompt into a known intent (create_doctype,
-│intent       │   create_report, ...) or "unknown". Two paths:
+│classify_    │   dev-mode prompt into one of 15 intents across four
+│intent       │   family builders (Schema, Reports, Automation,
+│             │   Presentation) or "unknown". Two paths:
 │             │   (a) Handoff short-circuit: if the prompt carries a
 │             │       __report_candidate__ JSON trailer (user clicked
 │             │       "Save as Report" on an Insights reply), force-
 │             │       classify intent=create_report, source=handoff,
 │             │       no LLM call. ctx.report_candidate carries the
 │             │       structured spec for downstream phases.
-│             │   (b) Normal path: heuristic pattern matcher first
+│             │   (b) Normal path: heuristic substring matcher first
 │             │       (e.g. "create a doctype" -> create_doctype;
-│             │       "save as report" -> create_report), LLM fallback
-│             │       constrained to the supported intent list.
+│             │       "email the approver" -> create_notification;
+│             │       "letterhead" -> create_letter_head), LLM
+│             │       fallback constrained to the supported intent
+│             │       list. Family-specific patterns are ordered
+│             │       BEFORE generic ones so "add a role on X
+│             │       doctype" matches create_role_with_permissions,
+│             │       not create_doctype.
 │             │   Gated by ALFRED_PER_INTENT_BUILDERS. When off, phase
 │             │   is a no-op and the generic Developer runs downstream.
 └──────┬──────┘
@@ -215,9 +221,9 @@ User prompt
 │             │   failure counter - Phase 1 tool hardening).
 │             │   When ALFRED_PER_INTENT_BUILDERS is on and the
 │             │   classified intent has a specialist, the generic
-│             │   Developer is swapped for that specialist
-│             │   (DocType Builder for create_doctype, Report Builder
-│             │   for create_report) and the generate_changeset task
+│             │   Developer is swapped for a family builder (Schema,
+│             │   Reports, Automation, or Presentation) bound to the
+│             │   specific intent, and the generate_changeset task
 │             │   description gains a registry-driven checklist of
 │             │   shape-defining fields plus the module context
 │             │   snippet assembled in provide_module_context.
@@ -548,33 +554,63 @@ when the classified intent has a Builder registered.
 Dev-mode prompt
     │
     ▼
-classify_intent → "create_doctype" | "create_report" | "unknown"
+classify_intent → one of 15 intents across four families, or "unknown"
     │
     ▼
 build_alfred_crew:
-  if intent has specialist:
-      agents["developer"] = build_<intent>_builder_agent(...)
-      task description += render_registry_checklist(intent_schema)
+  if intent in SCHEMA_INTENTS:
+      agents["developer"] = build_schema_agent(intent, ...)
+  elif intent in REPORTS_INTENTS:
+      agents["developer"] = build_reports_agent(intent, ...)
+  elif intent in AUTOMATION_INTENTS:
+      agents["developer"] = build_automation_agent(intent, ...)
+  elif intent in PRESENTATION_INTENTS:
+      agents["developer"] = build_presentation_agent(intent, ...)
   else:
       agents["developer"] = generic Developer (pre-V1)
+  task description += render_registry_checklist(intent_schema)
     │
     ▼
 crew runs → ChangesetItem
     │
     ▼
 backfill_defaults_raw: intent-registry defaults layered with
-  field_defaults_meta tagging source=user|default per field
+  field_defaults_meta tagging source=user|default|needs_clarification
+  per field
 ```
 
+**Family builders**: four Dev-mode specialists group related intents under
+a shared family backstory that teaches controller-enforced Frappe
+invariants once instead of re-explaining them per prompt:
+
+- **Schema & Access** (`alfred_processing/alfred/agents/builders/schema_builder.py`) - `create_doctype`, `create_custom_field`, `create_role_with_permissions`.
+- **Reports & Insights** (`reports_builder.py`) - `create_report`, `create_dashboard`, `create_dashboard_chart`, `create_number_card`.
+- **Automation & Behavior** (`automation_builder.py`) - `create_server_script`, `create_client_script`, `create_notification`, `create_workflow`.
+- **Presentation** (`presentation_builder.py`) - `create_print_format`, `create_letter_head`, `create_email_template`, `create_web_form`.
+
+`doctype_builder.py` and `report_builder.py` remain as thin compat shims
+that re-export the family APIs bound to their single intent, so crew.py's
+dispatcher branches and any older call sites keep working.
+
 **Registry**: `alfred/registry/intents/<intent>.json` declares shape-defining
-fields (required / default / rationale). Two intents ship today:
-`create_doctype` (module, is_submittable, autoname, istable, issingle,
-permissions) and `create_report` (ref_doctype, report_type, is_standard,
-module). Adding a new intent is one JSON file plus a builder module.
+fields (required / default / rationale). Fifteen intent JSONs ship
+today; each family owns 3-4 of them. Adding a new intent is one JSON
+plus an entry in the owning family builder module (backstory fragment,
+role, goal, dispatcher clause).
+
+**Ask, don't assume.** Every family backstory carries an explicit
+contract: when a critical field is ambiguous in the prompt, the
+specialist emits it as an empty string and records
+`field_defaults_meta[<field>] = {"source": "needs_clarification",
+"question": "..."}` rather than inventing a value. The three valid
+`source` values are `"user"`, `"default"`, and `"needs_clarification"`.
+Each family's backstory lists its own critical fields (target DocType,
+Notification event, Workflow transitions, Web Form route, etc.)
+explicitly so the model knows where defaults are inappropriate.
 
 **Client impact**: the preview panel renders `field_defaults_meta` as
-"default" pills next to each registry field, with the rationale surfaced
-as a hover tooltip.
+"default" / "needs clarification" pills next to each registry field,
+with the rationale (or the LLM's question) surfaced as a hover tooltip.
 
 ### V2 Module specialists (`ALFRED_MODULE_SPECIALISTS`)
 
