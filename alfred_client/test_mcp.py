@@ -19,8 +19,10 @@ def run_tests():
 	# (pipeline validation) and the consolidated lookup_doctype +
 	# lookup_pattern (Framework KG) joined the original 9. FKB Phase A added
 	# lookup_frappe_knowledge. FKB Phase B.5 added get_site_customization_detail.
+	# Insights phase added get_list (simple record lookup) and run_query
+	# (structured aggregation + joins).
 	# Keep this set in sync with TOOL_REGISTRY in alfred_client/mcp/tools.py.
-	print("Test 1: tools/list returns all 14 tools...")
+	print("Test 1: tools/list returns all 16 tools...")
 	response = handle_mcp_request({
 		"jsonrpc": "2.0",
 		"method": "tools/list",
@@ -44,6 +46,8 @@ def run_tests():
 		"lookup_frappe_knowledge",
 		# FKB Phase B.5: per-DocType deep recon
 		"get_site_customization_detail",
+		# Insights: record listing + structured query
+		"get_list", "run_query",
 	}
 	assert tool_names == expected_tools, f"Expected {expected_tools}, got {tool_names}"
 	# Every tool must carry a non-empty docstring so agents can decide when
