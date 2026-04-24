@@ -290,6 +290,38 @@ the error after the phase loop exits. Exception boundaries are centralised in
 `AgentPipeline.run()`: `asyncio.TimeoutError` -> `PIPELINE_TIMEOUT`, any other
 exception -> `PIPELINE_ERROR`. Every phase is unit-testable in isolation.
 
+### Dry-run validation: where the DDL vs savepoint split lives
+
+The processing app calls `dry_run_changeset` as a single MCP tool; the decision
+about HOW to validate each item happens on the **client (Frappe) side**, in
+`alfred_client/alfred_client/api/deploy.py`. This is a deliberate split:
+
+- **Processing side** (`alfred_processing/alfred/api/websocket.py:_dry_run_with_retry`)
+  makes one MCP call with the full changeset and gets back
+  `{valid, status, issues, validated}`. It does NOT classify items by
+  doctype. It only attaches the `status` tag to distinguish `ok` /
+  `invalid` / `infra_error` / `skipped` for the UI.
+
+- **Client side** (`deploy.py::_dry_run_single`) routes each item to one
+  of two validation paths based on its doctype:
+
+  | Path | Doctypes | Rationale |
+  |---|---|---|
+  | `_meta_check_only` | `_DDL_TRIGGERING_DOCTYPES` (DocType, Custom Field, Property Setter, Workflow, Workflow State, Workflow Action Master, DocField) + all unknown doctypes | `.insert()` would trigger DDL (CREATE/ALTER TABLE) either directly or via controller side effects. MariaDB implicitly commits all pending DML before any DDL statement, which silently destroys the savepoint rollback - the intended "test insert" lands for real. We never call `.insert()` on these; instead we validate field shapes + links against `frappe.get_meta()`. |
+  | `_savepoint_dry_run` | `_SAVEPOINT_SAFE_DOCTYPES` (Notification, Server Script, Client Script, Print Format, Letter Head, Report, Dashboard, Dashboard Chart, Role, Custom DocPerm, User Permission, Translation, Web Form, Web Page) | Pure DML. `.insert()` writes one row with no schema side effects. Savepoint-rollback catches controller-level validators (uniqueness, format checks, workflow rules) that the meta-only path misses. |
+
+Both sets live on the client side because only the client's Frappe runtime
+knows which doctypes trigger DDL (the list depends on installed apps and
+Frappe version). The processing app is deliberately oblivious to this - it
+just asks "validate this" and trusts the client's routing.
+
+**Contract for future work:** any new doctype added to Alfred's generation
+catalog needs an explicit entry in one of the two frozensets. Unknown
+doctypes default to `_meta_check_only` for safety. Moving a doctype from
+`_DDL_TRIGGERING_DOCTYPES` to `_SAVEPOINT_SAFE_DOCTYPES` requires proving
+its controller path doesn't call `frappe.db.commit()` or trigger schema
+changes - a mistake here deploys test inserts to production.
+
 ### User-initiated cancel (graceful stop)
 
 The chat UI Stop button pushes a `{"type": "cancel"}` message through the
