@@ -86,6 +86,7 @@ class AlfredSettings(Document):
 		llm_temperature: DF.Float
 		max_retries_per_agent: DF.Int
 		max_tasks_per_user_per_hour: DF.Int
+		mcp_timeout: DF.Int
 		processing_app_url: DF.Data | None
 		redis_url: DF.Data | None
 		self_hosted_mode: DF.Check

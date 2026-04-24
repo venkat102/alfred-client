@@ -85,6 +85,11 @@ def _get_site_config():
 		"max_retries_per_agent": settings.max_retries_per_agent,
 		"max_tasks_per_user_per_hour": settings.max_tasks_per_user_per_hour,
 		"task_timeout_seconds": settings.task_timeout_seconds,
+		# Per-tool-call MCP timeout. The processing app reads this via
+		# site_config.get("mcp_timeout", 30) and clamps to 30 when the
+		# admin field is unset or zero. Increase when lookup_doctype /
+		# run_query routinely take >30s on this site.
+		"mcp_timeout": getattr(settings, "mcp_timeout", 0) or 0,
 		"enable_auto_deploy": settings.enable_auto_deploy,
 	}
 

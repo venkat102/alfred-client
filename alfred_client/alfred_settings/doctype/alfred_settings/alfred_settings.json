@@ -41,6 +41,7 @@
 		"max_tasks_per_user_per_hour",
 		"column_break_limits",
 		"task_timeout_seconds",
+		"mcp_timeout",
 		"stale_conversation_hours",
 		"usage_tab",
 		"usage_section",
@@ -271,6 +272,13 @@
 			"fieldtype": "Int",
 			"label": "Task Timeout (seconds)",
 			"description": "Maximum time for a single agent task before timeout"
+		},
+		{
+			"default": "30",
+			"fieldname": "mcp_timeout",
+			"fieldtype": "Int",
+			"label": "MCP Tool Timeout (seconds)",
+			"description": "Per-tool-call timeout for MCP requests from the processing app back to the Frappe site. Increase for slow sites where lookup_doctype / run_query take longer than 30s. Set to 0 to fall back to the processing-side default."
 		},
 		{
 			"default": "24",
