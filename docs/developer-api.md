@@ -123,8 +123,8 @@ this by loading the owner from `Alfred Conversation` before generating the JWT.
 | Type | Description |
 |------|------------|
 | `auth_success` | Handshake accepted |
-| `agent_status` | Phase / agent status update. Includes `phase`, `pipeline_mode`, `pipeline_mode_source`. |
-| `agent_activity` | Live MCP tool call description. The client renders it inside the floating status pill during processing. |
+| `agent_status` | Phase / agent status update. Heterogeneous payload - three flavours depending on emitter: (a) **lifecycle announcements** carry `{agent, status, message?}` where `agent` is a string like `"System"` / `"Orchestrator"` / `"Validator"`, `status` is a free-form verb like `"enhancing"` / `"started"` / `"completed"` / `"warning"` / `"dry_run_running"`, and `message` is an optional human-readable string. (b) **crew event-callback wrappers** carry `{event, ...data}` where `event` is the crew event name (e.g. `"crew_started"`, `"task_started"`) and additional keys come from CrewAI's internal event payload - treat as opaque for rendering and only log. (c) **crew-start announcement** (`_phase_run_crew` entry) carries `{agent: "Orchestrator", status: "started", phase: "requirement", pipeline_mode, pipeline_mode_source}` where `pipeline_mode` is `"full"` or `"lite"` and `pipeline_mode_source` is `"site_config"` / `"plan"`. Don't expect `pipeline_mode*` fields on other `agent_status` events - they're only on the crew-start one. |
+| `agent_activity` | Live MCP tool call description. Payload: `{tool, description}`. `tool` is the MCP tool name (e.g. `"lookup_doctype"`), `description` is a human-readable rendering like `"Reading Leave Application schema..."`. Client renders inside the floating status pill during processing. |
 | `minimality_review` | Reflection step dropped one or more items from the changeset. Includes the dropped items + reasons. |
 | `clarify` | Clarifier is asking a question or announcing done. |
 | `validation` | Dry-run validation status update. |
