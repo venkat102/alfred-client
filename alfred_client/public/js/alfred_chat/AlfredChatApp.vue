@@ -325,6 +325,7 @@ import AgentStatusPill from "./AgentStatusPill.vue";
 import PreviewDrawer from "./PreviewDrawer.vue";
 import ModeSwitcher from "./ModeSwitcher.vue";
 import { useDrawerState } from "./composables/useDrawerState";
+import { useConversationAdmin } from "./composables/useConversationAdmin";
 
 // ── State ──────────────────────────────────────────────────────
 const conversations = ref([]);
@@ -726,12 +727,18 @@ onUnmounted(() => {
 watch(messages, () => nextTick(scrollToBottom), { deep: true });
 
 // ── API Calls ──────────────────────────────────────────────────
-function loadConversations() {
-	frappe.call({
-		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_conversations",
-		callback: (r) => { if (r.message) conversations.value = r.message; },
-	});
-}
+// Conversation-admin helpers (load / delete / share / health) live in
+// useConversationAdmin so this file is free of boilerplate frappe.call
+// glue. The composable takes only the two refs it needs (conversations,
+// currentConversation) and returns plain functions the template + the
+// other functions in this file can call directly.
+const {
+	loadConversations,
+	confirmAndDelete,
+	deleteConversationFromList,
+	shareConversation,
+	checkHealth,
+} = useConversationAdmin({ conversations, currentConversation });
 
 function newConversation() {
 	frappe.call({
@@ -1070,158 +1077,6 @@ function newConversationFromChat() {
 function deleteConversation() {
 	if (!currentConversation.value) return;
 	confirmAndDelete(currentConversation.value, () => goBack());
-}
-
-function checkHealth() {
-	if (!currentConversation.value) return;
-	frappe.call({
-		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_conversation_health",
-		args: { conversation: currentConversation.value },
-		callback: (r) => {
-			if (!r.message) return;
-			const h = r.message;
-			const esc = frappe.utils.escape_html;
-
-			const lastMsg = h.last_message
-				? `${esc(h.last_message.role)} (${esc(h.last_message.message_type)}) - ${esc(h.last_message.creation)}`
-				: '<span class="text-muted">-</span>';
-
-			const procStatus = h.processing_app_reachable
-				? '<span style="color: var(--green-600); font-weight: 600;">&#10003; reachable</span>'
-				: `<span style="color: var(--red-600); font-weight: 600;">&#10007; ${esc(h.processing_app_error || "unreachable")}</span>`;
-
-			const jobStatus = h.background_job_running
-				? '<span style="color: var(--green-600); font-weight: 600;">&#10003; running</span>'
-				: '<span style="color: var(--red-600); font-weight: 600;">&#10007; not running</span>';
-
-			const workerCount = Number.isFinite(h.long_worker_count) ? h.long_worker_count : -1;
-			let workerStatus;
-			if (workerCount === -1) {
-				workerStatus = '<span class="text-muted">-</span>';
-			} else if (workerCount === 0) {
-				workerStatus = `<span style="color: var(--red-600); font-weight: 600;">&#10007; 0 workers</span>
-					<span class="text-muted" style="margin-left: 8px;">${__("worker_long not running - check Procfile + bench restart")}</span>`;
-			} else {
-				workerStatus = `<span style="color: var(--green-600); font-weight: 600;">&#10003; ${workerCount} worker(s)</span>`;
-			}
-
-			const depth = h.redis_queue_depth || 0;
-			const queueColor = depth === 0 ? "var(--green-600)" : "var(--orange-600)";
-			const queueLabel = depth === 0
-				? __("empty (drained or never had a message)")
-				: __("{0} message(s) waiting", [depth]);
-
-			const overallOk = h.processing_app_reachable && h.background_job_running && workerCount > 0;
-
-			frappe.msgprint({
-				title: __("Conversation Health"),
-				indicator: overallOk ? "green" : "orange",
-				message: `
-					<table class="table table-bordered" style="margin: 0;">
-						<tbody>
-							<tr>
-								<td style="width: 40%;"><strong>${__("Conversation Status")}</strong></td>
-								<td>${esc(h.conversation_status || "-")}</td>
-							</tr>
-							<tr>
-								<td><strong>${__("Current Agent")}</strong></td>
-								<td>${esc(h.current_agent || "-")}</td>
-							</tr>
-							<tr>
-								<td><strong>${__("Last Message")}</strong></td>
-								<td>${lastMsg}</td>
-							</tr>
-							<tr>
-								<td><strong>${__("Long-Queue Workers")}</strong></td>
-								<td>${workerStatus}</td>
-							</tr>
-							<tr>
-								<td><strong>${__("Background Job")}</strong></td>
-								<td>${jobStatus}</td>
-							</tr>
-							<tr>
-								<td><strong>${__("Redis Queue Depth")}</strong></td>
-								<td>
-									<span style="color: ${queueColor}; font-weight: 600;">${depth}</span>
-									<span class="text-muted" style="margin-left: 8px;">${queueLabel}</span>
-								</td>
-							</tr>
-							<tr>
-								<td><strong>${__("Processing App")}</strong></td>
-								<td>${procStatus}</td>
-							</tr>
-						</tbody>
-					</table>
-					<p class="text-muted text-xs" style="margin-top: 10px; margin-bottom: 0;">
-						${__("Tip: send a prompt and click Health immediately. Queue depth should briefly show 1, then drop to 0 within 1-2 seconds as the connection manager drains it.")}
-					</p>
-				`,
-			});
-		},
-		error: () => {
-			frappe.show_alert({ message: __("Failed to fetch health"), indicator: "red" });
-		},
-	});
-}
-
-function deleteConversationFromList(name) {
-	confirmAndDelete(name, () => loadConversations());
-}
-
-function confirmAndDelete(conversation, onSuccess) {
-	frappe.confirm(
-		__("Delete this conversation and all its messages? This cannot be undone."),
-		() => {
-			frappe.call({
-				method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.delete_conversation",
-				args: { conversation },
-				callback: () => {
-					frappe.show_alert({ message: __("Conversation deleted"), indicator: "green" });
-					onSuccess();
-				},
-				error: () => {
-					frappe.show_alert({ message: __("Failed to delete conversation"), indicator: "red" });
-				},
-			});
-		}
-	);
-}
-
-function shareConversation(name) {
-	const d = new frappe.ui.Dialog({
-		title: __("Share Conversation"),
-		fields: [
-			{
-				fieldname: "user",
-				fieldtype: "Link",
-				options: "User",
-				label: __("User"),
-				reqd: 1,
-				filters: { enabled: 1, name: ["!=", frappe.session.user] },
-			},
-			{
-				fieldname: "write",
-				fieldtype: "Check",
-				label: __("Allow writing (send messages)"),
-				default: 0,
-			},
-		],
-		primary_action_label: __("Share"),
-		primary_action(values) {
-			frappe.call({
-				method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.share_conversation",
-				args: { conversation: name, user: values.user, write: values.write },
-				callback: () => {
-					frappe.show_alert({ message: __("Conversation shared with {0}", [values.user]), indicator: "green" });
-					d.hide();
-				},
-				error: () => {
-					frappe.show_alert({ message: __("Failed to share conversation"), indicator: "red" });
-				},
-			});
-		},
-	});
-	d.show();
 }
 
 // Three-mode chat: `mode` is optional. When omitted, the user's current
