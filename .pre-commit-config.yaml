@@ -1,0 +1,40 @@
+# Pre-commit hooks for alfred_client.
+#
+# Install once per clone:
+#
+#   pip install pre-commit
+#   pre-commit install
+#
+# From then on, every `git commit` runs these hooks on staged files and
+# fails the commit if anything needs fixing. Run manually across the
+# whole tree with `pre-commit run --all-files`.
+#
+# Hooks here match the project's existing ruff configuration in
+# pyproject.toml (line-length 110, py310, select F/E/W/I/UP/B/RUF with
+# Frappe-specific ignores for B017/B018/E501/F401/etc.). Vue / JS files
+# are NOT linted by ruff (they're handled by the Frappe asset pipeline
+# at bench build time). Do not add hooks that would need the Frappe
+# bench itself to run - pre-commit must work against a bare checkout.
+
+repos:
+  # Ruff: linter + formatter. Reads pyproject.toml [tool.ruff]. Format
+  # runs before check so fresh-format doesn't mask lint violations.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff-format
+      - id: ruff
+        args: [--fix]
+
+  # Generic hygiene hooks from the upstream pre-commit library.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
