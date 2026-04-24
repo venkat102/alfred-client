@@ -147,7 +147,7 @@ this by loading the owner from `Alfred Conversation` before generating the JWT.
 | `user_response` | Answer to agent question. Carries `{response_to, text}` where `response_to` is the `msg_id` of the server's `question` event. |
 | `cancel` | User-initiated graceful cancel of the currently running pipeline for this conversation. Server flips `should_stop` at the next phase boundary and emits a `run_cancelled` event; connection stays open. |
 | `ack` | Message acknowledgment. Carries `{acked_msg_id}`. |
-| `resume` | Reconnection with last_msg_id (currently a no-op; replay not yet implemented - see #FLOW1). |
+| `resume` | Reconnection with last_msg_id. Client sends `{type: "resume", data: {last_msg_id: <msg_id of the last message it saw before the drop>}}`. Server replays every user-visible message (agent_status / changeset / info / error / chat_reply / insights_reply / plan_doc / etc.) that landed in the Redis stream after that msg_id. Transport/meta types (ack / ping / mcp_response / echo) are NOT persisted and therefore NOT replayed. If `last_msg_id` is absent, server no-ops (needs an anchor to avoid dumping thousands of events). If `last_msg_id` is too old (TTL or maxlen trimmed it from the stream), server replays whatever's still in the window; client dedupes by msg_id. Replay respects the 7-day / 10k-event stream window. |
 
 **Note on deploy**: approving a changeset triggers the Frappe REST endpoint
 `alfred_client.api.deploy.apply_changeset`, NOT a WebSocket message. There is
