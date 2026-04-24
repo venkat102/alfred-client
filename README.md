@@ -87,6 +87,24 @@ four specs (send-prompt, mode-switcher, preview-approve, rollback),
 the stable `data-testid` catalogue, and the `ALFRED_RUN_SLOW_TESTS=1`
 gate on the two destructive specs.
 
+### Alfred chat Vue composables
+
+The chat UI lives in `alfred_client/public/js/alfred_chat/`.
+`AlfredChatApp.vue` is the root SFC; cross-cutting logic is factored
+into composables under `composables/`:
+
+| File | Responsibility |
+|---|---|
+| `useDrawerState.js` | Right-hand preview drawer open/close, localStorage persistence |
+| `useConversationAdmin.js` | Load / delete / share / health-dialog for conversations |
+| `usePreviewActions.js` | Approve / Request Changes / Reject / Rollback buttons |
+| `useAlfredRealtime.js` | The 15 `frappe.realtime.on` handlers that bridge WS events to chat state |
+
+When adding a new realtime event or preview-panel action, prefer
+extending the relevant composable over adding more code to
+`AlfredChatApp.vue` - the SFC is already large and the composables
+keep the blast radius of each change small.
+
 ## License
 
 MIT
