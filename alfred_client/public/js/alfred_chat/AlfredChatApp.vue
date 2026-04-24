@@ -324,6 +324,7 @@ import TypingIndicator from "./TypingIndicator.vue";
 import AgentStatusPill from "./AgentStatusPill.vue";
 import PreviewDrawer from "./PreviewDrawer.vue";
 import ModeSwitcher from "./ModeSwitcher.vue";
+import { useDrawerState } from "./composables/useDrawerState";
 
 // ── State ──────────────────────────────────────────────────────
 const conversations = ref([]);
@@ -349,25 +350,18 @@ const validatingChangeset = ref(false);
 // shows "Rolling back..." on the button and disables it.
 const rollbackInFlight = ref(false);
 
-// Preview drawer state. Persisted in localStorage so the drawer restores
-// across reloads. unseenChanges lights up the toolbar toggle's red dot
-// whenever a changeset appears while the drawer is closed; cleared on
-// open. previewChangeCount drives the minimized-pill badge.
-const DRAWER_LS_KEY = "alfred_chat_drawer_open";
-const drawerOpen = ref(_readDrawerOpenFromStorage());
-const unseenChanges = ref(false);
-
-function _readDrawerOpenFromStorage() {
-	try {
-		return window.localStorage.getItem(DRAWER_LS_KEY) === "true";
-	} catch { return false; }
-}
-
-function _writeDrawerOpenToStorage(value) {
-	try {
-		window.localStorage.setItem(DRAWER_LS_KEY, value ? "true" : "false");
-	} catch { /* storage disabled; in-memory state still works */ }
-}
+// Preview drawer state. Owned by useDrawerState - persists to localStorage,
+// toggles the body `alfred-drawer-open` class for page-level CSS. previewChangeCount
+// (computed below from changeset.value?.changes) drives the minimized-pill badge.
+const {
+	drawerOpen,
+	unseenChanges,
+	setDrawerOpen,
+	openDrawer,
+	closeDrawer,
+	toggleDrawer,
+	minimizeDrawer,
+} = useDrawerState();
 
 const statusState = ref("disconnected");
 const currentPhase = ref(null);
@@ -394,20 +388,6 @@ const previewChangeCount = computed(() => {
 		return Array.isArray(arr) ? arr.length : 0;
 	} catch { return 0; }
 });
-
-// Drawer toggle helpers. Write-through to localStorage, clear unseen
-// flag on open. Also toggle a body class so page-level CSS can shove
-// the chat-area aside on desktop (non-modal drawer mode).
-function setDrawerOpen(value) {
-	drawerOpen.value = !!value;
-	if (value) unseenChanges.value = false;
-	_writeDrawerOpenToStorage(drawerOpen.value);
-	document.body.classList.toggle("alfred-drawer-open", drawerOpen.value);
-}
-function openDrawer() { setDrawerOpen(true); }
-function closeDrawer() { setDrawerOpen(false); }
-function toggleDrawer() { setDrawerOpen(!drawerOpen.value); }
-function minimizeDrawer() { setDrawerOpen(false); }
 
 // Auto-open drawer when a meaningful changeset arrives while the drawer
 // is closed, so the user sees the review panel without extra clicks. We
