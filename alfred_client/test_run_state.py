@@ -49,10 +49,10 @@ def _make_changeset(conv_name: str, status: str, changes: list[dict] | None = No
 def run_tests():
 	print("\n=== Alfred Run State Tests ===\n")
 
-	from alfred_client.api.websocket_client import _update_conversation_run_state
 	from alfred_client.alfred_settings.page.alfred_chat.alfred_chat import (
 		get_conversation_state,
 	)
+	from alfred_client.api.websocket_client import _update_conversation_run_state
 
 	# Test 1: agent_status caches current_agent + pipeline_mode
 	print("Test 1: agent_status caches current_agent + pipeline_mode...")

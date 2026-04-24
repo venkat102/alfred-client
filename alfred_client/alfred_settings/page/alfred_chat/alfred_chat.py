@@ -244,6 +244,7 @@ def send_message(conversation, message, mode="auto"):
 	# manager hasn't started yet. The manager drains the list on startup.
 	try:
 		import uuid as _uuid
+
 		from alfred_client.api.websocket_client import _REDIS_CHANNEL_PREFIX, start_conversation
 
 		# Ensure the connection manager is running for this conversation

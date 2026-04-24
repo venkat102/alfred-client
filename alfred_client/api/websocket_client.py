@@ -21,8 +21,9 @@ import logging
 import time
 import uuid
 
-import frappe
 import jwt as pyjwt
+
+import frappe
 
 logger = logging.getLogger("alfred.ws_client")
 
@@ -594,8 +595,8 @@ async def _listen_ws(ws, user, conversation_name):
 	   are 30s. Running in a thread executor would lose frappe.local.session.user
 	   (thread-local) and frappe.local.site, breaking permission enforcement.
 	"""
-	from alfred_client.mcp.transport import is_mcp_message
 	from alfred_client.mcp.server import handle_mcp_request
+	from alfred_client.mcp.transport import is_mcp_message
 
 	async for raw in ws:
 		try:
@@ -722,6 +723,7 @@ def _long_queue_worker_count() -> int:
 		from datetime import datetime, timedelta, timezone
 
 		from rq import Worker
+
 		from frappe.utils.background_jobs import get_queue, get_redis_conn
 
 		conn = get_redis_conn()

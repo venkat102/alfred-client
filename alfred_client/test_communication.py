@@ -6,8 +6,9 @@ Run with: bench --site dev.alfred execute alfred_client.test_communication.run_t
 import json
 import time
 
-import frappe
 import jwt as pyjwt
+
+import frappe
 
 
 def run_tests():

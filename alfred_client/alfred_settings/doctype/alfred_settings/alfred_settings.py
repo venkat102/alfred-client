@@ -1,8 +1,9 @@
 import json
 from urllib.parse import urlparse
 
-import frappe
 import requests
+
+import frappe
 from frappe.model.document import Document
 
 # Hostnames treated as loopback. Plaintext HTTP/WS is accepted only for

@@ -445,7 +445,7 @@ def run_tests():
 			failed.append((test_func.__name__, str(e)))
 	print(f"\n{passed}/{len(tests)} passed")
 	if failed:
-		print(f"\nFailures:")
+		print("\nFailures:")
 		for name, err in failed:
 			print(f"  {name}: {err}")
 		raise AssertionError(f"{len(failed)} test(s) failed")

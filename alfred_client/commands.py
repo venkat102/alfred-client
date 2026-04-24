@@ -15,6 +15,7 @@ import sys
 from datetime import datetime, timezone
 
 import click
+
 import frappe
 from frappe.commands import pass_context
 
@@ -41,8 +42,9 @@ def _collect_long_queue_managers() -> list[dict]:
 	or queued on the long queue. Each row has enough detail for a human to
 	decide which ones to reap.
 	"""
-	from frappe.utils.background_jobs import get_queue, get_redis_conn
 	from rq import Worker
+
+	from frappe.utils.background_jobs import get_queue, get_redis_conn
 
 	conn = get_redis_conn()
 	queue = get_queue("long")

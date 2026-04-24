@@ -10,8 +10,8 @@ def run_tests():
 	print("\n=== Alfred Chat Page Tests ===\n")
 
 	from alfred_client.alfred_settings.page.alfred_chat.alfred_chat import (
-		get_conversations,
 		create_conversation,
+		get_conversations,
 		get_messages,
 		send_message,
 	)
