@@ -85,6 +85,28 @@ secret manager in production (AWS Secrets Manager, GCP Secret Manager,
 HashiCorp Vault, Doppler) rather than pasting keys into environment files
 by hand.
 
+**Rotating `API_SECRET_KEY`:** the processing app ships a helper script.
+From the `alfred_processing` repo:
+
+```bash
+python scripts/rotate_api_secret_key.py
+```
+
+It generates a strong key, backs up the current `.env` (timestamped),
+writes the new key, and prints follow-up steps: paste the new key into
+Alfred Settings on every site that talks to this processing app, then
+restart the processing app. Startup validation (see below) will refuse
+to boot on a short or placeholder key.
+
+### Startup validation (processing app)
+
+`alfred.config.Settings` refuses to boot when `API_SECRET_KEY` is
+shorter than 32 characters or matches a known-weak placeholder
+(`changeme`, `secret`, `dev`, `test`, `your-secret-key`, ...). This
+closes the window where an operator copies `.env.example`, forgets to
+rotate, and ships with a guessable key. The error message points at
+`scripts/rotate_api_secret_key.py` so the fix is one command away.
+
 ## Authentication
 
 ### Browser → Frappe site

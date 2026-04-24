@@ -21,7 +21,10 @@ bench build --app alfred_client
 # 2. Start the processing app
 cd /path/to/alfred_processing
 cp .env.example .env
-# Edit .env: set API_SECRET_KEY (generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+# Edit .env: set API_SECRET_KEY. Easiest is the rotation script, which
+# also backs up .env and prints follow-up steps:
+#     python scripts/rotate_api_secret_key.py
+# Or generate one by hand: python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 docker compose --profile local-llm up -d
 docker exec -it $(docker ps -qf "ancestor=ollama/ollama") ollama pull llama3.1
 
@@ -561,7 +564,7 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| API_SECRET_KEY | Yes | - | JWT signing key + API auth key |
+| API_SECRET_KEY | Yes | - | JWT signing key + API auth key. Must be at least 32 characters. The processing app refuses to boot on shorter keys or known-weak placeholders (`secret`, `changeme`, ...). Rotate with `python scripts/rotate_api_secret_key.py`. |
 | REDIS_URL | Yes | redis://redis:6379/0 | Redis connection URL |
 | HOST | No | 0.0.0.0 | Bind address |
 | PORT | No | 8000 | Server port |
