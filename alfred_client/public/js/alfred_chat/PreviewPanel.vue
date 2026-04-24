@@ -1145,18 +1145,18 @@ function stepColor(status) {
  * filled from the intent registry rather than the user. Hover the pill
  * to see the registry rationale. */
 .alfred-defaults-banner {
-	background: #f0f7ff;
-	border: 1px solid #cfe3ff;
+	background: var(--alfred-tone-info-50);
+	border: 1px solid var(--alfred-tone-info-200);
 	border-radius: 4px;
 	padding: 8px 12px;
 	margin: 8px 0;
 	font-size: 12px;
-	color: #334;
+	color: var(--ae-700);
 }
 .alfred-default-pill {
 	display: inline-block;
-	background: #eef;
-	color: #334;
+	background: var(--ae-100);
+	color: var(--ae-700);
 	font-size: 10px;
 	font-weight: 500;
 	text-transform: lowercase;
@@ -1166,7 +1166,7 @@ function stepColor(status) {
 	cursor: help;
 	vertical-align: middle;
 }
-.alfred-default-pill:hover { background: #dde; }
+.alfred-default-pill:hover { background: var(--ae-200); }
 
 /* V2 Module Specialists: module badge + validation notes */
 .alfred-module-badge {
@@ -1175,28 +1175,28 @@ function stepColor(status) {
 	gap: 6px;
 	padding: 4px 10px;
 	margin: 6px 0 10px;
-	background: #f5f7fb;
-	border: 1px solid #d7dde9;
+	background: var(--ae-50);
+	border: 1px solid var(--ae-200);
 	border-radius: 12px;
 	font-size: 12px;
-	color: #334;
+	color: var(--ae-700);
 }
 .alfred-banner--module-notes {
-	background: #fff7e6;
-	border: 1px solid #ffdfa3;
+	background: var(--alfred-tone-warn-50);
+	border: 1px solid var(--alfred-tone-warn-200);
 }
-.alfred-module-note--advisory { color: #444; }
-.alfred-module-note--warning { color: #8a5a00; }
-.alfred-module-note--blocker { color: #a11; font-weight: 500; }
+.alfred-module-note--advisory { color: var(--ae-600); }
+.alfred-module-note--warning { color: var(--alfred-tone-warn-700); }
+.alfred-module-note--blocker { color: var(--alfred-tone-danger-700); font-weight: 500; }
 .alfred-module-note__fix {
 	display: block;
 	margin-top: 2px;
-	color: #556;
+	color: var(--ae-500);
 	font-size: 11px;
 }
 .alfred-module-note__source {
 	margin-left: 6px;
-	color: #889;
+	color: var(--ae-400);
 	font-size: 10px;
 }
 
@@ -1204,20 +1204,22 @@ function stepColor(status) {
 .alfred-module-note-group { margin-top: 6px; }
 .alfred-module-note-group__header {
 	font-size: 11px;
-	color: #334;
+	color: var(--ae-700);
 	margin-bottom: 2px;
 }
 .alfred-module-note-group__flag {
 	margin-left: 8px;
-	color: #889;
+	color: var(--ae-400);
 	font-style: italic;
 	font-size: 10px;
 }
 
 /* ── Empty / Working hero states ───────────────────────────────────
- * Matches the chat-side empty-state language: gradient mark, centered
- * title + subtitle. Different hue (teal -> violet) so the two panels
- * feel related but distinct at a glance. */
+ * Matches the chat-side empty-state language in
+ * alfred_chat.css `.alfred-empty-mark`: flat navy mark (--ae-900),
+ * weight 600 per Aerele typography rule (never 700+ on display
+ * elements), navy-tinted shadow. Previous teal->violet gradient was
+ * visual drift from before the design-token foundation landed. */
 .alfred-preview-empty-state,
 .alfred-preview-working {
 	display: flex; flex-direction: column; align-items: center;
@@ -1228,17 +1230,17 @@ function stepColor(status) {
 .alfred-preview-mark {
 	width: 56px; height: 56px; border-radius: 16px;
 	display: flex; align-items: center; justify-content: center;
-	font-size: 26px; font-weight: 700; color: white;
-	background: linear-gradient(135deg, #14b8a6, #7c3aed);
-	box-shadow: 0 6px 18px rgba(20, 184, 166, 0.22);
+	font-size: 26px; font-weight: 600; color: white;
+	background: var(--alfred-mark-preview);
+	box-shadow: 0 6px 18px rgba(6, 15, 43, 0.3);
 	line-height: 1;
 }
 .alfred-preview-mark-pulse {
 	animation: alfred-preview-pulse 1.6s ease-in-out infinite;
 }
 @keyframes alfred-preview-pulse {
-	0%, 100% { box-shadow: 0 6px 18px rgba(20, 184, 166, 0.22); transform: scale(1); }
-	50%      { box-shadow: 0 8px 26px rgba(124, 58, 237, 0.38); transform: scale(1.05); }
+	0%, 100% { box-shadow: 0 6px 18px rgba(6, 15, 43, 0.3); transform: scale(1); }
+	50%      { box-shadow: 0 8px 26px rgba(6, 15, 43, 0.4); transform: scale(1.05); }
 }
 .alfred-preview-title-lg {
 	margin: 4px 0 0; font-size: 18px; font-weight: 600;

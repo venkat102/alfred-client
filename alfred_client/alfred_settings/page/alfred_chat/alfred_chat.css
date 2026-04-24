@@ -931,12 +931,14 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	border-left: 1px solid rgba(0, 0, 0, 0.08);
 }
 
-/* Processing pill: animated gradient mark + agent + activity */
+/* Processing pill: animated gradient mark + agent + activity.
+ * Tint derives from --alfred-tone-info-500 (#2490ef) so the pill
+ * tracks the info-tone scale instead of a floating hex literal. */
 .alfred-status-pill--processing {
 	background: rgba(255, 255, 255, 0.94);
-	border-color: rgba(36, 144, 239, 0.18);
-	box-shadow: 0 8px 24px -10px rgba(36, 144, 239, 0.35),
-		0 0 0 1px rgba(36, 144, 239, 0.08);
+	border-color: color-mix(in srgb, var(--alfred-tone-info-500) 18%, transparent);
+	box-shadow: 0 8px 24px -10px color-mix(in srgb, var(--alfred-tone-info-500) 35%, transparent),
+		0 0 0 1px color-mix(in srgb, var(--alfred-tone-info-500) 8%, transparent);
 }
 .alfred-status-pill-mark {
 	position: relative;
@@ -1875,19 +1877,21 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 .alfred-save-as-report-btn {
 	align-self: flex-start;
 	padding: 6px 12px;
-	background: #eef4ff;
-	border: 1px solid #c7d9f5;
+	background: var(--alfred-tone-info-50);
+	border: 1px solid var(--alfred-tone-info-200);
 	border-radius: 6px;
 	font-size: 12px;
-	color: #2b4a7a;
+	color: var(--alfred-tone-info-700);
 	cursor: pointer;
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
 }
-.alfred-save-as-report-btn:hover { background: #dce6fa; }
+.alfred-save-as-report-btn:hover {
+	background: color-mix(in srgb, var(--alfred-tone-info-200) 50%, var(--alfred-tone-info-50));
+}
 .alfred-save-as-report-btn__name {
-	color: #556;
+	color: var(--ae-500);
 	font-weight: 500;
 	margin-left: 4px;
 }
