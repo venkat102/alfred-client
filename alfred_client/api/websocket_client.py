@@ -30,6 +30,46 @@ logger = logging.getLogger("alfred.ws_client")
 # Redis channel prefix for message passing between Frappe workers and the connection manager
 _REDIS_CHANNEL_PREFIX = "alfred:ws:outbound:"
 
+# TTL for the last_msg_id tracker. Matches the processing app's 7-day
+# event-stream TTL (alfred_processing/alfred/state/store.py), because a
+# resume anchor is only useful for as long as the server still has the
+# events to replay.
+_LAST_MSG_ID_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _last_msg_id_key(conversation_name: str) -> str:
+	return f"alfred:last_msg_id:{conversation_name}"
+
+
+def _track_last_msg_id(conversation_name: str, msg_id: str) -> None:
+	"""Persist the last msg_id the UI received for a conversation.
+
+	Called from ``_route_incoming_message`` on every user-visible event.
+	The connection manager reads this back on reconnect and sends it
+	into the WS `resume` payload so the server replays events the UI
+	missed during the disconnect.
+
+	Uses ``frappe.cache()`` rather than opening a fresh aioredis client
+	because this runs on the sync Frappe side (inside a background RQ
+	job), not in the async loop. Failures are logged at the call site
+	and swallowed - losing one msg_id tick just means the next resume
+	replays slightly more than strictly needed.
+	"""
+	cache = frappe.cache()
+	cache.set_value(
+		_last_msg_id_key(conversation_name), msg_id,
+		expires_in_sec=_LAST_MSG_ID_TTL_SECONDS,
+	)
+
+
+def _load_last_msg_id(conversation_name: str) -> str | None:
+	"""Fetch the last msg_id (may be None on first connect or after TTL)."""
+	try:
+		return frappe.cache().get_value(_last_msg_id_key(conversation_name))
+	except Exception as e:
+		logger.debug("last_msg_id load failed for %s: %s", conversation_name, e)
+		return None
+
 
 def _get_site_id():
 	"""Get the canonical site_id used for multi-tenant isolation in the Processing App.
@@ -132,12 +172,27 @@ def _route_incoming_message(message, user, conversation_name):
 		# event. Separate event so the UI can render it as a neutral system
 		# message, not an error banner.
 		"run_cancelled": "alfred_run_cancelled",
+		# Non-blocking info notices from the processing app: CLARIFIER_LATE_RESPONSE,
+		# MEMORY_SAVE_FAILED, and similar. UI renders as a subtle toast.
+		"info": "alfred_info",
 	}
 
 	event_name = event_map.get(msg_type)
 	if event_name:
 		logger.info("Publishing realtime event: %s -> %s", msg_type, event_name)
 		frappe.publish_realtime(event_name, data, user=user, after_commit=False)
+
+	# Track last_msg_id for resume-on-reconnect. Only stash msg_ids of
+	# user-visible events (the same set the server persists to its event
+	# stream): skip transport types and the mcp_request sub-protocol.
+	# Without this, the connection manager always sends resume with
+	# last_msg_id=None and the server treats it as no-op.
+	msg_id = message.get("msg_id")
+	if msg_id and event_name and msg_type != "mcp_request":
+		try:
+			_track_last_msg_id(conversation_name, msg_id)
+		except Exception as e:
+			logger.debug("last_msg_id track failed for %s: %s", conversation_name, e)
 
 	# Cache volatile run state on the conversation so the UI can rehydrate
 	# the ticker + phase pipeline on a page refresh. Best-effort; failures
@@ -469,7 +524,10 @@ async def _connection_loop(conversation_name, user):
 	max_backoff = 60
 	max_retries = 10  # Give up after 10 consecutive failures instead of looping forever
 	retry_count = 0
-	last_msg_id = None
+	# last_msg_id is read from Frappe cache each handshake iteration (not
+	# once at init) so a genuine reconnect picks up events that landed
+	# while this manager was backing off. _route_incoming_message bumps
+	# it via _track_last_msg_id on every user-visible incoming event.
 	should_stop = False
 	# Total lifetime cap for the connection manager job. Prevents a stale
 	# browser tab (user closed it without cleanup) from occupying a long-queue
@@ -508,7 +566,11 @@ async def _connection_loop(conversation_name, user):
 				logger.info("Connected to Processing App: conversation=%s", conversation_name)
 				_publish_connection_event(user, conversation_name, "connected", "Connected to Processing App")
 
-				# Resume if reconnecting
+				# Resume if reconnecting: read the last msg_id the UI saw
+				# and ask the server to replay events after it. First
+				# connect on a fresh conversation has no cached value,
+				# so this sends nothing (correct - nothing to replay).
+				last_msg_id = _load_last_msg_id(conversation_name)
 				if last_msg_id:
 					await ws.send(json.dumps({
 						"msg_id": str(uuid.uuid4()),

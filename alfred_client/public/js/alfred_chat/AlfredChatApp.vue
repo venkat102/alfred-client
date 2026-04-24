@@ -1562,6 +1562,21 @@ function setupRealtime() {
 			});
 			return;
 		}
+		// RATE_LIMIT is a soft reject with useful recovery info in the
+		// payload (retry_after seconds, per-hour limit). Show a toast
+		// with the human-readable countdown instead of a red error
+		// bubble - the conversation itself is fine, just throttled.
+		if (data.code === "RATE_LIMIT") {
+			const retryAfter = data.retry_after || 60;
+			const limit = data.limit;
+			const msg = data.error || (
+				limit
+					? __("Rate limit hit ({0}/hour). Try again in {1}s.", [limit, retryAfter])
+					: __("Rate limit hit. Try again in {0}s.", [retryAfter])
+			);
+			frappe.show_alert({ message: msg, indicator: "orange" }, 8);
+			return;
+		}
 		// OLLAMA_UNHEALTHY is raised by the strict warmup gate when one or more
 		// tier models fail a 1-token probe before the crew starts. This is an
 		// ops failure, not a user-content failure - keep the conversation open
@@ -1629,6 +1644,26 @@ function setupRealtime() {
 			_id: Date.now(), role: "system", message_type: "error",
 			content: data.error || data.message || "An error occurred",
 		});
+	});
+
+	// Non-blocking info notices from the processing app. These are soft
+	// signals the pipeline proceeded without - the primary output
+	// (changeset / reply) still reached the user, but something
+	// adjacent went sideways and they should know. Render as a subtle
+	// toast, not an error banner. Codes shipped today:
+	//   CLARIFIER_LATE_RESPONSE - user answered after the clarifier
+	//     timed out (blue indicator, neutral "heads up")
+	//   MEMORY_SAVE_FAILED - conversation memory couldn't persist to
+	//     Redis; follow-up turns may be missing context (orange
+	//     indicator, warning-level)
+	// Unknown codes default to blue - forward-compatible with new codes
+	// the server may emit before this client is updated.
+	frappe.realtime.on("alfred_info", (data) => {
+		if (!currentConversation.value) return;
+		if (!data || !data.code) return;  // malformed payload; silently ignore
+		const message = data.message || __("Info: {0}", [data.code]);
+		const indicator = data.code === "MEMORY_SAVE_FAILED" ? "orange" : "blue";
+		frappe.show_alert({ message, indicator }, 6);
 	});
 
 	// Graceful user-initiated cancel: the processing app emitted run_cancelled
