@@ -449,19 +449,21 @@
 					]"
 					:disabled="hasModuleBlocker"
 					:title="hasModuleBlocker ? __('Blocker-severity module note prevents deploy - address or rephrase and retry.') : ''"
+					data-testid="alfred-preview-approve"
 					@click="$emit('approve')">
 					{{ hasModuleBlocker
 						? __("Deploy blocked")
 						: (changeset.dry_run_valid === 1 ? __("Approve & Deploy") : __("Deploy Anyway")) }}
 				</button>
-				<button class="alfred-btn-ghost" @click="$emit('modify')">{{ __("Request Changes") }}</button>
-				<button class="alfred-btn-ghost alfred-btn-ghost--danger" @click="$emit('reject')">{{ __("Reject") }}</button>
+				<button class="alfred-btn-ghost" data-testid="alfred-preview-modify" @click="$emit('modify')">{{ __("Request Changes") }}</button>
+				<button class="alfred-btn-ghost alfred-btn-ghost--danger" data-testid="alfred-preview-reject" @click="$emit('reject')">{{ __("Reject") }}</button>
 			</div>
 
 			<!-- DEPLOYED: Rollback button if rollback_data exists. -->
 			<div v-else-if="previewState === 'DEPLOYED' && hasRollbackData" class="alfred-preview-actions">
 				<button
 					class="alfred-btn-ghost"
+					data-testid="alfred-preview-rollback"
 					:disabled="rollbackInFlight"
 					@click="$emit('rollback')">
 					<span v-if="rollbackInFlight" class="alfred-btn-spinner" aria-hidden="true"></span>

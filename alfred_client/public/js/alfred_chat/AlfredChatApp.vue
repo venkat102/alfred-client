@@ -230,6 +230,7 @@
 									:disabled="inputDisabled"
 									rows="2"
 									class="alfred-composer-input"
+									data-testid="alfred-composer-input"
 									@keydown.enter.exact.prevent="sendMessage(inputText)"
 									@keydown.meta.enter.exact.prevent="sendMessage(inputText)"
 									@keydown.ctrl.enter.exact.prevent="sendMessage(inputText)"
@@ -246,6 +247,7 @@
 									<button
 										v-if="isProcessing"
 										class="alfred-btn-ghost alfred-btn-ghost--danger alfred-stop-btn"
+										data-testid="alfred-stop-btn"
 										:disabled="cancelInFlight"
 										:title="__('Stop the running agent gracefully; the current phase will finish.')"
 										@click="cancelRun"
@@ -257,6 +259,7 @@
 									<button
 										v-else
 										class="alfred-btn-primary alfred-send-btn"
+										data-testid="alfred-send-btn"
 										:disabled="inputDisabled || !inputText.trim()"
 										@click="sendMessage(inputText)"
 									>

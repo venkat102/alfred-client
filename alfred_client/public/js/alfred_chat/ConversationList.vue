@@ -27,6 +27,7 @@
 			<button
 				type="button"
 				class="alfred-btn-primary alfred-conv-empty-cta"
+				data-testid="alfred-new-conversation"
 				@click="$emit('new-conversation')"
 			>
 				{{ __("Start a conversation") }}

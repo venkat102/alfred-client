@@ -64,11 +64,35 @@ Slow tests also need:
 
 - Selectors live in `tests/fixtures.ts`. Prefer adding helpers there
   over duplicating selectors across specs.
-- Today's selectors use CSS classes (`.alfred-*`) because the Vue
-  components don't carry `data-testid` attributes yet. Moving to
-  testids is the recommended next step - one touch per component.
+- **Use `data-testid` selectors via `page.getByTestId()`** for any
+  new spec. Seven attributes are wired into the Vue source today
+  (see the table in "Stable selectors" below). Class-based
+  selectors (`.alfred-*`) are still used in older specs but they
+  drift whenever the CSS is refactored - swap them over when you
+  touch a spec.
 - Keep fast tests fast. Anything that needs an LLM round-trip or
   writes to the DB belongs behind `ALFRED_RUN_SLOW_TESTS`.
+
+## Stable selectors (data-testid)
+
+Use these in `page.getByTestId("<id>")` instead of class selectors.
+Adding a new one means touching one Vue component; class selectors
+across dozens of CSS rules stay stable as a side effect.
+
+| testid | Component | Element |
+|--------|-----------|---------|
+| `alfred-composer-input` | `AlfredChatApp.vue` | the main chat textarea |
+| `alfred-send-btn` | `AlfredChatApp.vue` | Send button (disabled when input empty) |
+| `alfred-stop-btn` | `AlfredChatApp.vue` | Stop button (shown when a pipeline is running) |
+| `alfred-new-conversation` | `ConversationList.vue` | "Start a conversation" CTA in the empty list |
+| `alfred-preview-approve` | `PreviewPanel.vue` | Approve & Deploy button |
+| `alfred-preview-modify` | `PreviewPanel.vue` | Request Changes button |
+| `alfred-preview-reject` | `PreviewPanel.vue` | Reject button |
+| `alfred-preview-rollback` | `PreviewPanel.vue` | Rollback button (shown on DEPLOYED state when rollback_data exists) |
+
+Add a new testid by putting `data-testid="alfred-<role>"` on the
+relevant element in the Vue template. Namespace with `alfred-`
+to avoid collisions with Frappe Desk's own testids if any.
 
 ## Known limitations
 
@@ -78,5 +102,9 @@ Slow tests also need:
 - No auto-cleanup between tests. `preview-approve` and `rollback` are
   intentionally chained; running one without the other will either
   leak state or fail on missing preconditions.
-- `data-testid` scaffolding is a pending improvement - class-based
-  selectors will break on CSS refactors.
+- The existing spec files reference class selectors that in some
+  cases don't match the current Vue source (e.g. `.alfred-chat-send-btn`
+  doesn't exist anywhere - the real class is `alfred-send-btn`).
+  Those tests only run behind `ALFRED_RUN_SLOW_TESTS=1` so the drift
+  went unnoticed. Rewriting the specs to use the `data-testid`s
+  above is the recommended next task.
