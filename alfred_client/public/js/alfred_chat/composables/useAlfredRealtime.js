@@ -52,7 +52,45 @@
  *     because the caller mutates it with a plain `let`, not a ref.
  */
 
+// The deps object this composable requires. Used at construction time
+// to fail fast (and with a useful name) when a caller forgets one key,
+// instead of letting the TypeError("Cannot read properties of undefined")
+// surface later inside a realtime handler where it's opaque. The TDZ
+// fix in commit 3116da8 was exactly this class of bug - a missed ref.
+const _REQUIRED_DEPS = Object.freeze([
+	// refs
+	"currentConversation", "connectionState", "currentActivity",
+	"saturationReason", "pipelineMode", "pipelineModeSource",
+	"isProcessing", "statusText", "statusState",
+	"inputDisabled", "inputPlaceholder", "messages", "changeset",
+	"cancelInFlight", "conversationStatus", "deploySteps", "isDeployed",
+	// fns
+	"addActivity", "updateAgentStatus", "pushAgentStep",
+	"markLastStepDone", "agentStepLabel",
+	"armDisconnectWatchdog", "clearDisconnectWatchdog",
+	"clearSaturationWatchdog", "stopTimer", "stopPolling",
+	// accessors
+	"getCurrentPromptSentAt",
+]);
+
 export function useAlfredRealtime(deps) {
+	if (!deps || typeof deps !== "object") {
+		throw new Error(
+			"useAlfredRealtime: deps must be an object with the required "
+			+ "refs + functions + accessor. See the doc comment at the top "
+			+ "of this file for the full list."
+		);
+	}
+	const missing = _REQUIRED_DEPS.filter((k) => deps[k] === undefined);
+	if (missing.length > 0) {
+		throw new Error(
+			`useAlfredRealtime: missing required deps: ${missing.join(", ")}. `
+			+ "Declare each as a ref/function in AlfredChatApp.vue's <script setup> "
+			+ "before calling useAlfredRealtime. If a TDZ error surfaces (a ref is "
+			+ "declared later in the file), hoist it to the top-of-file state block."
+		);
+	}
+
 	const {
 		// refs
 		currentConversation,
