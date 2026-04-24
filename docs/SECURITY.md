@@ -370,7 +370,11 @@ for up to 2 hours. A malicious user with Alfred access could open many
 conversations to exhaust the worker pool. Mitigations:
 
 1. `max_tasks_per_user_per_hour` rate limit in Alfred Settings (default
-   20).
+   20). Enforced on BOTH paths now: REST POST /api/v1/tasks (returns
+   429 with Retry-After) and WebSocket prompt messages (returns an
+   `error` event with `code=RATE_LIMIT`, `retry_after`, `limit`).
+   Clarifier-answer prompts do not count against the limit since
+   they're continuation of a running task.
 2. `max_lifetime_seconds = 6300` cap in the connection manager - idle
    conversations get reaped after ~1h45m.
 3. `stop_conversation` is now gated on write permission, so one user

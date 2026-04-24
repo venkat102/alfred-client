@@ -101,6 +101,13 @@ ws://processing-host:8001/ws/{conversation_id}
 }
 ```
 
+`max_tasks_per_user_per_hour` caps prompt-type WS messages per
+(site_id, user) via the same Redis sliding-window used by the REST
+endpoint. Clarifier answers (a `prompt` that arrives while a
+question is pending) do NOT count against the limit - they're
+continuation of a running task, not a new one. Default: `20/hour`
+when the field is unset. Set to `0` for unlimited.
+
 The JWT is signed with the shared API key and embeds `{user, roles, site_id,
 iat, exp}`. The `user` field must be the **conversation owner** (not whoever
 triggered `start_conversation`), because the processing app uses this identity
@@ -128,7 +135,7 @@ this by loading the owner from `Alfred Conversation` before generating the JWT.
 | `insights_reply` | Markdown reply from the Insights handler. Fires when the orchestrator routes to `insights` mode. Payload: `{conversation, reply, mode: "insights"}`. Reply is markdown produced by a read-only single-agent crew that has access to `lookup_doctype`, `lookup_pattern`, `check_permission`, `get_existing_customizations`, and other read-only MCP tools. Tool budget is hard-capped at 5 calls per turn. No changeset, no DB writes. |
 | `plan_doc` | Plan document from Plan mode (Phase C). Fires when the orchestrator routes to `plan` mode. Payload: `{conversation, plan, mode: "plan"}` where `plan` is a `PlanDoc`-shaped dict (`{title, summary, steps, doctypes_touched, risks, open_questions, estimated_items}`). Rendered as a structured panel (`PlanDocPanel.vue`) with Refine / Approve & Build buttons. Produced by a 3-agent crew (Requirement / Assessment / Architect) with a 15-call tool budget. No changeset, no DB writes. |
 | `echo` | Echo response (for testing) |
-| `error` | Error message with `code` field |
+| `error` | Error message with `code` field. Codes: `AUTH_MISSING`, `AUTH_INVALID`, `INVALID_JSON`, `PIPELINE_BUSY`, `RATE_LIMIT` (carries `retry_after` seconds + `limit` per hour; mirrors the REST 429 behaviour), `DRY_RUN_FAILED`, `EMPTY_CHANGESET`. |
 | `info` | Non-blocking notice from the server. Carries `{message, code, response_to?}`. Codes emitted today: `CLARIFIER_LATE_RESPONSE` - user answered a clarifier question after its 900s Future timed out; pipeline proceeded without them and this ack lets the UI surface "your answer arrived too late, send as a new prompt if you want to apply it". `MEMORY_SAVE_FAILED` - conversation memory could not be persisted to Redis at the end of a turn (chat / insights / plan / dev); the primary output (changeset / reply) still reached the user, but follow-up prompts in this conversation may not recall this turn's context. Render as a subtle toast, not an error banner. |
 | `ping` | Heartbeat (every 30s) |
 | `mcp_response` | MCP tool call result (routed to MCPClient for future resolution) |
