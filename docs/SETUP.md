@@ -537,7 +537,7 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| processing_app_url | Data | - | WebSocket URL of the processing app |
+| processing_app_url | Data | - | WebSocket URL of the processing app. Must be `https://` or `wss://` unless pointing at loopback (`localhost`, `127.x`, `::1`). Save is rejected with an actionable error when the host is public/private-network over plaintext, because the handshake carries `llm_api_key` in `site_config`. |
 | api_key | Password | - | Shared secret for authentication |
 | self_hosted_mode | Check | No | Enable for self-hosted deployments |
 | redis_url | Data | - | Redis URL (self-hosted only) |

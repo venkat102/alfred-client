@@ -1,8 +1,58 @@
 import json
+from urllib.parse import urlparse
 
 import frappe
 import requests
 from frappe.model.document import Document
+
+# Hostnames treated as loopback. Plaintext HTTP/WS is accepted only for
+# these because the traffic never leaves the host. Anything else (private
+# networks, public domains) must use HTTPS/WSS so the handshake-carried
+# llm_api_key doesn't ride the wire in cleartext.
+_LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _check_processing_app_url(raw: str) -> str | None:
+	"""Validate a processing_app_url string.
+
+	Returns None if the URL is acceptable (https/wss, or plaintext
+	against a loopback host). Returns an error message string otherwise.
+	Empty / None inputs are treated as "not yet set" and accepted; the
+	field is optional at save time.
+
+	Pure function - no Frappe calls - so unit tests can exercise it
+	outside a bench context. The instance method ``validate_processing_app_url``
+	wraps this and calls ``frappe.throw()`` on rejection.
+	"""
+	if not raw or not raw.strip():
+		return None
+
+	parsed = urlparse(raw.strip())
+	scheme = (parsed.scheme or "").lower()
+	host = (parsed.hostname or "").lower()
+
+	if scheme in {"https", "wss"}:
+		return None
+	if scheme in {"http", "ws"}:
+		if host in _LOOPBACK_HOSTS or host.startswith("127."):
+			return None
+		port_path = (
+			f":{parsed.port}{parsed.path}" if parsed.port else parsed.path
+		)
+		return (
+			"Processing App URL must use https:// or wss:// when pointing "
+			"to a non-loopback host. The WebSocket handshake carries "
+			"llm_api_key in site_config; over plaintext http:// / ws:// a "
+			"network attacker can sniff it. "
+			f"Fix: change the URL to https://{host or 'your-host'}{port_path} "
+			"(or terminate TLS at a reverse proxy in front of the processing "
+			"app). Loopback addresses like http://localhost:8001 are still "
+			"allowed for local dev."
+		)
+	return (
+		f"Processing App URL has an unsupported scheme {scheme or '<missing>'!r}. "
+		"Expected one of: https, wss, http (loopback only), ws (loopback only)."
+	)
 
 
 class AlfredSettings(Document):
@@ -47,8 +97,27 @@ class AlfredSettings(Document):
 
 	def validate(self):
 		self.validate_limits()
+		self.validate_processing_app_url()
 		self.normalize_llm_model()
 		self.normalize_multi_model_names()
+
+	def validate_processing_app_url(self):
+		"""Reject plaintext schemes unless the target is loopback.
+
+		The WebSocket handshake carries llm_api_key inside site_config.
+		If the URL is http:// or ws:// and points to a non-loopback host,
+		that secret rides the wire in cleartext on every connection. We
+		hard-fail the save in that case with an actionable message. Users
+		running the processing app on the same machine (the common dev
+		case) can still use plain http:// / ws:// against localhost /
+		127.0.0.1 / ::1.
+
+		Logic is in :func:`_check_processing_app_url` so it's
+		bench-independent and unit-testable.
+		"""
+		error = _check_processing_app_url(self.processing_app_url or "")
+		if error:
+			frappe.throw(frappe._(error))
 
 	def validate_limits(self):
 		if self.llm_max_tokens and self.llm_max_tokens < 0:

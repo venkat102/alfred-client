@@ -122,6 +122,18 @@ in time proportional to the longer input regardless of where the
 mismatch lies. Regression test:
 `tests/test_api_gateway.py::TestWebSocket::test_ws_rejects_same_length_wrong_key`.
 
+**Processing App URL is scheme-validated on save.** Alfred Settings
+rejects `processing_app_url` values that use plaintext `http://` /
+`ws://` against non-loopback hosts, because the WebSocket handshake
+embeds `llm_api_key` inside `site_config` - over plaintext, that key
+rides the wire in cleartext on every connection. Accepted schemes:
+`https://` and `wss://` universally; `http://` and `ws://` only when
+the host is `localhost`, `127.x.x.x`, or `::1` (the local-dev
+convenience case). Validation logic:
+`alfred_client.alfred_settings.doctype.alfred_settings.alfred_settings._check_processing_app_url`.
+Regression test:
+`alfred_client/test_alfred_settings.py::run_tests`.
+
 ### Processing app → Admin portal
 `Authorization: Bearer <service_api_key>` header. Admin portal endpoints
 use `_validate_service_key()` to verify. An empty key is always rejected.
