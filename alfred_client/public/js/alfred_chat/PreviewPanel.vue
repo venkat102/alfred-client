@@ -326,7 +326,7 @@
 					</table>
 					<div v-if="type === 'Notification' && item.data?.message" class="alfred-msg-preview">
 						<small class="text-muted">Message template:</small>
-						<div class="alfred-code-preview" v-html="item.data.message"></div>
+						<pre class="alfred-code-preview"><code>{{ item.data.message }}</code></pre>
 					</div>
 
 					<!-- Server Script details -->
