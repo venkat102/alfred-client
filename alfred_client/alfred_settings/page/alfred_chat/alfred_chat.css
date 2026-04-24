@@ -17,11 +17,46 @@
 
 	/* ── Design tokens (scoped so they never leak into Frappe Desk).
 	 *    All downstream surfaces read these. Keeping them here means
-	 *    switching a shade or gradient is a single edit. */
+	 *    switching a shade or gradient is a single edit.
+	 *
+	 *    AERELE DESIGN SYSTEM: new styles should prefer --ae-* /
+	 *    --brand-* tokens below over the Frappe-derived --blue-500 etc.
+	 *    The --alfred-mode-* / --alfred-tone-* palettes are kept intact
+	 *    for backward compatibility but will migrate component-by-
+	 *    component in a follow-up pass. See .claude/skills/aerele-design
+	 *    for the canonical palette + typography + spacing tokens. */
 
-	/* Marks (hero glyphs on EMPTY / WORKING / banners / toolbar) */
-	--alfred-mark-chat: linear-gradient(135deg, var(--blue-500, #2490ef), var(--purple-600, #7c3aed));
-	--alfred-mark-preview: linear-gradient(135deg, #14b8a6, var(--purple-600, #7c3aed));
+	/* Aerele navy-slate scale (neutral surfaces, text, borders) */
+	--ae-50:  #f7f8fb;
+	--ae-100: #eef2fb;
+	--ae-200: #e4e9f5;
+	--ae-300: #c9d2e8;
+	--ae-400: #94a3b8;
+	--ae-500: #64748b;
+	--ae-600: #475569;
+	--ae-700: #1e293b;
+	--ae-800: #0a1a3f;
+	--ae-900: #060f2b;
+	--ae-950: #05102a;
+
+	/* Aerele emerald accent (one accent per hero, one per featured tier,
+	 * one per live indicator; never a surface) */
+	--ae-brand-400: #34d399;
+	--ae-brand-500: #10b981;
+	--ae-brand-600: #059669;
+
+	/* Aerele typography families. Actual font loading is a follow-up
+	 * (Frappe Desk defaults to its own stack). Exposing the tokens
+	 * lets new styles reference the intended stack. */
+	--ae-font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+	--ae-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	/* Marks (hero glyphs on EMPTY / WORKING / banners / toolbar). Flat
+	 * navy matches the aerele anti-pattern "Gradients anywhere except
+	 * the hero glow" - the gradient mark was the biggest anti-pattern
+	 * hit in the audit. */
+	--alfred-mark-chat: var(--ae-900);
+	--alfred-mark-preview: var(--ae-900);
 
 	/* Mode palette (mirrors ModeSwitcher active states) - fg / bg / border */
 	--alfred-mode-auto-fg: var(--green-700, #15803d);
