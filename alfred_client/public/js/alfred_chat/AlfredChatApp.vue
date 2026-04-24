@@ -423,6 +423,13 @@ const activityLog = ref([]);
 const activityLogOpen = ref(false);
 const connectionState = ref("disconnected"); // disconnected, starting, connected, reconnecting, failed
 
+// Queue-saturation banner state. Shown above the input when either
+// start_conversation returned no_worker or the manager has been
+// enqueued without connecting for SATURATION_WATCHDOG_MS. The
+// watchdog helpers + saturationBanner computed live further down next
+// to armSaturationWatchdog / clearSaturationWatchdog.
+const saturationReason = ref(null); // null | "waiting" | "no_worker"
+
 // Live "what is the agent doing right now" ticker - updated on each MCP tool call.
 // Shown prominently above the input while isProcessing is true so the user never
 // stares at a blank screen while the pipeline is running.
@@ -920,9 +927,10 @@ function ensureConnectionManager(name) {
 // no_worker or the manager has been enqueued without connecting for
 // SATURATION_WATCHDOG_MS. The banner is informational: clicking it
 // opens the Health dialog so the user can see worker count + queue
-// depth themselves.
+// depth themselves. The saturationReason ref itself lives with the
+// other top-of-file state refs so composables can pass it in during
+// setup without hitting a temporal-dead-zone error.
 const SATURATION_WATCHDOG_MS = 10000;
-const saturationReason = ref(null); // null | "waiting" | "no_worker"
 let saturationWatchdogTimer = null;
 
 function armSaturationWatchdog() {
