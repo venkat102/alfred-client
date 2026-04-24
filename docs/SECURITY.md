@@ -112,6 +112,16 @@ token strings also raise immediately. These guards prevent the footgun
 where a forged token would never expire. (`alfred/middleware/auth.py`,
 regression tests in `tests/test_api_gateway.py::TestJWT`.)
 
+**API key comparison is constant-time.** Both the REST Bearer-token
+check and the WebSocket handshake compare the submitted key against
+`API_SECRET_KEY` using `hmac.compare_digest(...)`, not `==`. A naive
+equality check leaks the prefix match length via response latency,
+which is enough to reconstruct the key one byte at a time across
+enough requests from a co-located attacker. `compare_digest` evaluates
+in time proportional to the longer input regardless of where the
+mismatch lies. Regression test:
+`tests/test_api_gateway.py::TestWebSocket::test_ws_rejects_same_length_wrong_key`.
+
 ### Processing app → Admin portal
 `Authorization: Bearer <service_api_key>` header. Admin portal endpoints
 use `_validate_service_key()` to verify. An empty key is always rejected.
@@ -274,6 +284,31 @@ Watch these fields when configuring for production:
 | `Alfred Settings.allowed_roles` | Frappe site | empty (falls back to System Manager) | Explicit list. Don't leave empty unless you only want System Managers using Alfred. |
 | `Alfred Settings.enable_auto_deploy` | Frappe site | `false` | **Leave `false`** unless you fully trust Alfred's output for your site's workflow. Auto-deploy skips the preview + approval step. |
 | Frappe HTTPS | Frappe site | varies | **Required** in production. Alfred uses Frappe session auth; without HTTPS, session cookies travel in plaintext. |
+
+### Outbound telemetry and trace files
+
+**CrewAI SaaS telemetry is off by default.** CrewAI ships with a built-in
+exporter that POSTs agent run metadata (task descriptions, agent
+decisions, LLM usage counts) to CrewAI's own endpoint unless you
+disable it. `alfred/main.py` calls `os.environ.setdefault()` on
+`CREWAI_DISABLE_TELEMETRY`, `CREWAI_DISABLE_TRACKING`, and
+`OTEL_SDK_DISABLED` at import time, so a local `.env` that omits those
+three lines still starts with telemetry off. To opt BACK IN for
+debugging, set `CREWAI_DISABLE_TELEMETRY=false` in your environment
+(setdefault respects explicit values). Regression test:
+`tests/test_main_bootstrap.py`.
+
+**Tracer output path is whitelisted.** When `ALFRED_TRACING_ENABLED=1`,
+the JSONL tracer writes to `ALFRED_TRACE_PATH`. An attacker who can
+set process env vars (container env injection, CI secret leakage)
+could otherwise redirect those writes to an arbitrary path like
+`/etc/systemd/system/<service>.override`. `_safe_trace_path()` in
+`alfred/obs/tracer.py` rejects inputs containing `..` and only accepts
+resolved paths inside CWD, `$HOME`, `tempfile.gettempdir()`, `/tmp`,
+or `/var/tmp`. Anything else logs a WARNING and falls back to the
+default `alfred_trace.jsonl`. macOS `/tmp` → `/private/tmp` symlink is
+handled by running `realpath()` on both sides. Regression tests:
+`tests/test_tracer_path_validation.py`.
 
 ## Known risks and mitigations
 

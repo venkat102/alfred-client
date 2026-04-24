@@ -245,6 +245,11 @@ DEBUG=false
 # versions, and they also short-circuit the embedded OTel SDK init,
 # trimming cold-start). Leave them on unless you specifically want to
 # send agent run metadata off-site.
+#
+# NOTE: alfred.main also sets these three flags via os.environ.setdefault()
+# at import time as a belt-and-braces default, so forgetting them in .env
+# no longer silently phones telemetry home. To opt BACK IN for debugging,
+# set them here to "false" - setdefault respects an explicit value.
 CREWAI_DISABLE_TELEMETRY=true
 CREWAI_DISABLE_TRACKING=true
 OTEL_SDK_DISABLED=true
@@ -576,7 +581,7 @@ ADMIN_SERVICE_KEY=the-service-api-key-from-admin-settings
 | ALFRED_ORCHESTRATOR_ENABLED | off | Enable the three-mode chat orchestrator. When on, prompts are classified into `dev` / `plan` / `insights` / `chat` and conversational / read-only turns short-circuit the crew. See the three-mode chat section of `how-alfred-works.md` for the full flow. `1` to enable. |
 | ALFRED_REFLECTION_ENABLED | off | Enable the post-crew reflection step that drops items the user didn't ask for. Accepts `1` / `true` / `yes`. Default off for cautious rollout. Once on, the UI shows `minimality_review` events when the reviewer trims an over-reaching changeset. |
 | ALFRED_TRACING_ENABLED | off | Enable structured span tracing. Emits one JSON object per pipeline phase to `ALFRED_TRACE_PATH`. Accepts `1` / `true` / `yes`. |
-| ALFRED_TRACE_PATH | `./alfred_trace.jsonl` | JSONL output file for tracer spans. Only relevant when `ALFRED_TRACING_ENABLED=1`. |
+| ALFRED_TRACE_PATH | `./alfred_trace.jsonl` | JSONL output file for tracer spans. Only relevant when `ALFRED_TRACING_ENABLED=1`. Path is validated: must resolve inside CWD, `$HOME`, `tempfile.gettempdir()`, `/tmp`, or `/var/tmp`. Paths with `..` components or targets outside the whitelist log a WARNING and fall back to the default. |
 | ALFRED_TRACE_STDOUT | off | Also emit a human-readable summary per span to stderr. Useful for live debugging. |
 | ALFRED_PHASE1_DISABLED | - | Set to `1` to opt out of per-run MCP tracking state (budget cap, dedup cache, failure counter). Used only for benchmark comparisons against baseline. Leave unset in production. |
 
