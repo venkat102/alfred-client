@@ -129,6 +129,7 @@ this by loading the owner from `Alfred Conversation` before generating the JWT.
 | `plan_doc` | Plan document from Plan mode (Phase C). Fires when the orchestrator routes to `plan` mode. Payload: `{conversation, plan, mode: "plan"}` where `plan` is a `PlanDoc`-shaped dict (`{title, summary, steps, doctypes_touched, risks, open_questions, estimated_items}`). Rendered as a structured panel (`PlanDocPanel.vue`) with Refine / Approve & Build buttons. Produced by a 3-agent crew (Requirement / Assessment / Architect) with a 15-call tool budget. No changeset, no DB writes. |
 | `echo` | Echo response (for testing) |
 | `error` | Error message with `code` field |
+| `info` | Non-blocking notice from the server. Carries `{message, code, response_to?}`. Codes emitted today: `CLARIFIER_LATE_RESPONSE` - user answered a clarifier question after its 900s Future timed out; pipeline proceeded without them and this ack lets the UI surface "your answer arrived too late, send as a new prompt if you want to apply it". |
 | `ping` | Heartbeat (every 30s) |
 | `mcp_response` | MCP tool call result (routed to MCPClient for future resolution) |
 
