@@ -137,10 +137,16 @@ this by loading the owner from `Alfred Conversation` before generating the JWT.
 | Type | Description |
 |------|------------|
 | `prompt` | User's text message. Optional `mode` field in `data` for the three-mode chat switcher (`"auto"`/`"dev"`/`"plan"`/`"insights"`, defaults to `"auto"`). |
-| `user_response` | Answer to agent question |
-| `deploy_command` | Deployment trigger |
-| `ack` | Message acknowledgment |
-| `resume` | Reconnection with last_msg_id |
+| `user_response` | Answer to agent question. Carries `{response_to, text}` where `response_to` is the `msg_id` of the server's `question` event. |
+| `cancel` | User-initiated graceful cancel of the currently running pipeline for this conversation. Server flips `should_stop` at the next phase boundary and emits a `run_cancelled` event; connection stays open. |
+| `ack` | Message acknowledgment. Carries `{acked_msg_id}`. |
+| `resume` | Reconnection with last_msg_id (currently a no-op; replay not yet implemented - see #FLOW1). |
+
+**Note on deploy**: approving a changeset triggers the Frappe REST endpoint
+`alfred_client.api.deploy.apply_changeset`, NOT a WebSocket message. There is
+no `deploy_command` WS message type. Earlier docs listed one; the corresponding
+server handler was never implemented because the deploy path was moved to REST
+before the WS contract was finalised.
 
 ### Message Envelope
 ```json
