@@ -62,6 +62,31 @@ bench build --app alfred_client
 
 Then set up the [Processing App](docs/SETUP.md#part-b-set-up-the-processing-app) and [configure Alfred Settings](docs/SETUP.md#part-c-connect-them-together).
 
+## Development
+
+### CI + pre-commit
+
+- GitHub Actions runs `ruff check` on every PR and push to `master`.
+  This repo is lint-only in CI because the Python tests are
+  bench-executed (they need a full Frappe + MariaDB + Redis site),
+  which is out of scope for Actions. Integration tests live in
+  `frontend-tests/` (Playwright) and run against a live bench.
+- `pre-commit` hooks run `ruff format` + `ruff check` on staged Python
+  files plus trailing-whitespace / EOF / YAML / JSON sanity checks.
+  Install locally with:
+  ```bash
+  pip install pre-commit
+  pre-commit install
+  ```
+
+### Frontend tests
+
+Playwright smoke tests live in `frontend-tests/`. See
+[`frontend-tests/README.md`](frontend-tests/README.md) for setup, the
+four specs (send-prompt, mode-switcher, preview-approve, rollback),
+the stable `data-testid` catalogue, and the `ALFRED_RUN_SLOW_TESTS=1`
+gate on the two destructive specs.
+
 ## License
 
 MIT
