@@ -12,6 +12,73 @@ from frappe.model.document import Document
 # llm_api_key doesn't ride the wire in cleartext.
 _LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
 
+# Minimum API key length. Must match the 32-byte floor that the
+# processing app's alfred.config.Settings.API_SECRET_KEY validator
+# enforces at boot. Saving a shorter key here would produce a pair
+# that fails on the processing side anyway.
+_API_KEY_MIN_LENGTH = 32
+
+# Same placeholder denylist the processing app uses. Kept in sync by
+# hand rather than auto-imported; the two repos deploy independently
+# and we don't want alfred_client to have a cross-repo import.
+_API_KEY_FORBIDDEN: frozenset[str] = frozenset({
+	"",
+	"changeme",
+	"change-me",
+	"changethis",
+	"change-this",
+	"secret",
+	"password",
+	"dev",
+	"devsecret",
+	"dev-secret",
+	"test",
+	"testsecret",
+	"test-secret",
+	"your-secret-key",
+	"your_secret_key",
+	"supersecret",
+	"super-secret",
+})
+
+
+def _check_api_key(raw: str | None) -> str | None:
+	"""Validate the Alfred Settings.api_key field.
+
+	Returns None if acceptable (unset, or at least 32 chars and not a
+	known placeholder). Returns an error message string otherwise.
+	Mirrors alfred_processing/alfred/config.py:_validate_api_secret_key
+	so a key that would fail on the processing app at boot can't be
+	saved here either - failing at save time surfaces the problem
+	while the admin is still on the settings form.
+
+	Pure function so unit tests can exercise it outside a bench
+	context. The instance method ``validate_api_key`` wraps this and
+	calls ``frappe.throw()`` on rejection.
+	"""
+	if raw is None or not raw.strip():
+		# Empty field is acceptable at save time - admins may land on
+		# the form before they've generated a key. The processing app
+		# refuses to boot without one, which is the real gate.
+		return None
+
+	value = raw.strip()
+	if value.lower() in _API_KEY_FORBIDDEN:
+		return (
+			f"API Key is set to a known-weak placeholder value ({value!r}). "
+			"Generate a strong key on the processing app with: "
+			"python scripts/rotate_api_secret_key.py, then paste the "
+			"printed value here."
+		)
+	if len(value) < _API_KEY_MIN_LENGTH:
+		return (
+			f"API Key is too short ({len(value)} chars); minimum is "
+			f"{_API_KEY_MIN_LENGTH}. The processing app refuses to boot "
+			"on shorter keys. Generate one with: python "
+			"scripts/rotate_api_secret_key.py"
+		)
+	return None
+
 
 def _check_processing_app_url(raw: str) -> str | None:
 	"""Validate a processing_app_url string.
@@ -100,8 +167,27 @@ class AlfredSettings(Document):
 	def validate(self):
 		self.validate_limits()
 		self.validate_processing_app_url()
+		self.validate_api_key()
 		self.normalize_llm_model()
 		self.normalize_multi_model_names()
+
+	def validate_api_key(self):
+		"""Reject weak API keys at save time.
+
+		Must match the processing app's startup validator so a key
+		accepted here won't then brick the processing app's next boot.
+		Logic lives in :func:`_check_api_key` for bench-independent
+		unit testing.
+		"""
+		# get_password returns the decrypted value; None if unset or
+		# still at the (never-saved) default.
+		try:
+			raw = self.get_password("api_key", raise_exception=False)
+		except Exception:
+			raw = None
+		error = _check_api_key(raw)
+		if error:
+			frappe.throw(frappe._(error))
 
 	def validate_processing_app_url(self):
 		"""Reject plaintext schemes unless the target is loopback.

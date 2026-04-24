@@ -9,6 +9,8 @@ Run via:
 """
 
 from alfred_client.alfred_settings.doctype.alfred_settings.alfred_settings import (
+	_API_KEY_MIN_LENGTH,
+	_check_api_key,
 	_check_processing_app_url,
 )
 
@@ -106,6 +108,56 @@ def run_tests():
 	print("Test 5: surrounding whitespace trimmed...")
 	result = _check_processing_app_url("  https://ok.example.com  ")
 	_assert(result is None, f"Expected None for padded https URL, got: {result!r}")
+	print("  PASSED\n")
+
+	# ── API Key validator ─────────────────────────────────────────────
+	# Mirrors the processing-side validator so a key accepted here
+	# won't fail on the processing app at boot.
+
+	# Test 6: unset / whitespace-only accepted (admin hasn't saved yet).
+	print("Test 6: empty api_key accepted...")
+	for raw in (None, "", "   ", "\n\t"):
+		result = _check_api_key(raw)
+		_assert(result is None, f"Expected None for empty api_key {raw!r}, got: {result!r}")
+	print("  PASSED\n")
+
+	# Test 7: strong key (>= 32 chars, not a placeholder) accepted.
+	print("Test 7: strong api_key accepted...")
+	strong = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"  # 40 chars
+	_assert(len(strong) >= _API_KEY_MIN_LENGTH, "test fixture too short")
+	result = _check_api_key(strong)
+	_assert(result is None, f"Expected None for strong key, got: {result!r}")
+	print("  PASSED\n")
+
+	# Test 8: short keys rejected with a pointer to the rotation script.
+	print(f"Test 8: keys shorter than {_API_KEY_MIN_LENGTH} chars rejected...")
+	for raw in ("x", "short", "a" * (_API_KEY_MIN_LENGTH - 1)):
+		result = _check_api_key(raw)
+		_assert(result is not None, f"Expected error for short key {raw!r}, got None")
+		_assert(
+			"rotate_api_secret_key" in result,
+			f"Expected rotation-script hint in error, got: {result!r}",
+		)
+	print("  PASSED\n")
+
+	# Test 9: known placeholders rejected, case-insensitively.
+	print("Test 9: placeholder api_keys rejected...")
+	for raw in ("secret", "Secret", "CHANGEME", "changeme", "dev-secret", "your-secret-key"):
+		result = _check_api_key(raw)
+		_assert(result is not None, f"Expected error for placeholder {raw!r}, got None")
+		_assert(
+			"placeholder" in result.lower(),
+			f"Expected 'placeholder' in error, got: {result!r}",
+		)
+	print("  PASSED\n")
+
+	# Test 10: whitespace trimmed before length + placeholder checks.
+	print("Test 10: surrounding whitespace trimmed before validation...")
+	result = _check_api_key("  " + strong + "  ")
+	_assert(result is None, f"Expected None for padded strong key, got: {result!r}")
+	# 'secret' with surrounding whitespace is still a placeholder
+	result = _check_api_key("  secret  ")
+	_assert(result is not None, "Expected error for padded placeholder, got None")
 	print("  PASSED\n")
 
 	print("=== All Alfred Settings validator tests passed ===\n")
