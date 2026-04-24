@@ -382,7 +382,10 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 }
 .alfred-pipeline-rail-fill {
 	height: 100%;
-	background: linear-gradient(90deg, var(--alfred-tone-success-500), var(--alfred-tone-info-500));
+	/* Aerele: one accent per page; deploy progress uses emerald (the
+	 * "live / happening" signal). Flat fill replaces the earlier
+	 * green->blue gradient per anti-pattern #10. */
+	background: var(--ae-brand-500);
 	transition: width 0.5s ease;
 	border-radius: 1px;
 }
@@ -499,9 +502,12 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 .alfred-empty-mark {
 	width: 56px; height: 56px; border-radius: 16px;
 	display: flex; align-items: center; justify-content: center;
-	font-size: 24px; font-weight: 700; color: white;
-	background: linear-gradient(135deg, var(--blue-500, #2490ef), var(--purple-600, #7c3aed));
-	box-shadow: 0 6px 18px rgba(36, 144, 239, 0.25);
+	font-size: 24px; font-weight: 600; color: white;
+	/* Aerele: flat navy matches the other mark tokens; weight
+	 * downgraded from 700 to 600 per aerele typography rule
+	 * (never 700+ on display elements). */
+	background: var(--ae-900);
+	box-shadow: 0 6px 18px rgba(6, 15, 43, 0.3);
 	letter-spacing: 0.5px;
 }
 .alfred-empty-title {
@@ -1338,12 +1344,15 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 }
 .alfred-msg-time { font-size: 10px; margin-left: auto; }
 
-/* User bubble: gradient + shadow + kept bottom-right corner for chat affordance */
+/* User bubble: flat navy + shadow + kept bottom-right corner for chat
+ * affordance. Aerele: flat navy replaces the blue->purple gradient
+ * (anti-pattern #10); also matches the Primary CTA (nav) pattern
+ * where user-owned actions get ae-900 fill. */
 .alfred-msg-user {
 	align-self: flex-end;
-	background: linear-gradient(135deg, var(--blue-500, #2490ef), var(--purple-600, #7c3aed));
+	background: var(--ae-900);
 	color: white; border-bottom-right-radius: 4px;
-	box-shadow: 0 3px 10px rgba(36, 144, 239, 0.18);
+	box-shadow: 0 3px 10px rgba(6, 15, 43, 0.18);
 	border: none;
 }
 .alfred-msg-user .alfred-msg-time { color: rgba(255,255,255,0.75); }
@@ -1416,14 +1425,16 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
 	gap: 6px; padding: 7px 14px; border-radius: 8px;
 	font-size: 12px; font-weight: 600; line-height: 1;
 	color: white; border: 1px solid transparent;
-	background: linear-gradient(135deg, var(--blue-500, #2490ef), var(--blue-600, #1d4ed8));
-	box-shadow: 0 2px 6px rgba(36, 144, 239, 0.24);
+	/* Aerele Primary CTA (on light surfaces): brand-500 emerald, flat.
+	 * Replaces the blue->blue gradient. */
+	background: var(--ae-brand-500);
+	box-shadow: 0 2px 6px rgba(16, 185, 129, 0.24);
 	cursor: pointer; text-decoration: none;
-	transition: transform 0.08s, box-shadow 0.15s, filter 0.15s;
+	transition: background-color 150ms, box-shadow 0.15s;
 }
-.alfred-btn-primary:hover { filter: brightness(1.05); box-shadow: 0 3px 10px rgba(36, 144, 239, 0.32); }
-.alfred-btn-primary:active { transform: translateY(1px); box-shadow: 0 1px 3px rgba(36, 144, 239, 0.2); }
-.alfred-btn-primary:focus-visible { outline: 2px solid var(--alfred-tone-info-200); outline-offset: 2px; }
+.alfred-btn-primary:hover { background: var(--ae-brand-600); box-shadow: 0 3px 10px rgba(16, 185, 129, 0.32); }
+.alfred-btn-primary:active { transform: translateY(1px); box-shadow: 0 1px 3px rgba(16, 185, 129, 0.2); }
+.alfred-btn-primary:focus-visible { outline: 2px solid var(--ae-brand-400); outline-offset: 2px; }
 .alfred-btn-primary[disabled] { opacity: 0.6; cursor: not-allowed; filter: saturate(0.6); }
 
 /* Question card: assistant-waiting prompt with clickable option cards */
@@ -1623,17 +1634,25 @@ body.alfred-drawer-open .alfred-app .alfred-chat-area {
  * Phase 2). Approve uses --success; Request Changes / Rollback use
  * --ghost; Reject uses --ghost--danger; Deploy Anyway (validation
  * warnings) uses --warn. Consistent focus ring + disabled state. */
+/* Aerele: success == emerald (the "live / happening" accent).
+ * brand-primary is already emerald via .alfred-btn-primary above;
+ * the --success modifier only overrides the shadow tint to match.
+ * Keeping the class for semantic callsites (Approve button) so the
+ * HTML stays self-documenting. */
 .alfred-btn-primary--success {
-	background: linear-gradient(135deg, var(--green-500, #28a745), var(--green-600, #16a34a));
-	box-shadow: 0 2px 6px rgba(40, 167, 69, 0.24);
+	background: var(--ae-brand-500);
+	box-shadow: 0 2px 6px rgba(16, 185, 129, 0.24);
 }
-.alfred-btn-primary--success:hover { box-shadow: 0 3px 10px rgba(40, 167, 69, 0.32); }
-.alfred-btn-primary--success:focus-visible { outline: 2px solid var(--alfred-tone-success-200); outline-offset: 2px; }
+.alfred-btn-primary--success:hover { background: var(--ae-brand-600); box-shadow: 0 3px 10px rgba(16, 185, 129, 0.32); }
+.alfred-btn-primary--success:focus-visible { outline: 2px solid var(--ae-brand-400); outline-offset: 2px; }
+/* Warn keeps the orange signal - aerele permits functional color
+ * coding even though the marketing-hero palette is navy + emerald
+ * only. Gradient stripped to comply with anti-pattern #10. */
 .alfred-btn-primary--warn {
-	background: linear-gradient(135deg, var(--orange-500, #f59e0b), var(--orange-600, #d97706));
+	background: var(--alfred-tone-warn-500);
 	box-shadow: 0 2px 6px rgba(245, 158, 11, 0.24);
 }
-.alfred-btn-primary--warn:hover { box-shadow: 0 3px 10px rgba(245, 158, 11, 0.32); }
+.alfred-btn-primary--warn:hover { filter: brightness(0.95); box-shadow: 0 3px 10px rgba(245, 158, 11, 0.32); }
 .alfred-btn-primary--warn:focus-visible { outline: 2px solid var(--alfred-tone-warn-200); outline-offset: 2px; }
 
 .alfred-btn-ghost {
