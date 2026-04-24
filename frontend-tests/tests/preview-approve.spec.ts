@@ -30,7 +30,7 @@ test("dev prompt -> preview -> approve -> deploy success", async ({ page }) => {
 	await login(page);
 	await openAlfredChat(page);
 	await startNewConversation(page);
-	await selectMode(page, "Dev");
+	await selectMode(page, "dev");
 
 	// A deliberately small build so the test doesn't take forever. The
 	// target doctype (ToDo) exists on every Frappe install.
@@ -40,7 +40,9 @@ test("dev prompt -> preview -> approve -> deploy success", async ({ page }) => {
 	);
 	await waitForAgentReply(page, 600_000);
 
-	// Preview panel should open once the changeset is ready.
+	// Preview panel should open once the changeset is ready. The panel
+	// container class is stable (structural); the approve button uses
+	// a data-testid because the button class has churned twice.
 	const preview = page.locator(".alfred-preview-panel");
 	await expect(preview).toBeVisible({ timeout: 600_000 });
 
@@ -48,7 +50,7 @@ test("dev prompt -> preview -> approve -> deploy success", async ({ page }) => {
 	await expect(preview.locator(".alfred-changeset-item").first()).toBeVisible();
 
 	// Click Approve and wait for the deploy-success banner.
-	await preview.locator(".alfred-approve-btn").click();
+	await page.getByTestId("alfred-preview-approve").click();
 	await expect(
 		page.locator(".alfred-deploy-success, .alfred-deploy-complete"),
 	).toBeVisible({ timeout: 120_000 });

@@ -85,6 +85,7 @@ across dozens of CSS rules stay stable as a side effect.
 | `alfred-send-btn` | `AlfredChatApp.vue` | Send button (disabled when input empty) |
 | `alfred-stop-btn` | `AlfredChatApp.vue` | Stop button (shown when a pipeline is running) |
 | `alfred-new-conversation` | `ConversationList.vue` | "Start a conversation" CTA in the empty list |
+| `alfred-mode-auto` / `alfred-mode-dev` / `alfred-mode-plan` / `alfred-mode-insights` | `ModeSwitcher.vue` | One testid per mode button; active state checked via `aria-pressed="true"` |
 | `alfred-preview-approve` | `PreviewPanel.vue` | Approve & Deploy button |
 | `alfred-preview-modify` | `PreviewPanel.vue` | Request Changes button |
 | `alfred-preview-reject` | `PreviewPanel.vue` | Reject button |
@@ -102,9 +103,7 @@ to avoid collisions with Frappe Desk's own testids if any.
 - No auto-cleanup between tests. `preview-approve` and `rollback` are
   intentionally chained; running one without the other will either
   leak state or fail on missing preconditions.
-- The existing spec files reference class selectors that in some
-  cases don't match the current Vue source (e.g. `.alfred-chat-send-btn`
-  doesn't exist anywhere - the real class is `alfred-send-btn`).
-  Those tests only run behind `ALFRED_RUN_SLOW_TESTS=1` so the drift
-  went unnoticed. Rewriting the specs to use the `data-testid`s
-  above is the recommended next task.
+- `rollback.spec.ts` still uses class selectors for the overflow-menu
+  flow (`.alfred-overflow-menu`, `.alfred-menu-item`). Those are
+  structural containers whose classes haven't drifted; migrating to
+  testids is lower priority than the interactive buttons.

@@ -11,6 +11,7 @@
 			]"
 			:title="opt.tooltip"
 			:aria-pressed="modelValue === opt.value"
+			:data-testid="`alfred-mode-${opt.value}`"
 			@click="$emit('update:modelValue', opt.value)"
 		>
 			<!-- Inline SVG icon per mode. Uses currentColor so the per-mode

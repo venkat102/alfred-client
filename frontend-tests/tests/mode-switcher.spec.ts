@@ -19,11 +19,13 @@ test("mode switcher persists across page reload", async ({ page }) => {
 	await openAlfredChat(page);
 	await startNewConversation(page);
 
-	await selectMode(page, "Plan");
+	await selectMode(page, "plan");
 	// Reload; the persisted conversation mode should rehydrate.
 	await page.reload();
 	await expect(page.locator(".alfred-conversation-list")).toBeVisible();
-	await expect(
-		page.locator(".alfred-mode-switcher .is-active:has-text('Plan')"),
-	).toBeVisible();
+	// aria-pressed is the a11y-stable signal of which mode is active;
+	// the CSS class used to encode this can change at any time.
+	await expect(page.getByTestId("alfred-mode-plan")).toHaveAttribute(
+		"aria-pressed", "true",
+	);
 });

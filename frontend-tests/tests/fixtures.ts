@@ -4,10 +4,12 @@ import { expect, Page } from "@playwright/test";
  * Shared helpers used by every spec. Keep login, chat open, and
  * prompt send in one place so UI churn only breaks one file.
  *
- * All selectors target the Vue component classes declared in
- * alfred_client/public/js/alfred_chat/*.vue. When the components grow
- * `data-testid` attributes (recommended), this file should migrate to
- * those instead - classes are brittle to CSS refactors.
+ * Interactive elements use `data-testid` attributes (shipped in
+ * alfred_processing commits 57ecc05 + da847f4). Class selectors are
+ * retained only for structural containers (.alfred-conversation-list,
+ * .alfred-preview-panel, .alfred-message) that are stable + not
+ * interactive. See frontend-tests/README.md "Stable selectors" for
+ * the full table.
  */
 
 const USER = process.env.ALFRED_USER || "Administrator";
@@ -38,8 +40,8 @@ export async function openAlfredChat(page: Page): Promise<void> {
  * Returns once the input textarea is interactive.
  */
 export async function startNewConversation(page: Page): Promise<void> {
-	await page.locator(".alfred-new-conversation-btn").click();
-	await expect(page.locator(".alfred-chat-input")).toBeVisible();
+	await page.getByTestId("alfred-new-conversation").click();
+	await expect(page.getByTestId("alfred-composer-input")).toBeVisible();
 }
 
 /**
@@ -47,10 +49,13 @@ export async function startNewConversation(page: Page): Promise<void> {
  * waitForAgentReply if you need that.
  */
 export async function sendPrompt(page: Page, text: string): Promise<void> {
-	const input = page.locator(".alfred-chat-input textarea").first();
+	const input = page.getByTestId("alfred-composer-input");
 	await input.fill(text);
-	await page.locator(".alfred-chat-send-btn").click();
+	await page.getByTestId("alfred-send-btn").click();
 	// The user bubble should appear immediately (optimistic render).
+	// The message bubbles don't have testids (they're rendered in a
+	// v-for and per-message testids would be cluttered); we match on
+	// the role-specific class that's stable across CSS refactors.
 	await expect(
 		page.locator(".alfred-message.alfred-msg-user").last(),
 	).toContainText(text);
@@ -68,16 +73,17 @@ export async function waitForAgentReply(page: Page, timeoutMs = 120_000): Promis
 }
 
 /**
- * Pick a mode from the ModeSwitcher ("Auto" | "Dev" | "Plan" | "Insights").
+ * Pick a mode from the ModeSwitcher ("auto" | "dev" | "plan" | "insights").
  * The switcher persists the choice to the backend via set_conversation_mode.
  */
 export async function selectMode(
 	page: Page,
-	mode: "Auto" | "Dev" | "Plan" | "Insights",
+	mode: "auto" | "dev" | "plan" | "insights",
 ): Promise<void> {
-	await page.locator(".alfred-mode-switcher").getByRole("button", { name: mode }).click();
-	// The chosen button gets an `is-active` class.
-	await expect(
-		page.locator(`.alfred-mode-switcher .is-active:has-text("${mode}")`),
-	).toBeVisible();
+	await page.getByTestId(`alfred-mode-${mode}`).click();
+	// aria-pressed reflects the active state and is a11y-stable unlike
+	// the .alfred-mode-btn-active CSS class name.
+	await expect(page.getByTestId(`alfred-mode-${mode}`)).toHaveAttribute(
+		"aria-pressed", "true",
+	);
 }
