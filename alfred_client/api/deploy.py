@@ -389,15 +389,18 @@ def dry_run_changeset(changes):
 			})
 		except Exception as e:
 			error_msg = str(e)
-			# Classify common Frappe errors
-			severity = "critical"
-			if "already exists" in error_msg.lower():
-				severity = "warning"
-			elif "mandatory" in error_msg.lower() or "required" in error_msg.lower():
-				severity = "critical"
-
+			# Every dry-run failure is a real failure: meta-check raises only
+			# on doctype-specific conflicts the agent must have missed (e.g.
+			# Custom Field where the fieldname already exists on the target
+			# DocType), and savepoint-validate raises only on errors the live
+			# DB itself would throw at deploy time. There is no "soft" case
+			# here - if dry-run failed, real deploy will fail in the exact
+			# same place. Classifying these as warning was hiding bugs:
+			# valid stayed True, the UI showed "Validated - ready to deploy",
+			# the user approved, and the real deploy failed with the same
+			# error. Pinned by test_dry_run_safety::Test 7.
 			issues.append({
-				"step": step, "severity": severity,
+				"step": step, "severity": "critical",
 				"issue": error_msg,
 				"doctype": doctype, "name": doc_name,
 			})

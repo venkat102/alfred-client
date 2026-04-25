@@ -177,4 +177,53 @@ def run_tests():
 	print(f"  Follow-up query succeeded (DocType count={next_count})")
 	print("  PASSED\n")
 
+	# ── 7. Field-already-exists must be CRITICAL, not warning. ─────────
+	#     User-reported bug: `priority` is a standard field on `ToDo`. The
+	#     agent proposed creating a Custom Field for it; dry-run found the
+	#     conflict but classified it as a warning, valid stayed True, the
+	#     UI showed "Validated - ready to deploy", and the real deploy
+	#     failed. Lock the contract: any "already exists" error from
+	#     dry-run is critical, valid is False, and the warning is visible
+	#     in the UI before approval.
+	print("Test 7: Custom Field on existing standard field is CRITICAL...")
+	from alfred_client.api.deploy import dry_run_changeset
+
+	# Confirm `priority` is actually a standard field on ToDo - if Frappe
+	# ever drops it from core, this test should switch to a different
+	# standard field rather than silently pass.
+	todo_meta = frappe.get_meta("ToDo")
+	standard_field_on_todo = todo_meta.get_field("priority")
+	assert standard_field_on_todo, (
+		"Precondition failed: 'priority' is no longer a standard field on "
+		"ToDo - update this test to use a different standard field."
+	)
+
+	result = dry_run_changeset([{
+		"op": "create",
+		"doctype": "Custom Field",
+		"data": {
+			"dt": "ToDo",
+			"fieldname": "priority",
+			"label": "Priority",
+			"fieldtype": "Select",
+			"options": "Low\nMedium\nHigh",
+		},
+	}])
+	assert result["valid"] is False, (
+		f"Expected valid=False for Custom Field colliding with standard "
+		f"field, got valid={result['valid']} with issues={result['issues']}"
+	)
+	criticals = [i for i in result["issues"] if i.get("severity") == "critical"]
+	assert criticals, (
+		f"Expected at least one critical-severity issue, got "
+		f"{result['issues']}"
+	)
+	matching = [i for i in criticals if "already exists" in (i.get("issue") or "").lower()]
+	assert matching, (
+		f"Expected a critical-severity issue mentioning 'already exists', "
+		f"got criticals={criticals}"
+	)
+	print(f"  Caught {len(criticals)} critical issue(s); valid=False")
+	print("  PASSED\n")
+
 	print("=== All Dry-Run DDL Safety Tests PASSED ===\n")
