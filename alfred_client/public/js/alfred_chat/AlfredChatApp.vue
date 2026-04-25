@@ -936,6 +936,34 @@ function openConversation(name) {
 	ensureConnectionManager(name);
 }
 
+// Shape a Frappe RPC error payload into a single human-readable line.
+// Frappe surfaces failures in three different shapes depending on what went
+// wrong (server exception, validation throw, network drop, 403 from a stale
+// CSRF token). The silent `error: () => {}` pattern on a frappe.call hides
+// all of these, which is how a stuck pipeline ends up looking identical to
+// "your session expired silently 6 minutes ago" - the bug we just hit.
+//
+// Always pass the error through this so the activity-log message names the
+// real cause, not a generic "Error sending message".
+function frappeCallErrorMessage(err) {
+	if (!err) return __("Request failed (no details). Try refreshing the page.");
+	// Frappe's _server_messages is a JSON-encoded list of {message, indicator,...}
+	if (err._server_messages) {
+		try {
+			const parsed = JSON.parse(err._server_messages);
+			const msgs = (Array.isArray(parsed) ? parsed : []).map((m) => {
+				try { return JSON.parse(m).message; } catch { return m; }
+			}).filter(Boolean);
+			if (msgs.length) return msgs.join(" - ");
+		} catch (_) { /* fall through */ }
+	}
+	if (err.exc_type) return `${err.exc_type}: ${err.message || err.exception || ""}`.trim();
+	if (err.message) return err.message;
+	if (err.statusText) return `HTTP ${err.status || "?"} ${err.statusText}`;
+	if (typeof err === "string") return err;
+	return __("Request failed. Try refreshing the page.");
+}
+
 function ensureConnectionManager(name) {
 	if (!name) return;
 	frappe.call({
@@ -969,7 +997,15 @@ function ensureConnectionManager(name) {
 				armSaturationWatchdog();
 			}
 		},
-		error: () => { /* non-fatal; watchdog will nag if it stays disconnected */ },
+		error: (err) => {
+			// Surface the actual reason. Common cause is a stale browser
+			// session (403) - without this log entry the user just sees
+			// "Connected" pulses and assumes the pipeline is running.
+			addActivity(
+				__("Could not start connection manager: {0}", [frappeCallErrorMessage(err)]),
+				"error",
+			);
+		},
 	});
 }
 
@@ -1187,6 +1223,11 @@ function sendMessage(text, modeOverride) {
 
 	const effectiveMode = (modeOverride || currentMode.value || "auto").toLowerCase();
 
+	// Capture the optimistic bubble we just pushed so the error path can
+	// remove it - otherwise a silent send failure leaves the user's prompt
+	// hanging in the transcript with no follow-up, which is exactly the
+	// stuck-pipeline experience we are trying to eliminate.
+	const optimisticBubble = messages.value[messages.value.length - 1];
 	frappe.call({
 		method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.send_message",
 		args: {
@@ -1194,13 +1235,29 @@ function sendMessage(text, modeOverride) {
 			message: msg,
 			mode: effectiveMode,
 		},
-		error: () => {
+		error: (err) => {
 			isProcessing.value = false;
 			inputDisabled.value = false;
 			statusText.value = __("Error sending message");
 			statusState.value = "error";
 			stopTimer();
 			stopPolling();
+			// Drop the optimistic user bubble - the server didn't accept it,
+			// so showing it as if it were sent is misleading.
+			if (optimisticBubble && messages.value[messages.value.length - 1] === optimisticBubble) {
+				messages.value.pop();
+			}
+			// Loud activity-log entry so the user can see WHY the send failed
+			// (most often a stale browser session = HTTP 403). Pair it with a
+			// clear next-step hint.
+			addActivity(
+				__("Send failed: {0}", [frappeCallErrorMessage(err)]),
+				"error",
+			);
+			addActivity(
+				__("If this keeps happening, refresh the page (Cmd+Shift+R) - your session may have expired."),
+				"error",
+			);
 		},
 	});
 }
@@ -1243,9 +1300,12 @@ function cancelRun() {
 				cancelInFlight.value = false;
 			}, 3000);
 		},
-		error: () => {
+		error: (err) => {
 			cancelInFlight.value = false;
-			addActivity(__("Failed to send cancel request"), "error");
+			addActivity(
+				__("Cancel request failed: {0}", [frappeCallErrorMessage(err)]),
+				"error",
+			);
 		},
 	});
 }
