@@ -615,7 +615,10 @@ function syncRoute() {
 	if (convId && convId !== currentConversation.value) {
 		openConversation(convId);
 	} else if (!convId && currentConversation.value) {
-		// URL was cleared (e.g., browser back button) - go to list
+		// URL was cleared (e.g., browser back button) - go to list. Same
+		// reset contract as goBack so the list view never inherits a
+		// running pipeline's typing/status state.
+		resetChatViewState();
 		currentConversation.value = null;
 		loadConversations();
 	}
@@ -834,23 +837,71 @@ function newConversationWithPrompt(prompt) {
 	});
 }
 
-function openConversation(name) {
-	currentConversation.value = name;
+// Centralized chat-view state reset. Called from every entry/exit path
+// (openConversation, goBack, syncRoute) so neither path can leak the
+// previous conversation's UI state into the next view.
+//
+// Why this exists: an earlier version reset state inline in
+// openConversation but goBack only nulled currentConversation. Exiting a
+// chat with an in-flight pipeline left isProcessing/currentActivity/etc.
+// set, and the next chat (or a freshly created one) showed the typing
+// indicator and agent status pill from the previous run until a hard
+// refresh.
+//
+// Invariant: every ref that drives chat-shell UI (transcript, status pill,
+// preview drawer, input controls, saturation banner) and every long-lived
+// timer/watchdog is listed here. If you add a new chat-view ref, add it
+// here too.
+function resetChatViewState() {
+	// Transcript + activity log
 	messages.value = [];
+	activityLog.value = [];
+	activityLogOpen.value = false;
+
+	// Status pill + activity ticker
+	isProcessing.value = false;
+	currentActivity.value = null;
+	activeAgent.value = null;
+	currentPhase.value = null;
+	completedPhases.value = [];
+	elapsedTime.value = null;
+	statusText.value = __("Ready");
+	statusState.value = "disconnected";
+	connectionState.value = "disconnected";
+	pipelineMode.value = "full";
+	pipelineModeSource.value = "site_config";
+	pillPopoverOpen.value = false;
+	outcomeFlash.value = null;
+	if (outcomeFadeTimer) {
+		clearTimeout(outcomeFadeTimer);
+		outcomeFadeTimer = null;
+	}
+
+	// Preview drawer + changeset
 	changeset.value = null;
 	deploySteps.value = [];
 	isDeployed.value = false;
-	currentPhase.value = null;
-	completedPhases.value = [];
-	activeAgent.value = null;
-	activityLog.value = [];
-	connectionState.value = "disconnected";
-	statusText.value = __("Ready");
-	statusState.value = "disconnected";
 	conversationStatus.value = "";
 	validatingChangeset.value = false;
 	rollbackInFlight.value = false;
+
+	// Input controls
+	inputDisabled.value = false;
+	cancelInFlight.value = false;
+
+	// Saturation banner
+	saturationReason.value = null;
+
+	// Long-lived timers + watchdogs
+	stopTimer();
+	stopPolling();
 	clearDisconnectWatchdog();
+	clearSaturationWatchdog();
+}
+
+function openConversation(name) {
+	resetChatViewState();
+	currentConversation.value = name;
 
 	// Three-mode chat (Phase D): restore the sticky mode for this
 	// conversation from the server-side record so navigating away and
@@ -1083,8 +1134,8 @@ const isCurrentConvOwner = computed(() => {
 });
 
 function goBack() {
+	resetChatViewState();
 	currentConversation.value = null;
-	stopTimer();
 	frappe.set_route("alfred-chat");
 	loadConversations();
 }
