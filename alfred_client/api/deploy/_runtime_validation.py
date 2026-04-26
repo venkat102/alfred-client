@@ -7,10 +7,13 @@ validation but explode at execution time:
     "no imports" check (Frappe runs Server Scripts in a RestrictedPython
     sandbox with no ``__import__``, so an ``import json`` line compiles
     fine but blows up at runtime with a confusing error).
-  - Notification: Jinja syntax via ``frappe.render_template`` on
-    subject/message/condition fields, with a stub doc so legitimate
-    templates like ``{{ doc.employee_name }}`` don't trip a missing-
-    attribute error.
+  - Notification: Jinja parse-only check via
+    ``jinja2.Environment.from_string`` on subject/message/condition.
+    We deliberately do NOT render: parse-time syntax errors are what
+    we care about, rendering against a stub doc would just shake out
+    missing-attribute noise. Using ``jinja2.Environment`` directly
+    avoids ``frappe.render_template`` which catches and re-raises the
+    Jinja2 exception as a Frappe ValidationError.
   - Client Script: loose balanced-brace / parens check (we don't have a
     JS parser at hand; the brace check catches the most common typo
     class).
@@ -26,14 +29,12 @@ from __future__ import annotations
 def _check_runtime_errors(doctype, data):
 	"""Cheap pre-flight checks for errors that only surface at execution time.
 
-	- Server Script: Python syntax via compile()
-	- Notification: Jinja syntax via frappe.render_template() on subject/message/condition
+	- Server Script: Python syntax via ast.parse + no-import walk
+	- Notification: Jinja parse-only via jinja2.Environment.from_string
 	- Client Script: loose regex check for balanced braces
 
 	Returns a list of human-readable issue strings (empty if all ok).
 	"""
-	import frappe
-
 	problems = []
 
 	# --- Server Script: validate syntax + reject `import` ---
@@ -82,23 +83,41 @@ def _check_runtime_errors(doctype, data):
 						"`frappe.make_get_request(url)` instead of `requests`."
 					)
 
-	# --- Notification: render Jinja templates with a stub doc ---
+	# --- Notification: parse Jinja templates (don't render) ---
+	#
+	# IMPORTANT: do NOT use ``frappe.render_template`` here. Frappe's wrapper
+	# catches ``jinja2.TemplateSyntaxError`` internally
+	# (frappe/utils/jinja.py:render_template line 130, ``except TemplateError``)
+	# and re-raises it as a Frappe ``ValidationError`` via ``frappe.throw``.
+	# The Jinja2-typed exception never escapes the wrapper, so an
+	# ``except TemplateSyntaxError`` clause here would never fire - the
+	# broken template was silently swallowed by the trailing
+	# ``except Exception`` and the error then surfaced from the savepoint
+	# path with a different message format that test_deploy::Test 11
+	# could not match.
+	#
+	# We only need to know if the template PARSES, not whether it renders -
+	# parse-time syntax errors are exactly what this check is for. Using
+	# ``jinja2.Environment().from_string(template)`` does pure parsing,
+	# raises the unwrapped Jinja2 exception, and avoids the cost of
+	# evaluating the template against a stub doc.
 	if doctype == "Notification":
-		from jinja2 import TemplateSyntaxError
-		# A dict-like object that returns None for any missing attribute/key,
-		# so legitimate templates like {{ doc.employee_name }} don't trip the check.
-		stub_doc = frappe._dict()
+		from jinja2 import Environment, TemplateSyntaxError
+		env = Environment()
 		for field in ("subject", "message", "condition"):
 			template = data.get(field)
 			if not template or not isinstance(template, str):
 				continue
 			try:
-				frappe.render_template(template, {"doc": stub_doc, "frappe": frappe._dict()})
+				env.from_string(template)
 			except TemplateSyntaxError as e:
 				problems.append(f"Notification '{field}' Jinja syntax error: {e.message} at line {e.lineno}")
 			except Exception:
-				# Runtime errors (missing attribute on stub_doc, KeyError, etc.) are
-				# NOT dry-run failures - we only catch parse-time issues here.
+				# Any other exception during PARSE is an unexpected jinja2
+				# bug or environment issue - swallow it the same way the
+				# original code did. Render-time errors (missing attribute
+				# on a doc field, etc.) cannot occur here because we are
+				# not rendering.
 				pass
 
 	# --- Client Script: loose balanced-brace check ---
