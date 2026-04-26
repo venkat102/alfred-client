@@ -4,7 +4,7 @@ AI-powered assistant that builds Frappe/ERPNext customizations through conversat
 
 ## Key Features
 
-- **Three-mode chat** (feature-flagged via `ALFRED_ORCHESTRATOR_ENABLED=1` on the processing app) - Not every prompt is a build request. An orchestrator classifies each prompt into **Dev** (build and deploy via the 6-agent crew), **Plan** (produce a reviewable plan document via a 3-agent planning crew, no DB writes), **Insights** (read-only Q&A about your current site state, 5-call MCP tool budget, no DB writes), or **Chat** (conversational reply, no crew). Users can force a specific mode via the header switcher; Auto lets the orchestrator decide. Plan mode supports Plan → Dev handoff: clicking *Approve & Build* on a plan doc promotes it into a Dev run with the plan injected as an explicit spec. See [how-alfred-works.md](docs/how-alfred-works.md#chat-modes-and-the-orchestrator).
+- **Three-mode chat** (feature-flagged via `ALFRED_ORCHESTRATOR_ENABLED=1` on the processing app) - Not every prompt is a build request. An orchestrator classifies each prompt into **Dev** (build and deploy via the 6-agent crew), **Plan** (produce a reviewable plan document via a 3-agent planning crew, no DB writes), **Insights** (read-only Q&A about your current site state, 5-call MCP tool budget, no DB writes), or **Chat** (conversational reply, no crew). Users can force a specific mode via the header switcher; Auto lets the orchestrator decide. Plan mode supports Plan → Dev handoff: clicking *Approve & Build* on a plan doc promotes it into a Dev run with the plan injected as an explicit spec. See [how-it-works.md](docs/how-it-works.md#chat-modes-and-the-orchestrator).
 - **Per-intent Builder specialists** (feature-flagged via `ALFRED_PER_INTENT_BUILDERS=1`) - Dev mode's generic Developer agent is swapped for a specialist based on the classified intent. Two specialists ship today: **DocType Builder** (`create_doctype`) and **Report Builder** (`create_report`). Each specialist carries a domain-focused backstory plus a registry-driven checklist of shape-defining fields. Missing or defaulted fields surface in the preview panel as editable "default" pills with rationale tooltips, so the user sees exactly which choices Alfred made vs. which came from the prompt.
 - **Module specialists** (feature-flagged via `ALFRED_MODULE_SPECIALISTS=1`, requires per-intent builders) - cross-cutting domain advisers that inject ERPNext-module-specific conventions into the specialist's prompt before build and validate the output against module conventions after. 11 modules ship today: Accounts, Custom, HR, Stock, Selling, Buying, Manufacturing, Projects, Assets, CRM, Payroll. The preview panel shows a **Module context** badge and a distinct notes section grouped by source module - advisory / warning / blocker severity. Blocker-severity notes from the primary module disable the Deploy button until addressed; warnings and advisories surface but don't gate.
 - **Multi-module classification** (feature-flagged via `ALFRED_MULTI_MODULE=1`, requires module specialists) - detects a primary + up to 2 secondary modules for cross-domain prompts. *"Sales Invoice that auto-creates a Project task"* classifies as primary=Accounts, secondary=[Projects] and merges both modules' permissions (deduped) into the output. Secondary-module blockers are capped to warning so only primary concerns gate deploy. Badge renders as *"Module context: Accounts (with Projects)"*; validation notes render grouped by source module with *(secondary - advisory only)* markers on the secondary groups.
@@ -22,33 +22,23 @@ AI-powered assistant that builds Frappe/ERPNext customizations through conversat
 
 ## Documentation
 
-**New here?** Follow the **[Reading Order](docs/reading-order.md)** — a structured path through every doc in the right order, with time estimates and self-tests at each phase. ~45 minutes to minimum-viable understanding, ~4.5 hours to full coverage.
-
-**Want the narrative first?** Read **[How Alfred Works](docs/how-alfred-works.md)** — a 30-minute end-to-end walkthrough that ties the functional user journey to the technical implementation.
+Alfred ships with **6 docs**, organized by what you're trying to do. Pick the one that matches your intent and read it top to bottom — no reading-order chart needed.
 
 | Document | Who It's For | What It Covers |
 |----------|-------------|---------------|
-| **[Reading Order](docs/reading-order.md)** | Anyone onboarding | Recommended sequence through every doc, grouped into 6 phases (orientation → functional → technical → implementation → operations → specialist). Time estimates, self-tests per phase, goal-based shortcuts. |
-| **[How Alfred Works](docs/how-alfred-works.md)** | Everyone | End-to-end narrative walkthrough. One prompt from Send click to deployed + audited, showing user-visible events AND technical internals side-by-side. Covers first prompt, multi-turn follow-up, approval + deploy, rollback, failure paths, and why the design choices were made. |
-| **[Setup Guide](docs/SETUP.md)** | Admins / DevOps | Installation, configuration, Docker setup, cloud LLM providers, production deployment, backup, monitoring |
-| **[User Guide](docs/user-guide.md)** | End Users | How to use the chat, what each screen shows, conversation walkthrough, error handling, rollback, tips |
-| **[Admin Guide](docs/admin-guide.md)** | Site Admins | Alfred Settings reference, admin portal config, processing app env vars |
-| **[Operations Runbook](docs/operations.md)** | Operators | Service inventory, restart procedures, incident response, key rotation, monitoring checklist |
-| **[Security Model](docs/SECURITY.md)** | Security reviewers / auditors | Trust boundaries, 6-layer permission model, data handling, known risks, production checklist |
-| **[Architecture](docs/architecture.md)** | Developers | System design, agent pipeline, state machine, permission model, Framework KG, data flow |
-| **[API Reference](docs/developer-api.md)** | Developers | REST API, WebSocket protocol, 16 MCP tools (full set; the Insights mode subset is 14), reflection, tracing, state machine internals |
-| **[Data Model](docs/data-model.md)** | Developers | Field-by-field reference for every Alfred DocType + Redis key conventions |
-| **[Debugging Guide](docs/debugging.md)** | Developers | Message flow, step-by-step verification, pipeline tracing, common problems |
-| **[Benchmarking Guide](docs/benchmarking.md)** | Developers | Running the benchmark harness, reading the JSON output, gate thresholds, extending the prompt set |
-| **[Frontend Tests](frontend-tests/README.md)** | Developers | Playwright UI smoke tests (send prompt, preview, approve, rollback). Gated LLM specs under `ALFRED_RUN_SLOW_TESTS=1`. |
-| **[Self-Hosted Guide](docs/self-hosted-guide.md)** | Self-hosters | Quick-start for running your own processing app + Ollama |
+| **[Getting Started](docs/getting-started.md)** | Admins, DevOps, end users | Install + configure + your first chat. The Quick Start at the top is the 5-minute path; the rest is the detailed walkthrough (Frappe site setup, Processing App setup, self-hosted Docker, admin configuration, first conversation). |
+| **[How It Works](docs/how-it-works.md)** | Developers, architects, anyone curious | Concepts + architecture + data flow + glossary + data model. Read this when you want to understand Alfred from the inside. The narrative walk-through traces a single user prompt end-to-end. |
+| **[Developing](docs/developing.md)** | Developers extending Alfred | REST API, WebSocket protocol, the 16 MCP tools, agent + crew internals, pipeline phases, "your first contribution" walkthrough. |
+| **[Running](docs/running.md)** | Operators / on-call | Daily operations, observability, debugging, eight incident-response scenarios, disaster recovery. Jump straight to incident response when you're paged. |
+| **[Security](docs/SECURITY.md)** | Security reviewers, auditors | Trust boundaries, six-layer permission model, data handling, known risks, production checklist. |
+| **[Benchmarking](docs/benchmarking.md)** | Performance engineers | Running the benchmark harness, reading the JSON output, gate thresholds, extending the prompt set. Specialist; only relevant if you're tuning the pipeline. |
 
 **Reading paths:**
-- **New engineer onboarding?** [How Alfred Works](docs/how-alfred-works.md) → [Architecture](docs/architecture.md) → [API Reference](docs/developer-api.md)
-- **Installing Alfred?** [Setup Guide](docs/SETUP.md) → [Admin Guide](docs/admin-guide.md)
-- **Something broken?** [Debugging Guide](docs/debugging.md) → [Operations Runbook](docs/operations.md)
-- **Production deploy?** [Security Model](docs/SECURITY.md) + [Operations Runbook](docs/operations.md)
-- **Just want to chat?** [User Guide](docs/user-guide.md)
+- **Brand new joiner?** [Getting Started](docs/getting-started.md) → [How It Works](docs/how-it-works.md). ~45 min total.
+- **Installing Alfred?** [Getting Started](docs/getting-started.md). Quick Start = 5 min, detailed walkthrough = 30 min.
+- **Making changes to Alfred?** [How It Works](docs/how-it-works.md) → [Developing](docs/developing.md).
+- **Something broken?** [Running](docs/running.md) → debugging section, then incident response.
+- **Production deploy?** [Security](docs/SECURITY.md) + [Running](docs/running.md).
 
 ## Quick Start
 
@@ -60,7 +50,7 @@ bench --site your-site migrate
 bench build --app alfred_client
 ```
 
-Then set up the [Processing App](docs/SETUP.md#part-b-set-up-the-processing-app) and [configure Alfred Settings](docs/SETUP.md#part-c-connect-them-together).
+Then set up the [Processing App](docs/getting-started.md#part-b-set-up-the-processing-app) and [configure Alfred Settings](docs/getting-started.md#part-c-connect-them-together).
 
 ## Development
 

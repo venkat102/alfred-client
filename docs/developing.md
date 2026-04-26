@@ -1,4 +1,28 @@
-# Alfred Developer & API Reference
+# Developing on Alfred
+
+This is the **doc you read when you want to change Alfred itself** — add a new MCP tool, write a new agent, hook into a pipeline phase, or extend the REST/WS protocol.
+
+Sections:
+
+1. **Your first contribution** — concrete file-by-file walkthrough of "add a new MCP tool" (placeholder until Phase 4 of the doc restructure lands the full walkthrough)
+2. **REST API + WebSocket protocol reference** — the contract between the Frappe site, the Processing App, and the browser
+3. **The 16 MCP tools** — what each tool does + how to add a new one
+4. **Agent + crew internals** — backstories, task templates, how to add an agent
+5. **Pipeline phases** — the 12-phase state machine + how to extend it
+6. **Tracing + benchmarking** — see [`benchmarking.md`](benchmarking.md) for the harness
+
+If you've never made a change to Alfred before, start with section 1 once it's filled in. Until then, skim section 3 (MCP tools) — adding a tool is the smallest reasonable first task.
+
+---
+
+# Part 1 — Your First Contribution
+
+> **Placeholder.** Phase 4 of the doc restructure will fill this section with a concrete file-by-file walkthrough of adding a new read-only MCP tool. Until then, the recipes embedded in Part 2 (search for "Adding") cover the same ground less narratively.
+
+---
+
+# Part 2 — Developer Reference (API, MCP, Agents, Phases)
+
 
 ## Processing App REST API
 
@@ -164,7 +188,7 @@ The `mode` field lets the UI force a specific chat mode, overriding the
 orchestrator's automatic classification. When unset or `"auto"`, the
 orchestrator decides. When set to `"dev"`/`"plan"`/`"insights"`, the
 orchestrator skips the LLM classification call and uses the forced mode.
-See [how-alfred-works.md#chat-modes-and-the-orchestrator](how-alfred-works.md#chat-modes-and-the-orchestrator)
+See [how-it-works.md#chat-modes-and-the-orchestrator](how-it-works.md#chat-modes-and-the-orchestrator)
 for the full flow.
 
 ### MCP Dispatch (bidirectional over same WS)
@@ -1111,7 +1135,7 @@ richer tools outperform many narrow ones for agent decision accuracy.
    currently wired - it's the authoritative schema and tests reference it.
 5. Add phase to the UI pipeline in `alfred.js::render_pipeline()` if the new
    agent should appear as a pipeline step.
-6. Update the architecture.md diagram.
+6. Update the how-it-works.md diagram.
 
 ## Adding New Pipeline Phases
 

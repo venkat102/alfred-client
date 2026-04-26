@@ -2,7 +2,7 @@
 
 This document covers Alfred's trust boundaries, authentication, authorization,
 data handling, and how to report a vulnerability. Developers should read the
-[Permission Model section of architecture.md](architecture.md#permission-model)
+[Permission Model section of how-it-works.md](how-it-works.md#permission-model)
 alongside this for the full picture.
 
 ## Reporting a vulnerability
