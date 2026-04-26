@@ -2,17 +2,185 @@
 
 This is the **single doc that explains Alfred from concept to code.** It's organized so you can read it linearly, OR jump to a section based on what you need:
 
-- **Glossary** (start here if you keep seeing terms you don't understand)
-- **30-second pitch** (what Alfred is + the three-process diagram)
-- **Narrative walk-through** (what happens when a user sends a prompt, end to end)
-- **Architecture reference** (the canonical schema: phases, agents, state machine)
-- **Data model** (DocType fields + Redis keys + table relationships)
+- **30-second pitch** — what Alfred is + the three-process diagram
+- **Glossary** — every Alfred-specific term, defined in one line each
+- **Concrete data flow** — step-by-step file-by-file trace of a single user prompt
+- **Narrative walk-through** (Part 1) — the user-facing story
+- **Architecture reference** (Part 2) — canonical schema: phases, agents, state machine
+- **Data model reference** (Part 3) — DocType fields + Redis keys + table relationships
 
 If you're brand new, read top to bottom — ~30-45 minutes. Once you're working in the code, jump to the section you need and use the rest as reference.
 
 ---
 
-> **Note:** The Glossary section below is a placeholder until Phase 2 of the doc restructure adds it. For now, skim the narrative walk-through and ask if any term is unclear.
+## 30-Second Pitch
+
+Alfred is an AI assistant that builds Frappe/ERPNext customizations through conversation. You describe what you need ("add a priority field to ToDo", "build a notification when an Invoice is overdue") and Alfred designs, generates, validates, and deploys it to your live Frappe site.
+
+Under the hood, Alfred runs as **three processes** that talk to each other:
+
+```
+   ┌──────────────────┐         ┌────────────────────┐         ┌────────────────────┐
+   │   Browser (Vue)  │ ◄─────► │  Frappe site       │ ◄─────► │  Processing App    │
+   │  /alfred-chat    │  HTTP   │  alfred_client     │   WS    │  alfred_processing │
+   │                  │  realtime│                    │   pubsub│  (FastAPI + crewAI)│
+   └──────────────────┘         └────────────────────┘         └────────────────────┘
+                                          ▲                              │
+                                          │ MCP JSON-RPC                 │ LLM
+                                          │ (tool calls back into        │ calls
+                                          │  Frappe for live data)       ▼
+                                          │                       ┌──────────────┐
+                                          └───────────────────────│   Ollama /   │
+                                                                  │   Anthropic  │
+                                                                  └──────────────┘
+```
+
+- **Browser**: Vue chat UI (`alfred_client/public/js/alfred_chat/`). Sends prompts, renders agent activity, approves changesets.
+- **Frappe site (`alfred_client`)**: a Frappe app. Owns the chat-page DocTypes (Alfred Conversation, Alfred Message, Alfred Changeset), the durable Redis queue between the browser and the Processing App, and the MCP server that the Processing App calls back into for live site data.
+- **Processing App (`alfred_processing`)**: a separate FastAPI service. Runs the LLM-powered agents (CrewAI under the hood), the orchestrator that picks chat mode (dev / plan / insights / chat), and the dry-run validator. Talks to the Frappe site over a single WebSocket per conversation.
+
+**Why three processes, not one?** The Frappe site is the customer's existing ERPNext install — touching it is sensitive, so the LLM-heavy Processing App lives separately and only ever talks back through a narrow JSON-RPC protocol (MCP, see glossary). This means a hosted Alfred service can run one Processing App that serves many customer Frappe sites, and a customer's Frappe site never has to install heavy AI dependencies.
+
+---
+
+## Glossary
+
+Alfred-specific terms a Frappe-experienced developer would still need defined. One line each.
+
+- **Changeset** — A JSON array of `{op, doctype, data}` items the agents produce as the deployable artifact. `op` is `create` or `update`. Stored in `Alfred Changeset.changes` as JSON. Validated by `dry_run_changeset`, deployed by `apply_changeset`.
+
+- **Connection Manager** — A long-running RQ background job (`alfred_client.api.websocket_client._connection_manager`) on the Frappe side. One per active conversation. Holds a single WebSocket to the Processing App + drains the Redis durable queue. Survives the browser tab disconnecting.
+
+- **Long Queue** — Frappe's `long` RQ queue. The connection manager runs there because the job lives for up to 6300 s (the `alfred_conn_max_lifetime` cap). The default `default` queue is for short jobs; running connection managers there would starve scheduled tasks.
+
+- **MCP** (Model Context Protocol) — A JSON-RPC 2.0 sub-protocol carried over the same WebSocket as chat events. The Processing App's agents need live Frappe data ("does this DocType exist?", "do I have permission to write here?", "validate this changeset against the live DB"). MCP requests flow Processing App → Frappe; MCP responses come back. The 16 tools live in `alfred_client/mcp/tools.py:TOOL_REGISTRY`.
+
+- **Orchestrator** — The mode-classifier in `alfred/orchestrator/mode.py`. On every prompt, it picks one of four modes: `dev` (build + deploy via 6-agent crew), `plan` (3-agent reviewable design doc), `insights` (read-only Q&A, 5-call MCP budget), or `chat` (conversational reply, no crew). Feature-flagged via `ALFRED_ORCHESTRATOR_ENABLED`.
+
+- **The Crew** — The CrewAI sequence of agents that runs in dev mode. Six agents in Full mode: Requirement → Assessment → Architect → Developer → Tester → Deployer. One agent in Lite mode (the Developer alone). Backstories live in `alfred_processing/alfred/agents/backstories.py`.
+
+- **Module Specialist** — A cross-cutting domain adviser (`alfred_processing/alfred/agents/specialists/module_specialist.py`) that injects ERPNext-module-specific conventions before the build phase and validates the output against module rules after. Ships as 13 module knowledge bases + 4 family KBs in `alfred/registry/modules/`. Feature-flagged via `ALFRED_MODULE_SPECIALISTS`.
+
+- **Alfred Plan** — Two meanings, watch context:
+  - The **plan-mode output**: a reviewable design doc produced by the 3-agent Plan crew (no DB writes). The user can click "Approve & Build" to promote it into a Dev run.
+  - The **subscription tier DocType**: `Alfred Plan` is the admin-portal record that tier-locks features (which pipeline mode, which orchestrator flags, which LLMs are available).
+
+- **Dry-Run** — The validation pass that runs before the user sees the changeset preview. `alfred_client.api.deploy.dry_run_changeset` walks every changeset item and either calls `_savepoint_dry_run` (DML-only doctypes — savepoint + rollback) or `_meta_check_only` (DDL-triggering doctypes — never call `.insert()`). Catches mandatory-field misses, link-target validity, fieldname conflicts.
+
+- **The Savepoint Dance** — The two-track validation strategy in `dry_run_changeset`. For doctypes whose `.insert()` is pure DML (Notification, Server Script, etc.), Alfred opens a MariaDB savepoint, calls `.insert()`, then rolls back the savepoint — Frappe's full controller validation runs but the row is gone. For doctypes whose `.insert()` triggers DDL (DocType, Custom Field, Workflow — they `ALTER TABLE` or `CREATE TABLE`), savepoints DON'T work because MariaDB implicitly commits all pending DML before any DDL. Those go through a meta-only path that never calls `.insert()`. The split is enforced by `_DDL_TRIGGERING_DOCTYPES` and `_SAVEPOINT_SAFE_DOCTYPES` in `alfred_client/api/deploy/_constants.py`.
+
+- **Run Evicted** — A sentinel event the Processing App pushes onto the conversation's Redis stream when a new WebSocket connects under the same `conversation_id` and the prior pipeline is being cancelled. The browser UI uses it as a splice point — events before it belong to the cancelled run, events after it belong to the live run.
+
+- **`msg_id` Dedupe** — The client-side guard in `useAlfredRealtime.js` that drops realtime events the UI has already rendered. Catches two bug classes: (a) server resume-replay re-sending events past a stale `last_msg_id` cursor, (b) multi-tab broadcast (Frappe realtime is user-scoped, so every open tab sees every event).
+
+- **`last_msg_id` Cursor** — A per-conversation cache key in `frappe.cache()` (`alfred:last_msg_id:<conv>`, 7-day TTL) that records the most recent event the browser rendered. The connection manager reads this on reconnect and asks the Processing App to replay events newer than the cursor. See `alfred_client/api/websocket_client/_cache.py`.
+
+- **`_acting_as` Context Manager** — A safety helper in `alfred_client/api/deploy/_deployment.py` that wraps every changeset write in `with _acting_as(conversation_owner):`. It snapshots `frappe.session.user` + `session.sid` + `session.data`, calls `frappe.set_user(target)`, runs the wrapped block, and restores the snapshot. Without it, `frappe.set_user()` clobbers the caller's CSRF token + session record, and the next browser AJAX call bounces to login.
+
+- **Disconnected-Session Queue** — A Redis LIST per conversation (`alfred:ws:outbound:queue:<conv>`) that buffers messages while the connection manager is reconnecting. Producers `rpush` to it; the manager drains via `lpop` on (re)connect. Capped at 10000 entries via `LTRIM` so a 24h+ disconnect can't grow it without bound.
+
+- **Pipeline Phases** — The 12-phase state machine in `alfred_processing/alfred/api/pipeline/runner.py` (`PHASES` list). Every dev-mode run walks all 12 in sequence: `sanitize → load_state → warmup → plan_check → orchestrate → enhance → clarify → inject_kb → resolve_mode → build_crew → run_crew → post_crew`. Each phase is its own method on `AgentPipeline`; safety nets (drift / rescue / module-validation) run inside `post_crew`.
+
+- **Per-Intent Builder Specialists** — Feature-flagged specialist agents (`ALFRED_PER_INTENT_BUILDERS`). When the orchestrator classifies the intent as `create_doctype` or `create_report`, the generic Developer is swapped for a domain-focused specialist (DocType Builder / Report Builder) carrying its own backstory + a registry-driven list of expected fields with rationales. Surfaces in the UI as editable "default" pills.
+
+- **Multi-Module Classification** — Feature-flagged extension to module classification (`ALFRED_MULTI_MODULE`). Detects a primary module + up to two secondary modules for cross-domain prompts (e.g., "Sales Invoice that auto-creates a Project task" → primary=Accounts, secondary=[Projects]). Secondary-module blocker severities are capped to warning so only the primary can gate deploy.
+
+- **Framework KG** — The Framework Knowledge Graph: pre-extracted metadata about every installed bench app's DocTypes (mandatory fields, link targets, field types). Built at `bench migrate` time, stored in `alfred_client/mcp/data/framework_kg.json`, queried via the `lookup_doctype` MCP tool. Authoritative answer to "what fields does Sales Invoice have?" without hitting the live meta cache.
+
+- **Insights → Report Handoff** — Feature-flagged mode (`ALFRED_REPORT_HANDOFF`). When the user asks an analytics question in Insights mode and the query is "report-shaped" (tabular, filterable, aggregation-ready), Alfred attaches a "Save as Report" button to the answer. Clicking it fires a Dev-mode turn with `intent=create_report` already set — bypasses re-classification.
+
+---
+
+## Concrete Data Flow
+
+Trace one user prompt from "click Send" to "changeset deployed". Each step names the file that owns it.
+
+```
+1. User clicks Send in /alfred-chat
+        │
+        ▼
+2. Vue calls frappe.call("alfred_client.alfred_settings.page.alfred_chat.alfred_chat.send_message")
+        │  Args: {conversation, message, mode}
+        ▼
+3. send_message() in
+   alfred_client/alfred_settings/page/alfred_chat/alfred_chat.py:198
+        │  - Permission check (alfred_role + write on Alfred Conversation)
+        │  - Insert Alfred Message row (role=user)
+        │  - Push prompt onto Redis durable queue + publish notify
+        │  - Return {name, status, mode}
+        ▼
+4. Connection Manager (long RQ job) drains the queue
+   alfred_client/api/websocket_client/_manager.py:_listen_redis
+        │  - Reads via aioredis from the cache-Redis instance (port 13000)
+        │  - Sends the prompt over the WebSocket to the Processing App
+        ▼
+5. Processing App receives the prompt over WS
+   alfred_processing/alfred/api/websocket/connection.py:_listen_for_messages
+        │  - Authenticated already at handshake (JWT verified)
+        │  - Builds a PipelineContext (alfred/api/pipeline/context.py)
+        │  - Starts AgentPipeline
+        ▼
+6. Pipeline runs 12 phases
+   alfred_processing/alfred/api/pipeline/runner.py:AgentPipeline.run
+        │  sanitize -> load_state -> warmup -> plan_check ->
+        │  orchestrate (mode classifier) -> enhance -> clarify ->
+        │  inject_kb -> resolve_mode -> build_crew -> run_crew -> post_crew
+        ▼
+7. Inside run_crew, the agents call MCP tools
+   alfred_processing/alfred/tools/mcp_client.py
+        │  e.g. dry_run_changeset, lookup_doctype, check_permission
+        │  Sent as JSON-RPC requests over the SAME WebSocket
+        ▼
+8. Frappe side dispatches the MCP request
+   alfred_client/api/websocket_client/_manager.py:_listen_ws
+        │  Calls alfred_client.mcp.server.handle_mcp_request()
+        │  Which routes to the matching @_safe_execute function in
+        │  alfred_client/mcp/tools.py (TOOL_REGISTRY)
+        ▼
+9. MCP response sent back over WS, agent reasoning continues
+        │
+        ▼
+10. Crew produces a changeset (JSON list of changes)
+        │
+        ▼
+11. post_crew safety nets run:
+    alfred_processing/alfred/api/safety_nets/{drift, rescue, backfill,
+                                               report_handoff,
+                                               module_validation,
+                                               empty_changeset}.py
+        │  Each one validates / repairs / annotates the changeset.
+        ▼
+12. Pipeline emits the final 'changeset' event over the WS
+        │
+        ▼
+13. Connection manager routes the event back to the browser
+    alfred_client/api/websocket_client/_routing.py:_route_incoming_message
+        │  - Inserts/updates the Alfred Changeset row with the JSON
+        │  - frappe.publish_realtime('alfred_preview', ...)
+        │  - Caches msg_id + last_msg_id for resume
+        ▼
+14. Browser renders the preview panel
+    alfred_client/public/js/alfred_chat/PreviewPanel.vue
+        │  User reviews and clicks Approve.
+        ▼
+15. Vue calls alfred_client.api.deploy.apply_changeset
+    alfred_client/api/deploy/_deployment.py:apply_changeset
+        │  - Distributed-lock the changeset row (status -> Deploying)
+        │  - with _acting_as(conversation_owner):
+        │      for each change: dry-run again, then insert/update
+        │      All inside a single Frappe transaction.
+        │  - On any failure: rollback whole batch, set status Rolled Back
+        │  - On success: commit, run verify_deployment, set status Deployed
+        ▼
+16. Verification + audit log written
+        │
+        ▼
+17. Browser sees alfred_deploy_complete event, UI flips to "Deployed"
+```
+
+If you internalize one diagram, internalize this one. Every change you'll make to Alfred fits somewhere on this path.
+
+---
 
 # Part 1 — Narrative Walk-Through
 
