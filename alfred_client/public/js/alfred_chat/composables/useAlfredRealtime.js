@@ -127,11 +127,59 @@ export function useAlfredRealtime(deps) {
 
 	let realtimeBound = false;
 
+	// Per-mount dedupe of realtime events by `_msg_id`. The server-side
+	// router in alfred_client/api/websocket_client.py:_route_incoming_message
+	// stamps every published event with the original message envelope's
+	// msg_id; this Set lets us silently drop the same event delivered
+	// twice. Two known bug classes:
+	//   - server resume-replay on reconnect: when the cached
+	//     last_msg_id cursor failed to advance (Redis blip on a
+	//     prior _track_last_msg_id write), the next resume re-sends
+	//     events the client already rendered.
+	//   - multi-tab broadcast: Frappe realtime is user-scoped, so
+	//     every open browser tab for the same user sees every event.
+	//     Without dedupe, two tabs each render the agent_activity
+	//     ticker twice, the connection_status banner flashes twice
+	//     etc. (this was the root cause of the "Connected to
+	//     Processing App x2" entries the user reported earlier).
+	//
+	// Bounded at MAX_SEEN_MSG_IDS so a long-running session can't
+	// grow this set without limit. ULIDs are ~36 chars; 5000 entries
+	// is well under 1MB. When the cap is hit we keep the most-
+	// recently-seen 80% (rough LRU - exact LRU isn't worth the cost
+	// for what's effectively a duplicate-suppression cache).
+	const MAX_SEEN_MSG_IDS = 5000;
+	const seenMsgIds = new Set();
+
+	// Wrapper around frappe.realtime.on that adds the dedupe guard.
+	// Every realtime subscription in this composable goes through it.
+	// New subscriptions: ALWAYS use onDeduped, never frappe.realtime.on
+	// directly - missing the wrap silently re-introduces the duplicate-
+	// delivery bug for that event type.
+	function onDeduped(eventName, handler) {
+		frappe.realtime.on(eventName, (data) => {
+			const msgId = (data && typeof data === "object") ? data._msg_id : null;
+			if (msgId) {
+				if (seenMsgIds.has(msgId)) return;
+				seenMsgIds.add(msgId);
+				if (seenMsgIds.size > MAX_SEEN_MSG_IDS) {
+					// Trim to ~80% by replacing the set with its tail.
+					// Set iteration order is insertion order, so slicing
+					// from the end gives the most-recently-added msgIds.
+					const tail = Array.from(seenMsgIds).slice(-Math.floor(MAX_SEEN_MSG_IDS * 0.8));
+					seenMsgIds.clear();
+					for (const id of tail) seenMsgIds.add(id);
+				}
+			}
+			handler(data);
+		});
+	}
+
 	function setupAlfredRealtime() {
 		if (realtimeBound) return;
 		realtimeBound = true;
 
-		frappe.realtime.on("alfred_connection_status", (data) => {
+		onDeduped("alfred_connection_status", (data) => {
 			if (!currentConversation.value) return;
 			connectionState.value = data.state;
 			const level = (data.state === "failed" || data.state === "reconnecting") ? "error" : "info";
@@ -154,7 +202,7 @@ export function useAlfredRealtime(deps) {
 			}
 		});
 
-		frappe.realtime.on("alfred_agent_status", (data) => {
+		onDeduped("alfred_agent_status", (data) => {
 			if (!currentConversation.value) return;
 			// Capture pipeline mode on first event per run so the UI hides the
 			// 6-phase pipeline in lite mode and shows the "Basic" badge.
@@ -213,7 +261,7 @@ export function useAlfredRealtime(deps) {
 			}
 		});
 
-		frappe.realtime.on("alfred_activity", (data) => {
+		onDeduped("alfred_activity", (data) => {
 			if (!currentConversation.value) return;
 			const text = data.description || data.tool || "";
 			if (!text) return;
@@ -221,7 +269,7 @@ export function useAlfredRealtime(deps) {
 			addActivity(text, "info");
 		});
 
-		frappe.realtime.on("alfred_question", (data) => {
+		onDeduped("alfred_question", (data) => {
 			if (!currentConversation.value) return;
 			isProcessing.value = false;
 			stopTimer();
@@ -237,7 +285,7 @@ export function useAlfredRealtime(deps) {
 			});
 		});
 
-		frappe.realtime.on("alfred_preview", (data) => {
+		onDeduped("alfred_preview", (data) => {
 			if (!currentConversation.value || !data.changeset_name) return;
 			frappe.call({
 				method: "alfred_client.alfred_settings.page.alfred_chat.alfred_chat.get_changeset",
@@ -256,7 +304,7 @@ export function useAlfredRealtime(deps) {
 			});
 		});
 
-		frappe.realtime.on("alfred_error", (data) => {
+		onDeduped("alfred_error", (data) => {
 			if (!currentConversation.value) return;
 			// PIPELINE_BUSY is a soft reject: a previous pipeline is still running
 			// on the same conversation. Don't tear down UI state - just show a toast.
@@ -363,7 +411,7 @@ export function useAlfredRealtime(deps) {
 		//     indicator, warning-level)
 		// Unknown codes default to blue - forward-compatible with new codes
 		// the server may emit before this client is updated.
-		frappe.realtime.on("alfred_info", (data) => {
+		onDeduped("alfred_info", (data) => {
 			if (!currentConversation.value) return;
 			if (!data || !data.code) return;  // malformed payload; silently ignore
 			const message = data.message || __("Info: {0}", [data.code]);
@@ -374,7 +422,7 @@ export function useAlfredRealtime(deps) {
 		// Graceful user-initiated cancel: the processing app emitted run_cancelled
 		// via _send_error because ctx.stop(code="user_cancel") fired. Treat as a
 		// neutral outcome, not an error.
-		frappe.realtime.on("alfred_run_cancelled", (data) => {
+		onDeduped("alfred_run_cancelled", (data) => {
 			if (!currentConversation.value) return;
 			isProcessing.value = false;
 			inputDisabled.value = false;
@@ -407,7 +455,7 @@ export function useAlfredRealtime(deps) {
 		// the preview drawer alone - if there was a pending changeset
 		// it stays visible until the user explicitly approves/rejects
 		// or until a new run produces a fresh one.
-		frappe.realtime.on("alfred_run_evicted", (data) => {
+		onDeduped("alfred_run_evicted", (data) => {
 			if (!currentConversation.value) return;
 			if (data?.conversation_id && data.conversation_id !== currentConversation.value) return;
 			isProcessing.value = false;
@@ -430,13 +478,13 @@ export function useAlfredRealtime(deps) {
 			});
 		});
 
-		frappe.realtime.on("alfred_deploy_progress", (data) => {
+		onDeduped("alfred_deploy_progress", (data) => {
 			if (!currentConversation.value) return;
 			deploySteps.value = [...deploySteps.value.filter((s) => s.step !== data.step), data];
 			addActivity(`Deploy step ${data.step}: ${data.status || "in progress"}`);
 		});
 
-		frappe.realtime.on("alfred_deploy_complete", (data) => {
+		onDeduped("alfred_deploy_complete", (data) => {
 			if (!currentConversation.value) return;
 			stopTimer();
 			isDeployed.value = true;
@@ -451,7 +499,7 @@ export function useAlfredRealtime(deps) {
 			});
 		});
 
-		frappe.realtime.on("alfred_deploy_failed", (data) => {
+		onDeduped("alfred_deploy_failed", (data) => {
 			if (!currentConversation.value) return;
 			stopTimer();
 			inputDisabled.value = false;
@@ -467,7 +515,7 @@ export function useAlfredRealtime(deps) {
 		// ── Three-mode chat (Phase A/B) realtime events ───────────────
 		// chat_reply: conversational short-circuit from the orchestrator
 		// (no crew, no changeset, fast reply).
-		frappe.realtime.on("alfred_chat_reply", (data) => {
+		onDeduped("alfred_chat_reply", (data) => {
 			if (!currentConversation.value || data.conversation !== currentConversation.value) return;
 			isProcessing.value = false;
 			inputDisabled.value = false;
@@ -489,7 +537,7 @@ export function useAlfredRealtime(deps) {
 
 		// insights_reply: read-only Q&A short-circuit (single-agent crew,
 		// markdown output, no changeset).
-		frappe.realtime.on("alfred_insights_reply", (data) => {
+		onDeduped("alfred_insights_reply", (data) => {
 			if (!currentConversation.value || data.conversation !== currentConversation.value) return;
 			isProcessing.value = false;
 			inputDisabled.value = false;
@@ -515,7 +563,7 @@ export function useAlfredRealtime(deps) {
 
 		// mode_switch: orchestrator decision notice. Rendered as a small
 		// inline status line so the user can see what mode Alfred picked.
-		frappe.realtime.on("alfred_mode_switch", (data) => {
+		onDeduped("alfred_mode_switch", (data) => {
 			if (!currentConversation.value || data.conversation !== currentConversation.value) return;
 			messages.value.push({
 				_id: Date.now(),
@@ -536,7 +584,7 @@ export function useAlfredRealtime(deps) {
 		// plan_doc: Phase C plan mode output. Rendered as a structured panel
 		// via MessageBubble -> PlanDocPanel. The user can then click Refine
 		// or Approve & Build.
-		frappe.realtime.on("alfred_plan_doc", (data) => {
+		onDeduped("alfred_plan_doc", (data) => {
 			if (!currentConversation.value || data.conversation !== currentConversation.value) return;
 			isProcessing.value = false;
 			inputDisabled.value = false;

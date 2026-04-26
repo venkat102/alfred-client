@@ -202,6 +202,23 @@ def _route_incoming_message(message, user, conversation_name):
 	event_name = event_map.get(msg_type)
 	if event_name:
 		logger.info("Publishing realtime event: %s -> %s", msg_type, event_name)
+		# Pass the message envelope's msg_id through to the browser as
+		# `_msg_id` on the published data so the client-side dedupe in
+		# useAlfredRealtime can drop duplicates (server resume-replay
+		# re-sending past a stale last_msg_id cursor; same realtime
+		# payload arriving in multiple browser tabs because Frappe
+		# realtime is broadcast user-scoped not connection-scoped).
+		# Only when data is actually a dict - some processing-side
+		# events ship null / scalar payloads, those don't carry the
+		# `_msg_id` key but their volume is small enough that any
+		# duplicates are harmless.
+		envelope_msg_id = message.get("msg_id")
+		if envelope_msg_id and isinstance(data, dict):
+			# Mutate in place: the dict came from json.loads and is
+			# not shared. The downstream resume-tracker (a few lines
+			# below) reads `message.get("msg_id")` from the envelope,
+			# not from data, so this addition doesn't disturb it.
+			data["_msg_id"] = envelope_msg_id
 		frappe.publish_realtime(event_name, data, user=user, after_commit=False)
 
 	# Track last_msg_id for resume-on-reconnect. Only stash msg_ids of
