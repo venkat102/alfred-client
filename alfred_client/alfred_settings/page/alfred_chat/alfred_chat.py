@@ -245,7 +245,11 @@ def send_message(conversation, message, mode="auto"):
 	try:
 		import uuid as _uuid
 
-		from alfred_client.api.websocket_client import _REDIS_CHANNEL_PREFIX, start_conversation
+		from alfred_client.api.websocket_client import (
+			_DISCONNECTED_QUEUE_MAX_LEN,
+			_REDIS_CHANNEL_PREFIX,
+			start_conversation,
+		)
 
 		# Ensure the connection manager is running for this conversation
 		start_conversation(conversation)
@@ -263,6 +267,10 @@ def send_message(conversation, message, mode="auto"):
 		redis_conn = frappe.cache()
 		queue_key = f"{_REDIS_CHANNEL_PREFIX}queue:{conversation}"
 		redis_conn.rpush(queue_key, redis_msg)
+		# Cap the disconnected-session queue so a long-disconnected
+		# conversation can't grow unbounded. See the constant's docstring
+		# in alfred_client/api/websocket_client.py for the rationale.
+		redis_conn.ltrim(queue_key, -_DISCONNECTED_QUEUE_MAX_LEN, -1)
 		# Also publish for immediate delivery if manager is already listening
 		channel = f"{_REDIS_CHANNEL_PREFIX}{conversation}"
 		redis_conn.publish(channel, redis_msg)

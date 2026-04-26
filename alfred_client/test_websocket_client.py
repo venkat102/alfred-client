@@ -25,7 +25,9 @@ import frappe
 import jwt as pyjwt
 
 from alfred_client.api.websocket_client import (
+	_DISCONNECTED_QUEUE_MAX_LEN,
 	_LAST_MSG_ID_TTL_SECONDS,
+	_REDIS_CHANNEL_PREFIX,
 	_generate_jwt,
 	_get_site_id,
 	_last_msg_id_key,
@@ -150,6 +152,65 @@ def run_tests():
 		f"site_id {site_id!r} contains chars the processing app rejects",
 	)
 	print("  PASSED\n")
+
+	# ── _DISCONNECTED_QUEUE_MAX_LEN + LTRIM cap ──────────────────────
+
+	print("Test 9: disconnected-session queue is bounded by LTRIM cap...")
+	# Sanity check on the constant itself first - if someone "tunes" it
+	# down to 0 by mistake the LTRIM would wipe the queue on every push.
+	_assert(
+		_DISCONNECTED_QUEUE_MAX_LEN >= 100,
+		f"Cap shrank dangerously low: {_DISCONNECTED_QUEUE_MAX_LEN}",
+	)
+
+	# Use a unique convo name so the test doesn't collide with real
+	# disconnected-session queues if anyone runs it on a live site.
+	test_convo = f"alfred-test-cap-{int(time.time())}"
+	queue_key = f"{_REDIS_CHANNEL_PREFIX}queue:{test_convo}"
+	redis_conn = frappe.cache()
+	# Use a small synthetic cap rather than the production 10k - the
+	# contract under test is "rpush + ltrim(-CAP, -1) bounds the list at
+	# CAP and preserves the newest entries", which is independent of the
+	# specific CAP value. Pushing 10k+ entries one at a time would make
+	# this test slow without adding signal. The constant assertion above
+	# guards against the production value being misconfigured to 0.
+	test_cap = 50
+	excess = 5
+	total = test_cap + excess
+	try:
+		for i in range(total):
+			redis_conn.rpush(queue_key, f"msg-{i}")
+		# Apply the same LTRIM the production sites do, just with a
+		# smaller bound for the synthetic queue.
+		redis_conn.ltrim(queue_key, -test_cap, -1)
+
+		length = redis_conn.llen(queue_key)
+		_assert(
+			length == test_cap,
+			f"Queue length after LTRIM should be {test_cap}, got {length}",
+		)
+
+		# Newest entries preserved, oldest dropped. The first surviving
+		# entry should be msg-{excess} (the first that wasn't trimmed).
+		head = redis_conn.lrange(queue_key, 0, 0)
+		expected_head = f"msg-{excess}"
+		_assert(
+			head and head[0].decode() == expected_head,
+			f"Oldest surviving entry should be {expected_head!r}, got {head}",
+		)
+		# Last entry is the latest pushed.
+		tail = redis_conn.lrange(queue_key, -1, -1)
+		expected_tail = f"msg-{total - 1}"
+		_assert(
+			tail and tail[0].decode() == expected_tail,
+			f"Newest entry should be {expected_tail!r}, got {tail}",
+		)
+		print("  PASSED\n")
+	finally:
+		try:
+			redis_conn.delete(queue_key)
+		except Exception:
+			pass
 
 	print("=== All websocket_client helper tests passed ===\n")
 
