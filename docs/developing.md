@@ -11,13 +11,208 @@ Sections:
 5. **Pipeline phases** — the 12-phase state machine + how to extend it
 6. **Tracing + benchmarking** — see [`benchmarking.md`](benchmarking.md) for the harness
 
-If you've never made a change to Alfred before, start with section 1 once it's filled in. Until then, skim section 3 (MCP tools) — adding a tool is the smallest reasonable first task.
+If you've never made a change to Alfred before, start with section 1. Adding an MCP tool exercises the same set of files as 80% of contributions: Frappe-side function definition, MCP registry, the WS dispatch path, and a unit test. Once you've done one, you understand the contract.
 
 ---
 
 # Part 1 — Your First Contribution
 
-> **Placeholder.** Phase 4 of the doc restructure will fill this section with a concrete file-by-file walkthrough of adding a new read-only MCP tool. Until then, the recipes embedded in Part 2 (search for "Adding") cover the same ground less narratively.
+This walkthrough adds a new read-only MCP tool called **`get_doctype_count`**: a tool that takes a DocType name and returns the row count, respecting the caller's permissions. It's a 30-line change across two files plus a one-line registry edit and a unit test. ~20 minutes start to finish.
+
+It also doubles as a reference for any future tool you add: copy this structure, swap the function body, register the new name.
+
+## What you're building
+
+```python
+# A processing-side agent calls (over MCP):
+#   get_doctype_count("Sales Invoice")
+# And gets back:
+#   {"doctype": "Sales Invoice", "count": 1247}
+#
+# Or, if the caller has no read permission:
+#   {"error": "permission_denied", "message": "..."}
+```
+
+## Step 1 — Define the function (`alfred_client/mcp/tools.py`)
+
+Open `alfred_client/mcp/tools.py`. Every existing tool is a top-level function decorated with `@_safe_execute` (look at `get_doctypes` or `check_has_records` for templates).
+
+Add your function near the other read-only count helpers:
+
+```python
+@_safe_execute
+def get_doctype_count(doctype):
+	"""Return the number of records the caller can read for a DocType.
+
+	Permission-scoped: respects Frappe's row-level read permissions
+	via the user's session. A user without read access on the target
+	DocType will see permission_denied; one with row-level filters
+	(e.g. "only see your own customer records") will see the count
+	of rows they can actually access, not the global total.
+
+	Args:
+		doctype: The DocType name (e.g. "Sales Invoice").
+
+	Returns:
+		{"doctype": <name>, "count": <int>} on success.
+		{"error": "permission_denied", "message": "..."} if the user
+		lacks read access. Other failures bubble up as the
+		_safe_execute decorator's standard error envelope.
+	"""
+	# 1. Permission gate (fail-fast with a clear error code the agent
+	#    can render). frappe.has_permission returns False on no-read.
+	if not frappe.has_permission(doctype, "read"):
+		return {
+			"error": "permission_denied",
+			"message": f"You do not have read permission on {doctype!r}",
+		}
+
+	# 2. frappe.db.count goes through Frappe's permission_query_conditions
+	#    hook automatically, so the count respects row-level rules
+	#    (e.g. "Customer = current user's customer"). No manual filtering.
+	count = frappe.db.count(doctype)
+	return {"doctype": doctype, "count": int(count)}
+```
+
+What `@_safe_execute` does: catches every exception below it, wraps it in `{"error": "internal_error", "message": str(exc)}`, and prevents one bad tool call from crashing the dispatch loop. You don't need a `try/except` inside your function — the decorator owns it.
+
+## Step 2 — Register the tool (same file, `TOOL_REGISTRY` dict)
+
+Scroll to the bottom of `alfred_client/mcp/tools.py`. There's a `TOOL_REGISTRY` dict at the very end:
+
+```python
+TOOL_REGISTRY = {
+    "get_site_info": get_site_info,
+    "get_doctypes": get_doctypes,
+    # ... existing tools ...
+    "lookup_frappe_knowledge": lookup_frappe_knowledge,
+}
+```
+
+Add ONE line for your new tool:
+
+```python
+TOOL_REGISTRY = {
+    # ... existing tools ...
+    "lookup_frappe_knowledge": lookup_frappe_knowledge,
+    "get_doctype_count": get_doctype_count,   # <-- add this
+}
+```
+
+The dispatcher (`alfred_client/mcp/server.py:_handle_tools_call`) looks up the tool by name in this dict. Without the registry entry, the processing app's `tools/list` request won't see your tool, and a `tools/call` for it returns "method not found".
+
+That's it for the Frappe side. Two edits in one file.
+
+## Step 3 — Make agents aware (`alfred_processing/alfred/tools/mcp_tools.py`)
+
+The processing-app agents don't auto-discover new MCP tools — they each have a curated tool list scoped to what's safe for their role. Open `alfred_processing/alfred/tools/mcp_tools.py` and find the `build_mcp_tools()` function. It builds CrewAI `@tool` wrappers around each MCP method and groups them by agent role:
+
+```python
+insights_tools = [
+    lookup_doctype, lookup_pattern, lookup_frappe_knowledge,
+    get_site_info, get_doctypes, get_existing_customizations,
+    get_site_customization_detail, get_user_context,
+    check_permission, has_active_workflow, check_has_records,
+    get_list, run_query, validate_name_available,
+]
+```
+
+To expose your tool to the Insights agent (read-only Q&A), add a `@tool`-decorated wrapper near the other read-only ones, then add the symbol to the `insights_tools` list:
+
+```python
+@tool
+def get_doctype_count(doctype: str) -> str:
+    """Return the count of records the user can read for a DocType.
+
+    Use for questions like "how many customers do we have?", "count of
+    open invoices". Respects per-user permissions and any row-level
+    filters that apply.
+
+    Returns: JSON {"doctype": ..., "count": N} or a permission_denied error.
+    """
+    return _mcp_call(mcp_client, "get_doctype_count", {"doctype": doctype})
+```
+
+Then in the `insights_tools` list, append `get_doctype_count`. (Add to the dev-mode tool list too if it's also useful during build — but for a read-only count, Insights is the natural home.)
+
+## Step 4 — Smoke test on the live site
+
+```bash
+cd /path/to/frappe-bench
+bench --site dev.alfred execute alfred_client.mcp.tools.get_doctype_count --kwargs '{"doctype": "DocType"}'
+```
+
+Expected output (the count of DocTypes on your site):
+
+```
+{'doctype': 'DocType', 'count': 968}
+```
+
+Try a permission-denied case (DocType you don't have access to):
+
+```bash
+bench --site dev.alfred execute alfred_client.mcp.tools.get_doctype_count --kwargs '{"doctype": "User"}'
+# As Administrator you'll see a count; as a non-Admin you'll see:
+# {'error': 'permission_denied', 'message': "You do not have read permission on 'User'"}
+```
+
+## Step 5 — Add a regression test
+
+Find `alfred_client/test_mcp.py`. There's a `run_tests()` function that exercises a handful of tools. Add a test:
+
+```python
+print("Test N: get_doctype_count returns a positive int for a doctype the user reads...")
+result = get_doctype_count("DocType")
+_assert(result.get("doctype") == "DocType", f"Wrong doctype echo: {result!r}")
+_assert(isinstance(result.get("count"), int) and result["count"] > 0,
+        f"Expected positive int count, got {result!r}")
+print("  PASSED\n")
+```
+
+Run it:
+
+```bash
+bench --site dev.alfred execute alfred_client.test_mcp.run_tests
+```
+
+## Step 6 — Verify it shows up in the chat
+
+This is the integration test. Open `/alfred-chat`, send a prompt like:
+
+> *"How many customers do we have?"*
+
+Watch the agent activity ticker. If the orchestrator routes to Insights mode and the agent picks the right tool, you'll see:
+
+> *Calling get_doctype_count("Customer")...*
+
+The activity ticker proves your tool is wired end-to-end: agent picked it, MCP request fired over WS, dispatch hit your function, response routed back, ticker rendered.
+
+## Step 7 — Commit
+
+```bash
+cd /path/to/frappe-bench/apps/alfred_client
+git add alfred_client/mcp/tools.py alfred_client/test_mcp.py
+git commit -m "feat(mcp): add get_doctype_count tool for permission-scoped row counts"
+```
+
+If your tool is also exposed to processing-side agents (Step 3), commit that separately in the alfred_processing repo.
+
+## What you learned
+
+In ~30 lines of code you've exercised:
+
+- The Frappe-side MCP tool definition pattern (`@_safe_execute` + `frappe.has_permission` + a clear error envelope).
+- The tool registry contract (one dict entry per tool).
+- The processing-side tool exposure pattern (`@tool` wrapper + agent-role tool list).
+- The smoke + integration testing path (`bench execute`, then a real chat).
+
+Every other tool in the codebase follows the same pattern. Read three or four of them and you'll have the full mental model.
+
+## Common variations
+
+- **A tool that takes a more complex argument** (a JSON spec, a list, a dict) — see `run_query` for a pattern that accepts a JSON-encoded spec, validates it via Pydantic, then calls the appropriate Frappe API.
+- **A tool that writes data** — start from `dry_run_changeset` (which is read-only validation) for the structure, but understand the security implications first: writes need the `_acting_as(conversation_owner)` context manager and per-item permission checks. Most tools should be read-only; if you think you need a write tool, ask first.
+- **A tool the Architect or Tester agents use** — same pattern as Step 3, just append to the `architect_tools` or `tester_tools` list instead of (or in addition to) `insights_tools`.
 
 ---
 
