@@ -142,6 +142,59 @@ Any conversations that are mid-pipeline during the rotation window will
 fail with `Invalid API key` and need to be retried. Plan rotations for a
 low-activity window.
 
+### Rotate `JWT_SIGNING_KEY` (recommended once you're past initial setup)
+
+By default, the Processing App uses `API_SECRET_KEY` for **both** the
+service-level Bearer auth (REST API) AND the per-user JWT signing
+(WebSocket handshakes + REST `X-Alfred-JWT` header). That's the legacy
+shared-key mode - if either key leaks, both surfaces are forgeable.
+
+`JWT_SIGNING_KEY` lets you separate them: a leak of `API_SECRET_KEY`
+no longer lets an attacker forge JWTs, and rotating either one in
+isolation works.
+
+**The processing app warns at every startup** as long as
+`JWT_SIGNING_KEY` is empty:
+
+```
+JWT_SIGNING_KEY is not set - falling back to API_SECRET_KEY for JWT
+verification (legacy shared-key mode). A leak of either key
+compromises both. Set JWT_SIGNING_KEY to a distinct 32+ byte secret
+to enable full key separation.
+```
+
+Rotation procedure:
+
+```bash
+# 1. Generate a new key (must be 32+ bytes AND distinct from API_SECRET_KEY)
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+
+# 2. Add it to the processing app's .env
+vim alfred_processing/.env
+#    JWT_SIGNING_KEY=<new value>
+
+# 3. Restart the processing app
+docker compose restart processing    # or your native restart command
+
+# 4. The next user prompt will mint a JWT signed with the new key.
+#    The processing app's verify path uses JWT_SIGNING_KEY first,
+#    falls back to API_SECRET_KEY, so old in-flight JWTs (signed
+#    with API_SECRET_KEY before the rotation) keep working until
+#    they expire (default: 24 h).
+```
+
+**Both transports use the same fallback chain** (`alfred/middleware/auth.py`'s
+`resolve_jwt_signing_key()`). REST and WebSocket handshakes verify
+identically - if you ever see only one transport rejecting tokens,
+file a bug, that's the C1 regression class.
+
+**Frappe-side coordination**: the alfred_client app generates JWTs
+locally for the WS handshake using the value the user pastes into
+Alfred Settings.api_key. That field is `API_SECRET_KEY`'s peer (the
+service Bearer); it's NOT a JWT signing key. So enabling
+`JWT_SIGNING_KEY` on the processing side is unilateral - the Frappe
+side doesn't need a coordinated change.
+
 ### Rotate the admin service key
 
 ```bash
@@ -1056,7 +1109,7 @@ frappe INFO: approve_changeset: deploying <name> with N operation(s) for user <e
 
 | Pitfall | Symptom | Root cause |
 |---------|---------|------------|
-| Wrong Redis instance | Messages queued but never drained | `websocket_client.py` must use `redis_cache` (port 13000), not `redis_queue` (port 11000) |
+| Wrong Redis instance | Messages queued but never drained | the websocket_client package must use `redis_cache` (port 13000), not `redis_queue` (port 11000) |
 | Missing key prefix | Queue depth stuck at 1 | `frappe.cache().rpush()` auto-prefixes keys with `<db_name>\|` but raw `aioredis.lpop()` doesn't - the consumer must include the prefix |
 | site_id has special chars | `site_id contains invalid characters` | `_get_site_id()` must return bare site name (`dev.alfred`), not full URL (`http://dev.alfred:8000`) |
 | No long worker | Jobs pile up, nothing executes | Procfile needs `worker_long` entry with `--queue long` |
@@ -1065,7 +1118,7 @@ frappe INFO: approve_changeset: deploying <name> with N operation(s) for user <e
 | MCP calls hang for 30s then TimeoutError | Cross-loop future resolution broken | `MCPClient` must be constructed with `main_loop=asyncio.get_running_loop()` in the WS handler; see `alfred/api/websocket.py:_authenticate_handshake` |
 | "Basic" badge stuck on, can't switch | Plan override active | Check admin portal's `check_plan` response - if it returns `pipeline_mode=lite`, the site setting is overridden. Look for `source=plan` in the Pipeline mode resolved log line. |
 | `pipeline_mode` always `null` in check_plan response | Plan DocType missing the field | Run `bench migrate` on the admin site - the `pipeline_mode` field is a recent addition to `Alfred Plan`. Existing plans keep the default `full` until you change them. |
-| Workflow "deployed" during dry-run (shouldn't commit) | Legacy dry-run path calling `.insert()` on DDL doctypes | Fixed: `_dry_run_single` now routes DDL-triggering doctypes through `_meta_check_only` which never calls `.insert()`. If you're on an older build, rerun `bench migrate` and verify `_DDL_TRIGGERING_DOCTYPES` exists in `alfred_client/api/deploy.py`. |
+| Workflow "deployed" during dry-run (shouldn't commit) | Legacy dry-run path calling `.insert()` on DDL doctypes | Fixed: `_dry_run_single` now routes DDL-triggering doctypes through `_meta_check_only` which never calls `.insert()`. If you're on an older build, rerun `bench migrate` and verify `_DDL_TRIGGERING_DOCTYPES` exists in `alfred_client/api/deploy/ (package; was a 1077-line monolith pre-TD-L1)`. |
 | Preview shows old changeset after sending new prompt | Polling/realtime race | The UI's `currentPromptSentAt` cutoff should reject this; if it still happens, check that `get_latest_changeset` / `get_changeset` return `creation` field |
 | Activity ticker stuck showing last tool call | Pipeline timed out without sending completion | Client-side stuck timeout (10 min) should recover; check for "Pipeline stalled" in the chat |
 | Developer emits 5 repeated JSON arrays with `<|im_start|>` tokens | qwen retry loop during dry-run self-heal | `_extract_changes` now uses `JSONDecoder.raw_decode` to pick the first well-formed block and strips chat-template leakage; the retry task has `developer.max_iter = 3`. Both should land together - check `_CHAT_TEMPLATE_LEAKAGE` regex exists in `alfred/api/websocket.py`. |
@@ -1298,7 +1351,7 @@ an `insights_reply` WebSocket message -> `alfred_insights_reply` realtime
 event -> an `Alfred Message` row with `message_type="text"` and
 `metadata.mode="insights"`. If the UI renders it as a dev-mode reply,
 the connection manager's `event_map` in
-`alfred_client/api/websocket_client.py` is probably stale.
+`alfred_client/api/websocket_client/ (package; was a 1023-line monolith pre-TD-L1)` is probably stale.
 
 **Query insights turns in the trace**:
 

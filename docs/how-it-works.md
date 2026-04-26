@@ -690,8 +690,13 @@ async def _run_agent_pipeline(conn, conversation_id, prompt):
 ```
 
 The real work happens in `AgentPipeline.run()`, which iterates through
-9 named phases. Each phase is a method, auto-wrapped in a tracer span,
-and the orchestrator centralises error handling.
+**12 named phases** (the actual `PHASES` list in
+`alfred_processing/alfred/api/pipeline/runner.py`):
+`sanitize → load_state → warmup → plan_check → orchestrate → enhance →
+clarify → inject_kb → resolve_mode → build_crew → run_crew → post_crew`.
+Each phase is a method on `AgentPipeline`, auto-wrapped in a tracer span,
+with centralised error handling. The narrative below walks the
+representative ones - it doesn't enumerate every phase line by line.
 
 ### Step 4: Pipeline phase 1 - `sanitize`
 
@@ -1257,7 +1262,7 @@ important safety feature in Alfred.
 The tool runs on the Frappe side:
 
 ```python
-# alfred_client/api/deploy.py
+# alfred_client/api/deploy/ (package; was a 1077-line monolith pre-TD-L1)
 def dry_run_changeset(changes):
     for i, change in enumerate(changes):
         doctype = change["doctype"]
@@ -2281,10 +2286,11 @@ exception -> `PIPELINE_ERROR`. Every phase is unit-testable in isolation.
 ### Dry-run validation: where the DDL vs savepoint split lives
 
 The processing app calls `dry_run_changeset` as a single MCP tool; the decision
-about HOW to validate each item happens on the **client (Frappe) side**, in
-`alfred_client/alfred_client/api/deploy.py`. This is a deliberate split:
+about HOW to validate each item happens on the **client (Frappe) side**, in the
+`alfred_client/api/deploy/` package (`_routing.py` + `_semantic_checks.py` +
+`_runtime_validation.py`). This is a deliberate split:
 
-- **Processing side** (`alfred_processing/alfred/api/websocket.py:_dry_run_with_retry`)
+- **Processing side** (`alfred_processing/alfred/api/websocket/pipeline_stages.py:_dry_run_with_retry`)
   makes one MCP call with the full changeset and gets back
   `{valid, status, issues, validated}`. It does NOT classify items by
   doctype. It only attaches the `status` tag to distinguish `ok` /
