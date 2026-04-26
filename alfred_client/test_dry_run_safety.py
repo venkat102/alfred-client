@@ -25,6 +25,14 @@ def run_tests():
 		_SAVEPOINT_SAFE_DOCTYPES,
 		_dry_run_single,
 	)
+	# After the TD-L1 split, _meta_check_only and _savepoint_dry_run live in
+	# the _routing submodule. Test 3 below monkeypatches them to verify the
+	# dispatch logic; the patch must hit the SUBMODULE because Python resolves
+	# bare-name calls inside _routing._dry_run_single against _routing's own
+	# globals dict, not against the package re-export. Patching
+	# alfred_client.api.deploy._meta_check_only would have no effect on the
+	# call made from inside _routing.
+	from alfred_client.api.deploy import _routing as _deploy_routing
 
 	# ── 1. The two sets must be disjoint. A doctype can't be in both or ──
 	#     routing becomes ambiguous.
@@ -50,8 +58,8 @@ def run_tests():
 	#     NOT _savepoint_dry_run.
 	print("Test 3: DocType routes to meta-check only (never calls .insert)...")
 	calls = {"meta": 0, "savepoint": 0}
-	orig_meta = _deploy._meta_check_only
-	orig_sp = _deploy._savepoint_dry_run
+	orig_meta = _deploy_routing._meta_check_only
+	orig_sp = _deploy_routing._savepoint_dry_run
 
 	def fake_meta(dt, data, op):
 		calls["meta"] += 1
@@ -59,8 +67,8 @@ def run_tests():
 	def fake_sp(dt, data, op):
 		calls["savepoint"] += 1
 
-	_deploy._meta_check_only = fake_meta
-	_deploy._savepoint_dry_run = fake_sp
+	_deploy_routing._meta_check_only = fake_meta
+	_deploy_routing._savepoint_dry_run = fake_sp
 	try:
 		_dry_run_single("DocType", {"name": "Test DT", "module": "Core"}, "create")
 		assert calls["meta"] == 1, "DocType must route to _meta_check_only"
@@ -98,8 +106,8 @@ def run_tests():
 		assert calls["savepoint"] == 0
 		print("  PASSED\n")
 	finally:
-		_deploy._meta_check_only = orig_meta
-		_deploy._savepoint_dry_run = orig_sp
+		_deploy_routing._meta_check_only = orig_meta
+		_deploy_routing._savepoint_dry_run = orig_sp
 
 	# ── 4. End-to-end: dry-running a DocType creation must not leak the row.
 	#     (Even if we routed to savepoint, DDL would commit it.)
