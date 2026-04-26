@@ -186,6 +186,14 @@ def _route_incoming_message(message, user, conversation_name):
 		# event. Separate event so the UI can render it as a neutral system
 		# message, not an error banner.
 		"run_cancelled": "alfred_run_cancelled",
+		# Reconnect eviction sentinel: the processing app pushes this onto
+		# the conversation's event stream when a new WS connects under the
+		# same conversation_id and the prior pipeline is being cancelled
+		# (see alfred_processing/alfred/api/websocket/connection.py). The
+		# client treats it as a splice point - any in-flight UI state
+		# from the cancelled run is stale and the resume-replay path
+		# should ignore events before it.
+		"run_evicted": "alfred_run_evicted",
 		# Non-blocking info notices from the processing app: CLARIFIER_LATE_RESPONSE,
 		# MEMORY_SAVE_FAILED, and similar. UI renders as a subtle toast.
 		"info": "alfred_info",

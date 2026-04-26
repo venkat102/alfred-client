@@ -394,6 +394,42 @@ export function useAlfredRealtime(deps) {
 			});
 		});
 
+		// Reconnect eviction sentinel: the processing app pushed this on
+		// the conversation's event stream when a NEW WS connection took
+		// over this conversation_id and the prior pipeline was cancelled.
+		// Both browser tabs (the old one being superseded + the new one
+		// taking over) see this event because Frappe's realtime is
+		// user-scoped. Either way, in-flight pipeline state from the
+		// prior session is now stale and the UI must drop it.
+		//
+		// We intentionally DO NOT clear messages.value here: those are
+		// the DB-persisted transcript and remain valid. We also leave
+		// the preview drawer alone - if there was a pending changeset
+		// it stays visible until the user explicitly approves/rejects
+		// or until a new run produces a fresh one.
+		frappe.realtime.on("alfred_run_evicted", (data) => {
+			if (!currentConversation.value) return;
+			if (data?.conversation_id && data.conversation_id !== currentConversation.value) return;
+			isProcessing.value = false;
+			inputDisabled.value = false;
+			cancelInFlight.value = false;
+			currentActivity.value = null;
+			stopTimer();
+			stopPolling();
+			statusText.value = __("Session resumed");
+			statusState.value = "disconnected";
+			addActivity(
+				__("Run superseded by a new session for this conversation"),
+				"info",
+			);
+			messages.value.push({
+				_id: Date.now(),
+				role: "system",
+				message_type: "status",
+				content: __("Session resumed - the previous run was superseded."),
+			});
+		});
+
 		frappe.realtime.on("alfred_deploy_progress", (data) => {
 			if (!currentConversation.value) return;
 			deploySteps.value = [...deploySteps.value.filter((s) => s.step !== data.step), data];
