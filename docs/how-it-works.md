@@ -53,7 +53,7 @@ Alfred-specific terms a Frappe-experienced developer would still need defined. O
 
 - **Long Queue** — Frappe's `long` RQ queue. The connection manager runs there because the job lives for up to 6300 s (the `alfred_conn_max_lifetime` cap). The default `default` queue is for short jobs; running connection managers there would starve scheduled tasks.
 
-- **MCP** (Model Context Protocol) — A JSON-RPC 2.0 sub-protocol carried over the same WebSocket as chat events. The Processing App's agents need live Frappe data ("does this DocType exist?", "do I have permission to write here?", "validate this changeset against the live DB"). MCP requests flow Processing App → Frappe; MCP responses come back. The 16 tools live in `alfred_client/mcp/tools.py:TOOL_REGISTRY`.
+- **MCP** (Model Context Protocol) — A JSON-RPC 2.0 sub-protocol carried over the same WebSocket as chat events. The Processing App's agents need live Frappe data ("does this DocType exist?", "do I have permission to write here?", "validate this changeset against the live DB"). MCP requests flow Processing App → Frappe; MCP responses come back. The 20 tools live in `alfred_client/mcp/tools.py:TOOL_REGISTRY`.
 
 - **Orchestrator** — The mode-classifier in `alfred/orchestrator/mode.py`. On every prompt, it picks one of four modes: `dev` (build + deploy via 6-agent crew), `plan` (3-agent reviewable design doc), `insights` (read-only Q&A, 5-call MCP budget), or `chat` (conversational reply, no crew). Feature-flagged via `ALFRED_ORCHESTRATOR_ENABLED`.
 
@@ -282,7 +282,7 @@ Three processes, three trust boundaries.
 │  - Persistence: Alfred         │
 │    Conversation / Message /    │
 │    Changeset / Audit Log       │
-│  - MCP server (14 tools) that  │
+│  - MCP server (20 tools) that  │
 │    reads the live site        │
 │  - Deployment engine           │
 │  - Connection manager:         │
@@ -1256,8 +1256,29 @@ changeset itself.
 ## Dry-run: the safety net
 
 The Developer produced a changeset. Before Alice sees it, the pipeline
-runs the `dry_run_changeset` MCP tool. This is the single most
-important safety feature in Alfred.
+runs **two** validators in sequence:
+
+1. **`validate_changeset` (static pre-check).** Cheap, no DB writes, no
+   transaction. Walks each changeset item and flags the four hallucination
+   classes: `unknown_field`, `duplicate_field`, `invalid_permlevel`,
+   `unknown_parent_doctype`, `missing_mandatory`, `bad_link_target`,
+   `fieldtype_options_mismatch`. A critical verdict short-circuits to the
+   retry path without touching `dry_run_changeset` — the savepoint round-trip
+   is wasted if we already know the changeset references a fieldname that
+   doesn't exist. If the pre-check itself errors (infra failure), we skip
+   it and fall through to the savepoint dry-run; never block on infra.
+
+2. **`dry_run_changeset` (savepoint round-trip).** This is the single most
+   important safety feature in Alfred — it actually attempts the inserts
+   under a savepoint and rolls back. Catches everything the static pre-check
+   can't: link-target validity, controller-level validation, naming-rule
+   conflicts.
+
+Both share the same `state.dry_run_retries` budget (max 1). A failure from
+either triggers the same self-heal task: re-run the Developer agent with
+the issues injected as context, get a corrected changeset, validate again.
+
+The savepoint validator runs on the Frappe side:
 
 The tool runs on the Frappe side:
 

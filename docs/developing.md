@@ -6,7 +6,7 @@ Sections:
 
 1. **Your first contribution** — concrete file-by-file walkthrough of "add a new MCP tool" (placeholder until Phase 4 of the doc restructure lands the full walkthrough)
 2. **REST API + WebSocket protocol reference** — the contract between the Frappe site, the Processing App, and the browser
-3. **The 16 MCP tools** — what each tool does + how to add a new one
+3. **The 20 MCP tools** — what each tool does + how to add a new one
 4. **Agent + crew internals** — backstories, task templates, how to add an agent
 5. **Pipeline phases** — the 12-phase state machine + how to extend it
 6. **Tracing + benchmarking** — see [`benchmarking.md`](benchmarking.md) for the harness
@@ -408,7 +408,7 @@ thread executor would lose the thread-local and run calls as Administrator.
 
 ---
 
-## MCP Tools Reference (16 tools)
+## MCP Tools Reference (20 tools)
 
 All tools callable via JSON-RPC 2.0 over WebSocket. Tool count + descriptions
 must stay in sync with `alfred_client/mcp/tools.py::TOOL_REGISTRY` - adding or
@@ -446,6 +446,10 @@ Response: {"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "t
 | `lookup_doctype` | 1b | name, layer | Merged framework/site view of a doctype |
 | `lookup_pattern` | 1b | query, kind | Curated customization pattern(s) |
 | `lookup_frappe_knowledge` | 1c | query, kind?, k? | Frappe KB entries (rules / APIs / idioms / style) matching the query. Keyword search; the processing side adds semantic. |
+| `get_doctype_context` | 2 | doctype | Layered meta the Developer needs before generating a field-touching changeset: standard fields + custom fields + property setters + workflow + one-hop linked DocTypes. Each field carries a `source` tag (standard / custom / property_setter). |
+| `get_doctype_perms` | 2 | doctype | Role x permlevel matrix for one DocType (DocPerm + Custom DocPerm rows), plus the permlevels actually in use and those declared on fields. Used for role/permission-shaped tasks. |
+| `find_field` | 2 | doctype, fieldname_hint, top_k? | Deterministic difflib match for a hinted fieldname. Returns `exact_match` (or null) and a list of `candidates` ranked by confidence. Walks child-table fields too. |
+| `validate_changeset` | 3 | changeset (list or JSON string) | Static schema pre-check before the savepoint dry-run. Catches `unknown_field`, `duplicate_field`, `invalid_permlevel`, `unknown_parent_doctype`, `missing_mandatory`, `bad_link_target`, `fieldtype_options_mismatch`. Cheap; no DB writes. |
 
 ### `lookup_doctype` details
 
@@ -629,6 +633,49 @@ Response:
 
 Error shapes: `invalid_spec` (with `issues` list),
 `blocked_doctype`, `permission_denied`, `query_failed`.
+
+### Schema grounding tools
+
+Four tools (`get_doctype_context`, `get_doctype_perms`, `find_field`,
+`validate_changeset`) exist to address the dominant Developer-agent failure
+mode: **right shape, wrong details**. The Architect picks the right primitive
+(Custom Field vs Property Setter vs DocPerm) but the Developer hallucinates
+fieldnames, permlevels, parent paths because its only reference is its
+training-data memory of Frappe — stale and site-blind.
+
+The fix is grounding: feed the agent real `frappe.get_meta()` output before
+generation, so it chooses fieldnames from a known list rather than inventing
+them. Choosing from a list is dramatically more reliable than open-ended
+generation.
+
+Wire-up summary:
+
+| Step | Tool | Purpose |
+|------|------|---------|
+| Before generating | `get_doctype_context(target)` | Confirms standard + custom field list, fieldtypes, permlevels, parent. Each field tagged with its source. |
+| Permission-shaped tasks | `get_doctype_perms(target)` | Role x permlevel matrix; lets the agent reuse existing permlevels rather than invent new ones. |
+| Uncertain fieldname | `find_field(target, hint)` | Deterministic difflib match. Resolves typos ("priorty" → "priority"). |
+| Before Final Answer | `validate_changeset(changeset)` | Static pre-check that catches the four hallucination classes (`unknown_field`, `duplicate_field`, `invalid_permlevel`, `unknown_parent_doctype`) without a savepoint round-trip. |
+
+The pipeline's `_dry_run_with_retry` (in
+`alfred_processing/alfred/api/websocket/pipeline_stages.py`) calls
+`validate_changeset` automatically before the savepoint dry-run; a critical
+pre-check verdict short-circuits to the same retry path the savepoint failure
+uses, sharing the `state.dry_run_retries` budget (max 1). Pre-check infra
+failures fall through to the savepoint dry-run and never block.
+
+**No caching layer.** All four tools read live state via Frappe's own
+`get_meta()` cache (Redis-backed, invalidated by Frappe's own `on_update`
+hooks). A second cache in the processing app would break that invalidation
+chain. The deploy path adds a defensive `frappe.clear_cache(doctype=...)`
+after meta-affecting writes (Custom Field, Property Setter, DocPerm,
+Workflow) so that follow-up tool calls within the same agent run see the
+post-deploy state.
+
+Permission scoping is automatic: each tool calls `frappe.has_permission(doctype,
+"read")` first, and the MCP transport already wraps every call in
+`frappe.set_user(conversation.user)` at handshake time. Reads only — no
+permission elevation.
 
 ### Insights mode tool subset (Phase B)
 
