@@ -22,7 +22,7 @@ def run_tests():
 	# Insights phase added get_list (simple record lookup) and run_query
 	# (structured aggregation + joins).
 	# Keep this set in sync with TOOL_REGISTRY in alfred_client/mcp/tools.py.
-	print("Test 1: tools/list returns all 16 tools...")
+	print("Test 1: tools/list returns all 20 tools...")
 	response = handle_mcp_request({
 		"jsonrpc": "2.0",
 		"method": "tools/list",
@@ -48,6 +48,8 @@ def run_tests():
 		"get_site_customization_detail",
 		# Insights: record listing + structured query
 		"get_list", "run_query",
+		# Schema grounding: layered meta + perms + fuzzy field + static validator
+		"get_doctype_context", "get_doctype_perms", "find_field", "validate_changeset",
 	}
 	assert tool_names == expected_tools, f"Expected {expected_tools}, got {tool_names}"
 	# Every tool must carry a non-empty docstring so agents can decide when
@@ -480,6 +482,206 @@ def run_tests():
 		if frappe.db.exists("Server Script", test_script_name):
 			frappe.delete_doc("Server Script", test_script_name, force=True)
 			frappe.db.commit()
+	print("  PASSED\n")
+
+	# ── Schema grounding tests ───────────────────────────────────────
+
+	# Test 23: get_doctype_context returns layered fields with source tags.
+	# Set up a Custom Field on ToDo and assert it comes back tagged "custom",
+	# while the standard `priority` field is tagged "standard".
+	print("Test 23: get_doctype_context returns layered fields with source tags...")
+	test_cf_name = "ToDo-alfred_test_cf"
+	if frappe.db.exists("Custom Field", test_cf_name):
+		frappe.delete_doc("Custom Field", test_cf_name, force=True)
+		frappe.db.commit()
+	frappe.get_doc({
+		"doctype": "Custom Field",
+		"dt": "ToDo",
+		"fieldname": "alfred_test_cf",
+		"label": "Alfred Test CF",
+		"fieldtype": "Data",
+	}).insert(ignore_permissions=True)
+	frappe.db.commit()
+	try:
+		response = handle_mcp_request({
+			"jsonrpc": "2.0",
+			"method": "tools/call",
+			"params": {"name": "get_doctype_context",
+			            "arguments": {"doctype": "ToDo"}},
+			"id": 27,
+		})
+		content = json.loads(response["result"]["content"][0]["text"])
+		assert content.get("doctype") == "ToDo"
+		fields_by_name = {f["fieldname"]: f for f in content.get("fields", [])}
+		assert "alfred_test_cf" in fields_by_name, "custom field missing from output"
+		assert fields_by_name["alfred_test_cf"]["source"] == "custom"
+		assert "priority" in fields_by_name, "standard 'priority' field missing"
+		assert fields_by_name["priority"]["source"] == "standard"
+		assert content["custom_field_count"] >= 1
+		assert isinstance(content.get("linked_doctypes"), list)
+		print(f"  custom_field_count={content['custom_field_count']}, "
+		      f"field_count={content['field_count']}")
+	finally:
+		if frappe.db.exists("Custom Field", test_cf_name):
+			frappe.delete_doc("Custom Field", test_cf_name, force=True)
+			frappe.db.commit()
+	print("  PASSED\n")
+
+	# Test 24: get_doctype_perms returns the role x permlevel matrix.
+	print("Test 24: get_doctype_perms returns permlevels and role rows...")
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "get_doctype_perms", "arguments": {"doctype": "ToDo"}},
+		"id": 28,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("doctype") == "ToDo"
+	assert isinstance(content.get("perms"), list) and content["perms"], \
+		"ToDo must have at least one DocPerm row"
+	assert 0 in content.get("permlevels_in_use", []), \
+		"permlevel 0 must be in use on ToDo"
+	# Every perm row must have role + permlevel + source
+	for p in content["perms"]:
+		assert "role" in p and "permlevel" in p and "source" in p
+		assert p["source"] in {"standard", "custom"}
+	print(f"  perms={len(content['perms'])}, "
+	      f"permlevels_in_use={content['permlevels_in_use']}")
+	print("  PASSED\n")
+
+	# Test 25: find_field exact + fuzzy match.
+	print("Test 25: find_field exact + fuzzy...")
+	# Exact match
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "find_field",
+		            "arguments": {"doctype": "ToDo", "fieldname_hint": "priority"}},
+		"id": 29,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("exact_match") is not None, "exact match missing"
+	assert content["exact_match"]["fieldname"] == "priority"
+
+	# Fuzzy: typo
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "find_field",
+		            "arguments": {"doctype": "ToDo", "fieldname_hint": "priorty"}},
+		"id": 30,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("exact_match") is None, "typo should not exact-match"
+	candidates = content.get("candidates", [])
+	assert candidates, "fuzzy candidates missing for 'priorty'"
+	# 'priority' should be the top candidate with high confidence
+	top = candidates[0]
+	assert top["fieldname"] == "priority", f"expected priority, got {top['fieldname']}"
+	assert top["confidence"] >= 0.8, f"low confidence {top['confidence']}"
+	print(f"  exact match for 'priority' OK; fuzzy 'priorty' -> "
+	      f"'{top['fieldname']}' conf={top['confidence']}")
+	print("  PASSED\n")
+
+	# Test 26: validate_changeset flags duplicate field on ToDo.priority.
+	print("Test 26: validate_changeset duplicate_field...")
+	dup_changeset = [
+		{"op": "create", "doctype": "Custom Field", "data": {
+			"doctype": "Custom Field",
+			"dt": "ToDo",
+			"fieldname": "priority",  # already exists as a standard field
+			"label": "Priority",
+			"fieldtype": "Data",
+		}}
+	]
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "validate_changeset",
+		            "arguments": {"changeset": dup_changeset}},
+		"id": 31,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("valid") is False, "duplicate field must invalidate"
+	codes = {iss["code"] for iss in content.get("issues", [])}
+	assert "duplicate_field" in codes, f"expected duplicate_field, got {codes}"
+	# Severity must be critical for duplicates.
+	dup_issues = [i for i in content["issues"] if i["code"] == "duplicate_field"]
+	assert dup_issues[0]["severity"] == "critical"
+	print(f"  flagged duplicate_field on item_index={dup_issues[0]['item_index']}")
+	print("  PASSED\n")
+
+	# Test 27: validate_changeset flags unknown parent DocType.
+	print("Test 27: validate_changeset unknown_parent_doctype...")
+	bad_parent = [
+		{"op": "create", "doctype": "Custom Field", "data": {
+			"doctype": "Custom Field",
+			"dt": "Alfred Nonexistent DocType XYZ",
+			"fieldname": "foo",
+			"fieldtype": "Data",
+		}}
+	]
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "validate_changeset",
+		            "arguments": {"changeset": bad_parent}},
+		"id": 32,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("valid") is False
+	codes = {iss["code"] for iss in content.get("issues", [])}
+	assert "unknown_parent_doctype" in codes, \
+		f"expected unknown_parent_doctype, got {codes}"
+	print("  PASSED\n")
+
+	# Test 28: validate_changeset flags out-of-range permlevel.
+	print("Test 28: validate_changeset invalid_permlevel...")
+	bad_permlevel = [
+		{"op": "create", "doctype": "Custom DocPerm", "data": {
+			"doctype": "Custom DocPerm",
+			"parent": "ToDo",
+			"parenttype": "DocType",
+			"role": "System Manager",
+			"permlevel": 99,  # out of 0-9 range
+			"read": 1,
+		}}
+	]
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "validate_changeset",
+		            "arguments": {"changeset": bad_permlevel}},
+		"id": 33,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("valid") is False
+	codes = {iss["code"] for iss in content.get("issues", [])}
+	assert "invalid_permlevel" in codes, f"expected invalid_permlevel, got {codes}"
+	print("  PASSED\n")
+
+	# Test 29: validate_changeset accepts a clean changeset.
+	print("Test 29: validate_changeset valid changeset returns valid=True...")
+	good_changeset = [
+		{"op": "create", "doctype": "Custom Field", "data": {
+			"doctype": "Custom Field",
+			"dt": "ToDo",
+			"fieldname": "alfred_brand_new_field",
+			"label": "Alfred Brand New Field",
+			"fieldtype": "Data",
+		}}
+	]
+	response = handle_mcp_request({
+		"jsonrpc": "2.0",
+		"method": "tools/call",
+		"params": {"name": "validate_changeset",
+		            "arguments": {"changeset": good_changeset}},
+		"id": 34,
+	})
+	content = json.loads(response["result"]["content"][0]["text"])
+	assert content.get("valid") is True, \
+		f"clean changeset rejected: {content.get('issues')}"
+	assert content.get("checked") == 1
 	print("  PASSED\n")
 
 	print("=== All MCP Server Tests PASSED ===\n")

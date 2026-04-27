@@ -28,6 +28,17 @@ from frappe import _
 from alfred_client.api.deploy._rollback import _write_audit_log
 
 
+# DocTypes whose successful insert/update should trigger a defensive meta
+# cache clear on the affected target. Frappe's own on_update hooks already
+# clear meta for these, so this is paranoid-correct - it costs O(few ms)
+# and prevents a follow-up tool call within the same agent run from reading
+# stale meta if any hook regresses.
+_META_AFFECTING_DOCTYPES = {
+	"Custom Field", "Property Setter", "DocType",
+	"DocPerm", "Custom DocPerm", "Workflow",
+}
+
+
 # ── Safe context-switch helper ───────────────────────────────────
 #
 # frappe.set_user() is destructive: frappe/__init__.py:366 sets
@@ -203,6 +214,20 @@ def apply_changeset(changeset_name):
 					})
 				else:
 					raise ValueError(f"Unknown operation: {operation}")
+
+				# Belt-and-braces meta cache clear. Frappe's own on_update
+				# hooks for Custom Field / Property Setter / DocPerm already
+				# trigger this, but a redundant call costs O(few ms) and
+				# prevents stale-meta misreads by a follow-up tool call (e.g.
+				# get_doctype_context) within the same agent run.
+				if doctype in _META_AFFECTING_DOCTYPES:
+					target = data.get("dt") or data.get("doc_type") \
+						or data.get("parent") or data.get("name")
+					if target and isinstance(target, str):
+						try:
+							frappe.clear_cache(doctype=target)
+						except Exception:
+							pass  # never let a cache clear break a deploy
 
 				execution_log.append({
 					"step": step,

@@ -790,6 +790,550 @@ def lookup_frappe_knowledge(query, kind=None, k=3):
 	return {"entries": results, "mode": "search", "query": query}
 
 
+# ── Tier 2: Schema Grounding (richer meta for the Developer agent) ──
+#
+# These tools exist because the Developer agent's dominant failure mode is
+# "right shape, wrong details" - it picks the right primitive (Custom Field
+# vs Property Setter vs DocPerm) but hallucinates fieldnames, types,
+# permlevels, parent paths. The fix is grounding: feed the agent real
+# get_meta() output so it chooses fieldnames from a known list rather than
+# inventing them. All four tools read live site state via Frappe's own
+# meta cache - no second cache layer.
+
+# Frappe's allowed permlevels in practice: documented as 0-9.
+_VALID_PERMLEVELS = set(range(10))
+
+# Frappe core fieldtypes. Sourced from frappe/core/doctype/docfield/docfield.json
+# fieldtype Select options. Used to flag obvious "Tex" / "Strng" typos.
+_VALID_FIELDTYPES = {
+	"Attach", "Attach Image", "Autocomplete", "Barcode", "Button", "Check",
+	"Code", "Color", "Column Break", "Currency", "Data", "Date", "Datetime",
+	"Duration", "Dynamic Link", "Float", "Fold", "Geolocation",
+	"Heading", "HTML", "HTML Editor", "Icon", "Image", "Int", "JSON",
+	"Link", "Long Text", "Markdown Editor", "Password",
+	"Percent", "Phone", "Read Only", "Rating", "Section Break", "Select",
+	"Signature", "Small Text", "Tab Break", "Table", "Table MultiSelect",
+	"Text", "Text Editor", "Time",
+}
+
+
+def _field_to_dict(f, source: str) -> dict:
+	"""Serialize a meta DocField row, tagging where it came from."""
+	return {
+		"fieldname": f.fieldname,
+		"fieldtype": f.fieldtype,
+		"label": f.label or "",
+		"options": f.options or "",
+		"reqd": int(f.reqd or 0),
+		"permlevel": int(f.permlevel or 0),
+		"in_list_view": int(f.in_list_view or 0),
+		"read_only": int(f.read_only or 0),
+		"hidden": int(f.hidden or 0),
+		"depends_on": f.depends_on or "",
+		"mandatory_depends_on": getattr(f, "mandatory_depends_on", "") or "",
+		"insert_after": getattr(f, "insert_after", None),
+		"source": source,
+	}
+
+
+@_safe_execute
+def get_doctype_context(doctype):
+	"""Layered meta the Developer agent needs before generating a field-touching
+	changeset. Reuses frappe.get_meta() so DocField + Custom Field + Property
+	Setter layering is correct - no reimplementation.
+
+	Returns standard fields, custom fields, property setters, workflow (if any),
+	and one-hop linked DocTypes. Each field carries a `source` tag
+	(standard/custom/property_setter).
+
+	Errors: invalid_argument, not_found, permission_denied (read-permission gate).
+	"""
+	if not doctype or not isinstance(doctype, str):
+		return {"error": "invalid_argument", "message": "doctype must be a non-empty string"}
+
+	if not frappe.db.exists("DocType", doctype):
+		return {"error": "not_found", "message": f"DocType {doctype!r} not found"}
+
+	if not frappe.has_permission(doctype, "read"):
+		return {"error": "permission_denied",
+				"message": f"No read permission on {doctype!r}"}
+
+	meta = frappe.get_meta(doctype)
+
+	# Build a set of fieldnames from the bench-shipped DocType JSON so we can
+	# tag fields that arrived via Custom Field. frappe.get_meta merges DocField
+	# + Custom Field rows into a single field list, but doesn't preserve origin.
+	# Query the underlying tables to recover the source.
+	standard_fieldnames = {
+		row["fieldname"] for row in frappe.get_all(
+			"DocField",
+			filters={"parent": doctype, "parenttype": "DocType"},
+			fields=["fieldname"],
+			limit_page_length=0,
+		) if row.get("fieldname")
+	}
+	custom_fieldnames = {
+		row["fieldname"] for row in frappe.get_all(
+			"Custom Field",
+			filters={"dt": doctype},
+			fields=["fieldname"],
+			limit_page_length=0,
+		) if row.get("fieldname")
+	}
+
+	fields = []
+	custom_field_count = 0
+	for f in meta.fields:
+		if not f.fieldname:
+			continue
+		if f.fieldname in custom_fieldnames:
+			source = "custom"
+			custom_field_count += 1
+		elif f.fieldname in standard_fieldnames:
+			source = "standard"
+		else:
+			# Field exists in meta but not in either source table - typically
+			# a virtual field added via property setter or run-time injection.
+			source = "property_setter"
+		fields.append(_field_to_dict(f, source))
+
+	# Property Setters (overrides on this DocType - not new fields, but property
+	# changes like "make field X reqd=1"). Surfacing these helps the agent see
+	# why a field's behaviour differs from the framework default.
+	property_setters = frappe.get_all(
+		"Property Setter",
+		filters={"doc_type": doctype},
+		fields=["property", "value", "field_name"],
+		limit_page_length=200,
+	)
+
+	# Workflow (Frappe allows only one active per DocType, but list all to flag
+	# inactive ones the agent might otherwise propose to recreate).
+	workflow_names = frappe.get_all(
+		"Workflow",
+		filters={"document_type": doctype},
+		pluck="name",
+		limit_page_length=5,
+	)
+	workflow = None
+	if workflow_names:
+		try:
+			wf = frappe.get_doc("Workflow", workflow_names[0])
+			workflow = {
+				"name": wf.name,
+				"is_active": int(getattr(wf, "is_active", 0) or 0),
+				"workflow_state_field": getattr(wf, "workflow_state_field", None),
+				"states": [
+					{"state": st.state,
+					 "doc_status": str(st.doc_status) if st.doc_status is not None else "0",
+					 "allow_edit": st.allow_edit}
+					for st in (wf.states or [])
+				],
+				"transitions": [
+					{"state": tr.state, "action": tr.action,
+					 "next_state": tr.next_state, "allowed": tr.allowed}
+					for tr in (wf.transitions or [])
+				],
+			}
+		except Exception:
+			workflow = None
+
+	# One-hop linked DocTypes (Link + Table fieldtypes). The agent uses this
+	# to know "if I touch the customer field on Sales Order, the link target
+	# is Customer".
+	linked_doctypes = []
+	for f in meta.fields:
+		if f.fieldtype in {"Link", "Table", "Table MultiSelect", "Dynamic Link"} and f.options:
+			linked_doctypes.append({"fieldname": f.fieldname, "options": f.options})
+
+	return {
+		"doctype": doctype,
+		"module": meta.module,
+		"is_submittable": int(meta.is_submittable or 0),
+		"is_single": int(meta.issingle or 0),
+		"naming_rule": meta.autoname or "",
+		"fields": fields,
+		"property_setters": property_setters,
+		"workflow": workflow,
+		"linked_doctypes": linked_doctypes,
+		"field_count": len(fields),
+		"custom_field_count": custom_field_count,
+	}
+
+
+@_safe_execute
+def get_doctype_perms(doctype):
+	"""DocPerm + Custom DocPerm matrix for one DocType, plus permlevels in use.
+
+	Returns the role x perm matrix the Developer needs when the prompt
+	mentions roles or permlevels (e.g. "only HR Manager can write notes").
+
+	Errors: invalid_argument, not_found, permission_denied.
+	"""
+	if not doctype or not isinstance(doctype, str):
+		return {"error": "invalid_argument", "message": "doctype must be a non-empty string"}
+
+	if not frappe.db.exists("DocType", doctype):
+		return {"error": "not_found", "message": f"DocType {doctype!r} not found"}
+
+	if not frappe.has_permission(doctype, "read"):
+		return {"error": "permission_denied",
+				"message": f"No read permission on {doctype!r}"}
+
+	# Standard DocPerms ship with the DocType JSON; Custom DocPerms are
+	# site-local overrides. Both feed Frappe's permission system at runtime.
+	perm_fields = [
+		"role", "permlevel", "read", "write", "create", "delete",
+		"submit", "cancel", "amend", "report", "export", "import_",
+		"share", "print", "email", "if_owner",
+	]
+
+	def _row(p, source):
+		out = {"role": p.get("role"), "permlevel": int(p.get("permlevel") or 0),
+			   "source": source}
+		# Coerce all flag columns to int 0/1 - some come back as bool, some as None.
+		for col in ("read", "write", "create", "delete", "submit", "cancel",
+					"amend", "report", "export", "share", "print", "email",
+					"if_owner"):
+			out[col] = int(p.get(col) or 0)
+		# DB column is `import_` (Python keyword clash); expose as `import` to agents.
+		out["import"] = int(p.get("import_") or 0)
+		return out
+
+	std_rows = frappe.get_all(
+		"DocPerm",
+		filters={"parent": doctype, "parenttype": "DocType"},
+		fields=perm_fields,
+		limit_page_length=0,
+	)
+	custom_rows = frappe.get_all(
+		"Custom DocPerm",
+		filters={"parent": doctype, "parenttype": "DocType"},
+		fields=perm_fields,
+		limit_page_length=0,
+	)
+
+	perms = [_row(p, "standard") for p in std_rows] + \
+			[_row(p, "custom") for p in custom_rows]
+
+	permlevels_in_use = sorted({p["permlevel"] for p in perms})
+
+	# Permlevels declared on actual fields - these are the ones an agent can
+	# legitimately reference in a new DocPerm row. A permlevel that no field
+	# uses is essentially dead.
+	meta = frappe.get_meta(doctype)
+	field_permlevels = sorted({int(f.permlevel or 0) for f in meta.fields})
+
+	return {
+		"doctype": doctype,
+		"perms": perms,
+		"permlevels_in_use": permlevels_in_use,
+		"valid_permlevels_for_fields": field_permlevels,
+	}
+
+
+@_safe_execute
+def find_field(doctype, fieldname_hint, top_k=3):
+	"""Fuzzy-match a hinted fieldname against live meta. Deterministic;
+	difflib-based; no LLM, no embeddings. Includes child-table fields.
+
+	Returns:
+	  {"doctype": str, "hint": str,
+	   "exact_match": {fieldname, fieldtype, label, source} | None,
+	   "candidates": [{fieldname, fieldtype, label, source, confidence}]}
+
+	Errors: invalid_argument, not_found, permission_denied.
+	"""
+	import difflib
+
+	if not doctype or not isinstance(doctype, str):
+		return {"error": "invalid_argument", "message": "doctype must be a non-empty string"}
+	if not fieldname_hint or not isinstance(fieldname_hint, str):
+		return {"error": "invalid_argument", "message": "fieldname_hint must be a non-empty string"}
+
+	if not frappe.db.exists("DocType", doctype):
+		return {"error": "not_found", "message": f"DocType {doctype!r} not found"}
+	if not frappe.has_permission(doctype, "read"):
+		return {"error": "permission_denied",
+				"message": f"No read permission on {doctype!r}"}
+
+	try:
+		top_k = max(1, min(int(top_k or 3), 10))
+	except (TypeError, ValueError):
+		top_k = 3
+
+	meta = frappe.get_meta(doctype)
+	custom_fieldnames = {
+		row["fieldname"] for row in frappe.get_all(
+			"Custom Field", filters={"dt": doctype},
+			fields=["fieldname"], limit_page_length=0,
+		) if row.get("fieldname")
+	}
+
+	# Walk fields on this doctype + every Table/Table MultiSelect child target
+	# so a hint like "qty" resolves on Sales Order Item, not just Sales Order.
+	candidates = []
+	def _push(f, parent_doctype):
+		source = "custom" if f.fieldname in custom_fieldnames else "standard"
+		candidates.append({
+			"fieldname": f.fieldname,
+			"fieldtype": f.fieldtype,
+			"label": f.label or "",
+			"source": source,
+			"_parent": parent_doctype,
+		})
+
+	for f in meta.fields:
+		if not f.fieldname:
+			continue
+		_push(f, doctype)
+		if f.fieldtype in {"Table", "Table MultiSelect"} and f.options:
+			try:
+				if frappe.db.exists("DocType", f.options):
+					child_meta = frappe.get_meta(f.options)
+					for cf in child_meta.fields:
+						if cf.fieldname:
+							_push(cf, f.options)
+			except Exception:
+				continue
+
+	hint_norm = fieldname_hint.strip().lower().replace("-", "_").replace(" ", "_")
+
+	# Exact match wins regardless of fuzzy ranking.
+	exact_match = None
+	for c in candidates:
+		if c["fieldname"].lower() == hint_norm:
+			exact_match = {k: v for k, v in c.items() if not k.startswith("_")}
+			break
+
+	# Fuzzy ranking: difflib ratio against fieldname + label tokens.
+	scored = []
+	for c in candidates:
+		fn_ratio = difflib.SequenceMatcher(None, hint_norm, c["fieldname"].lower()).ratio()
+		lbl_norm = c["label"].lower().replace(" ", "_") if c["label"] else ""
+		lbl_ratio = difflib.SequenceMatcher(None, hint_norm, lbl_norm).ratio() if lbl_norm else 0.0
+		conf = max(fn_ratio, lbl_ratio)
+		if conf > 0.4:  # cheap relevance floor
+			out = {k: v for k, v in c.items() if not k.startswith("_")}
+			out["confidence"] = round(conf, 3)
+			scored.append(out)
+
+	scored.sort(key=lambda x: x["confidence"], reverse=True)
+	return {
+		"doctype": doctype,
+		"hint": fieldname_hint,
+		"exact_match": exact_match,
+		"candidates": scored[:top_k],
+	}
+
+
+def _validate_one_change(item: dict, item_index: int, issues: list) -> None:
+	"""Append issues found in a single changeset entry to ``issues``.
+
+	Static checks only - no DB writes, no transaction. Catches the four
+	hallucination classes the Developer hits: unknown_field, duplicate_field,
+	invalid_permlevel, unknown_parent_doctype, missing_mandatory,
+	bad_link_target, fieldtype_options_mismatch.
+	"""
+	op = item.get("op") or item.get("operation") or ""
+	doctype = item.get("doctype") or ""
+	data = item.get("data") or {}
+
+	def _add(code: str, message: str, severity: str = "critical",
+			 fix_hint: str | None = None) -> None:
+		issues.append({
+			"severity": severity,
+			"item_index": item_index,
+			"doctype": doctype,
+			"code": code,
+			"message": message,
+			"fix_hint": fix_hint,
+		})
+
+	# Custom Field: parent + fieldname collision check
+	if doctype == "Custom Field" and op == "create":
+		parent = data.get("dt")
+		fieldname = data.get("fieldname")
+		fieldtype = data.get("fieldtype")
+		if not parent:
+			_add("missing_mandatory", "Custom Field 'data.dt' is required",
+				 fix_hint="Set data.dt to the target DocType name.")
+			return
+		if not frappe.db.exists("DocType", parent):
+			_add("unknown_parent_doctype",
+				 f"Parent DocType {parent!r} does not exist on this site",
+				 fix_hint="Use a real DocType name. Try get_doctypes() to browse.")
+			return
+		if not fieldname:
+			_add("missing_mandatory", "Custom Field 'data.fieldname' is required")
+			return
+		if fieldtype and fieldtype not in _VALID_FIELDTYPES:
+			_add("fieldtype_options_mismatch",
+				 f"fieldtype {fieldtype!r} is not a valid Frappe field type",
+				 fix_hint=f"Pick from: Data, Link, Select, Int, Float, Check, Date, Datetime, Text, ...")
+		# Check for collision with existing field (standard or custom).
+		try:
+			parent_meta = frappe.get_meta(parent)
+			if parent_meta.get_field(fieldname) is not None:
+				_add("duplicate_field",
+					 f"Field {fieldname!r} already exists on {parent!r} - cannot create a duplicate",
+					 fix_hint=f"Pick a different fieldname (e.g. custom_{fieldname}) or update the existing field instead.")
+		except Exception:
+			pass
+		# Link/Table fieldtypes need a valid options DocType.
+		if fieldtype in {"Link", "Table", "Table MultiSelect", "Dynamic Link"}:
+			options = data.get("options")
+			if not options:
+				_add("missing_mandatory",
+					 f"fieldtype {fieldtype!r} requires data.options (target DocType)")
+			elif fieldtype != "Dynamic Link" and not frappe.db.exists("DocType", options):
+				_add("bad_link_target",
+					 f"Link target DocType {options!r} does not exist")
+		# Select fieldtype needs non-empty options.
+		if fieldtype == "Select":
+			options = data.get("options")
+			if not options:
+				_add("missing_mandatory",
+					 "Select fieldtype requires data.options (newline-separated values)")
+		return
+
+	# Property Setter: doc_type + field_name validity
+	if doctype == "Property Setter" and op == "create":
+		target = data.get("doc_type")
+		field_name = data.get("field_name")
+		if not target:
+			_add("missing_mandatory", "Property Setter 'data.doc_type' is required")
+			return
+		if not frappe.db.exists("DocType", target):
+			_add("unknown_parent_doctype",
+				 f"Property Setter target {target!r} does not exist")
+			return
+		# field_name may be empty for DocType-level properties (e.g. naming_rule).
+		if field_name:
+			try:
+				if frappe.get_meta(target).get_field(field_name) is None:
+					_add("unknown_field",
+						 f"Property Setter references field {field_name!r} which does not exist on {target!r}",
+						 fix_hint=f"Call find_field({target!r}, {field_name!r}) for likely matches.")
+			except Exception:
+				pass
+		return
+
+	# DocPerm / Custom DocPerm: parent + permlevel + role
+	if doctype in {"DocPerm", "Custom DocPerm"} and op == "create":
+		parent = data.get("parent")
+		permlevel = data.get("permlevel", 0)
+		role = data.get("role")
+		if not parent:
+			_add("missing_mandatory", f"{doctype} 'data.parent' is required")
+			return
+		if not frappe.db.exists("DocType", parent):
+			_add("unknown_parent_doctype",
+				 f"{doctype} parent {parent!r} does not exist")
+			return
+		try:
+			permlevel_int = int(permlevel)
+			if permlevel_int not in _VALID_PERMLEVELS:
+				_add("invalid_permlevel",
+					 f"permlevel {permlevel!r} is out of range (valid: 0-9)",
+					 fix_hint="Frappe convention reserves permlevel 0-9 for grouping field-level perms.")
+		except (TypeError, ValueError):
+			_add("invalid_permlevel",
+				 f"permlevel {permlevel!r} must be an integer 0-9")
+		if role and not frappe.db.exists("Role", role):
+			_add("bad_link_target",
+				 f"Role {role!r} does not exist on this site",
+				 fix_hint="Use a real Role name (System Manager, Sales User, ...).")
+		return
+
+	# DocType create: fields list, naming
+	if doctype == "DocType" and op == "create":
+		name = data.get("name")
+		fields = data.get("fields") or []
+		if not name:
+			_add("missing_mandatory", "DocType 'data.name' is required")
+		if not isinstance(fields, list):
+			_add("missing_mandatory",
+				 "DocType 'data.fields' must be a list of field definitions")
+			return
+		seen = set()
+		for fi, f in enumerate(fields):
+			if not isinstance(f, dict):
+				continue
+			fn = f.get("fieldname")
+			ft = f.get("fieldtype")
+			if fn:
+				if fn in seen:
+					_add("duplicate_field",
+						 f"DocType {name!r} declares field {fn!r} twice (fields[{fi}])")
+				seen.add(fn)
+			if ft and ft not in _VALID_FIELDTYPES:
+				_add("fieldtype_options_mismatch",
+					 f"DocType {name!r} field[{fi}] fieldtype {ft!r} is not a valid Frappe field type")
+		return
+
+	# All other ops/doctypes: nothing static we can confidently flag without
+	# a savepoint. Defer to dry_run_changeset.
+
+
+@_safe_execute
+def validate_changeset(changeset):
+	"""Static schema validation BEFORE the savepoint dry-run. Catches the
+	classes the Developer hallucinates: unknown fields, type mismatches,
+	duplicate fields, invalid permlevels, bad parent DocType paths, missing
+	mandatory fields per primitive. No DB writes; no transaction.
+
+	Complementary to (not replacing) dry_run_changeset which uses real
+	savepoint rollback. Cheap enough to run on every retry.
+
+	Returns:
+	  {"valid": bool, "issues": [...], "checked": int}
+	"""
+	if isinstance(changeset, str):
+		try:
+			changeset = json.loads(changeset)
+		except (ValueError, TypeError) as exc:
+			return {
+				"valid": False,
+				"issues": [{
+					"severity": "critical", "item_index": -1, "doctype": "",
+					"code": "invalid_json",
+					"message": f"changeset string is not valid JSON: {exc}",
+					"fix_hint": "Pass a JSON array or a list of dict items.",
+				}],
+				"checked": 0,
+			}
+	if not isinstance(changeset, list):
+		return {
+			"valid": False,
+			"issues": [{
+				"severity": "critical", "item_index": -1, "doctype": "",
+				"code": "invalid_argument",
+				"message": "changeset must be a list of changeset items",
+				"fix_hint": None,
+			}],
+			"checked": 0,
+		}
+
+	issues: list = []
+	checked = 0
+	for i, item in enumerate(changeset):
+		if not isinstance(item, dict):
+			issues.append({
+				"severity": "critical", "item_index": i, "doctype": "",
+				"code": "invalid_argument",
+				"message": f"changeset[{i}] is not a dict",
+				"fix_hint": None,
+			})
+			continue
+		_validate_one_change(item, i, issues)
+		checked += 1
+
+	# Critical issues fail the changeset; warnings alone do not.
+	has_critical = any(iss.get("severity") == "critical" for iss in issues)
+	return {"valid": not has_critical, "issues": issues, "checked": checked}
+
+
 # ── Tool Registry ────────────────────────────────────────────────
 
 TOOL_REGISTRY = {
@@ -811,4 +1355,9 @@ TOOL_REGISTRY = {
 	"lookup_pattern": lookup_pattern,
 	# Frappe Knowledge Base (platform rules, APIs, idioms)
 	"lookup_frappe_knowledge": lookup_frappe_knowledge,
+	# Schema grounding (Tier 2) - feed real meta to the Developer agent
+	"get_doctype_context": get_doctype_context,
+	"get_doctype_perms": get_doctype_perms,
+	"find_field": find_field,
+	"validate_changeset": validate_changeset,
 }
